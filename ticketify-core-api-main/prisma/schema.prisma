@@ -1,0 +1,109 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                     String                 @id @default(cuid())
+  crm_user_id            String                 @unique
+  email                  String                 @unique
+  name                   String?              
+  phone                  String?
+  password               String
+  user_location_tracking UserLocationTracking[]
+  availability           Boolean                @default(false)
+  created_at             DateTime               @default(now())
+  updated_at             DateTime               @updatedAt
+  user_log               UserLog[]
+  user_tickets            UserTicket[]
+  feedbacks               UserFeedback[]
+  role                   Role                   @relation(fields: [role_id], references: [id])
+  role_id                String
+
+  @@map("users")
+
+  
+}
+
+model Role {
+  id         String @id @default(cuid())
+  name       String    @db.VarChar()
+  created_at DateTime  @default(now())
+  updated_at DateTime? @updatedAt()
+  deleted_at DateTime? @db.Timestamp()
+  User       User[]
+  
+  @@map("roles")
+}
+
+
+enum UserAvailability {
+  AVAILABLE
+  UNAVAILBALE
+  OFFLINE
+  BREAK
+}
+
+model UserLocationTracking {
+  id         String   @id @default(cuid())
+  user_id    String
+  latitude   Float
+  longitude  Float
+  created_at DateTime @default(now())
+  user       User     @relation(fields: [user_id], references: [id])
+
+  @@map("user_location_tracking")
+}
+
+model UserTicket {
+  id         String   @id @default(cuid())
+  user_id    String
+  ticket_id  String
+  created_at DateTime @default(now())
+  user       User     @relation(fields: [user_id], references: [id])
+  ticket     Tickets  @relation(fields: [ticket_id], references: [id])
+
+}
+
+model Tickets {
+  id          String      @id @default(cuid())
+  crm_id      String      @unique
+  number      String
+  description String
+  state      String
+  contact_id String
+  priority  String
+  created_at  DateTime    @default(now())
+  ticket_log  TicketLog[]
+  user_tickets UserTicket[]
+}
+
+model UserLog {
+  id         String   @id @default(cuid())
+  user_id    String
+  log        String
+  created_at DateTime @default(now())
+  user       User     @relation(fields: [user_id], references: [id])
+}
+
+model TicketLog {
+  id         String   @id @default(cuid())
+  ticket_id  String
+  log        String
+  created_at DateTime @default(now())
+  ticket     Tickets  @relation(fields: [ticket_id], references: [id])
+}
+
+model UserFeedback {
+  id         String   @id @default(cuid())
+  user_id    String
+  feedback   String
+  rating     Int
+  ticket_id  String
+  created_at DateTime @default(now())
+  user       User     @relation(fields: [user_id], references: [id])
+}

@@ -1,0 +1,3 @@
+npm run ios -- --simulator="iPhone 15 Pro Max"
+
+https://api.ticketify.medianet.mv
