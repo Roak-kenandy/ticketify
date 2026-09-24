@@ -2,18 +2,18 @@ import moment from 'moment';
 import React from 'react';
 import {
   Dimensions,
-  FlatList,
   Image,
   Linking,
   RefreshControl,
   SafeAreaView,
+  ScrollView as RNScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
 import {ScrollView} from 'react-native-gesture-handler';
-import {useSelector} from 'react-redux';
+import {useDispatch, useSelector} from 'react-redux';
 import BackButton from '../../../components/back-button/BackButton';
 import ItemRender from '../../../components/item-render/item-render';
 import ABadge from '../../../components/ui/badge';
@@ -33,6 +33,12 @@ import ViewInfoModal from './modals/view-info.modal';
 import ProgressTicketModal from './modals/progress-ticket.modal';
 import TertiaryButton from '../../../components/ui/tertiary-button';
 import ActivityDetailModal from './modals/activity-details.modal';
+import {API_BASE_URL} from '../../../config/api';
+import {apiGet} from '../../../utils/apiClient';
+import {
+  notifyTicketMutation,
+  sameTicketId,
+} from '../../../services/ticketsSync';
 
 type Props = {
   navigation: any;
@@ -43,12 +49,11 @@ type Props = {
 let {width} = Dimensions.get('window');
 
 const ActivityDetailsScreen = (props: Props) => {
-  let auth = useSelector((state: any) => state.auth);
-
-  let user = useSelector((state: any) => state.auth.user);
-  let ticket = props.route.params.ticket;
+  const dispatch = useDispatch();
+  const token = useSelector((state: any) => state.auth?.token);
+  const user = useSelector((state: any) => state.auth?.user);
+  const ticket = props.route.params.ticket;
   let [data, setData] = React.useState<ServiceRequest>();
-  let state = useSelector((state: any) => state.auth);
   let [loading, setLoading] = React.useState(false);
   let [attachmentModalVisible, setAttachmentModalVisible] =
     React.useState(false);
@@ -68,98 +73,168 @@ const ActivityDetailsScreen = (props: Props) => {
 
   const [context, setContext] = React.useState<any>(null);
 
-  const fetchContext = () => {
-    fetch(
-      `https://api.ticketify.medianet.mv/api/v1/tickets/${props.ticket?.id}/context`,
-      {
-        method: 'GET',
-        headers: {
-          Authorization: 'Bearer ' + auth?.token,
-          'Content-Type': 'application/json',
-        },
-      },
-    )
-      .then(response => response.json())
-      .then(data => {
-        console.log('context data loaded', data);
-        setContext(data);
-      })
-      .catch(error => {
-        console.error('Error:', error);
-        Snackbar.show({
-          backgroundColor: colors.primary,
-          textColor: colors.white,
-          text: error?.message,
-          duration: Snackbar.LENGTH_SHORT,
-        });
-      });
-  };
+  const storeTicket = useSelector((state: any) =>
+    state.global.tickets.find((t: any) => sameTicketId(t.id, ticket?.id)),
+  );
 
-  React.useEffect(() => {
-    fetchContext();
-  }, []);
+  const applyToLocalState = React.useCallback((updated: any) => {
+    if (!updated) {
+      return;
+    }
+    setData(prev => ({...(prev ?? ticket), ...updated}));
+    const stageOrder = updated?.stage?.order ?? 0;
+    setNextStage(
+      updated?.queue_info?.stages?.find(
+        (stage: {order: number}) => stage.order === stageOrder + 1,
+      ),
+    );
+  }, [ticket]);
 
-  function fetchTicketById(id: number) {
-    setLoading(true);
-    fetch(`https://api.ticketify.medianet.mv/api/v1/tickets/${id}`, {
-      method: 'GET',
-      headers: {
-        Authorization: 'Bearer ' + state?.token,
-      },
-    })
-      .then(response => response.json())
-      .then(data => {
-        if (data) {
-          console.log('user ticket Details loaded' + data);
-          setData(data);
-        }
-        setNextStage(
-          data?.queue_info?.stages.find(
-            (stage: {order: number}) => stage.order === data?.stage?.order + 1,
-          ),
+  const fetchContext = React.useCallback(
+    async (options?: {silent?: boolean}) => {
+      if (!ticket?.id || !token) {
+        return;
+      }
+      try {
+        const contextData = await apiGet(
+          `/tickets/${ticket.id}/context`,
+          token,
         );
+        setContext(contextData);
+      } catch (error: any) {
+        if (!options?.silent) {
+          Snackbar.show({
+            backgroundColor: colors.primary,
+            textColor: colors.white,
+            text: error?.message || 'Failed to load context',
+            duration: Snackbar.LENGTH_SHORT,
+          });
+        }
+      }
+    },
+    [ticket?.id, token],
+  );
+
+  const fetchTicketById = React.useCallback(
+    async (id: number, options?: {silent?: boolean}) => {
+      if (!id || !token) {
+        return;
+      }
+      setLoading(true);
+      try {
+        const ticketData = await apiGet(`/tickets/${id}`, token);
+        if (ticketData) {
+          setData(ticketData);
+          setNextStage(
+            ticketData?.queue_info?.stages.find(
+              (stage: {order: number}) =>
+                stage.order === ticketData?.stage?.order + 1,
+            ),
+          );
+        }
+      } catch (error: any) {
+        if (!options?.silent) {
+          Snackbar.show({
+            backgroundColor: colors.primary,
+            textColor: colors.white,
+            text: error?.message || 'Failed to load ticket',
+            duration: Snackbar.LENGTH_SHORT,
+          });
+        }
+      } finally {
         setLoading(false);
-      })
-      .catch(error => {
-        console.error('Error:', JSON.stringify(error));
-        setLoading;
+      }
+    },
+    [token],
+  );
+
+  async function assignUser() {
+    setSubmitted(true);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/tickets/${ticket?.id}/assign`,
+        {
+          method: 'PUT',
+          headers: {Authorization: 'Bearer ' + token},
+        },
+      );
+      const assigned = await response.json();
+      if (!response.ok) {
+        throw new Error(assigned?.message || 'Failed to assign ticket');
+      }
+      const updated = await notifyTicketMutation(
+        dispatch,
+        token,
+        ticket.id,
+        {state: assigned?.state ?? 'NEW'},
+        assigned,
+      );
+      applyToLocalState(updated);
+      Snackbar.show({
+        backgroundColor: 'green',
+        textColor: colors.white,
+        text: 'Ticket was assigned to you',
+        duration: Snackbar.LENGTH_SHORT,
       });
+    } catch (error: any) {
+      Snackbar.show({
+        backgroundColor: colors.primary,
+        textColor: colors.white,
+        text: error?.message || 'Failed to assign ticket',
+        duration: Snackbar.LENGTH_SHORT,
+      });
+    } finally {
+      setSubmitted(false);
+    }
   }
 
-  function assignUser() {
+  async function startTroubleshooting() {
     setSubmitted(true);
-    console.log('assigning user....');
-    fetch(
-      `https://api.ticketify.medianet.mv/api/v1/tickets/${ticket?.id}/assign`,
-      {
-        method: 'PUT',
-        headers: {
-          Authorization: 'Bearer ' + state?.token,
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/tickets/${ticket?.id}/start`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: 'Bearer ' + token,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            stage_id: nextStage?.id,
+          }),
         },
-      },
-    )
-      .then(response => response.json())
-      .then(data => {
-        console.log('user assigned');
-        setData(data);
-        Snackbar.show({
-          backgroundColor: 'green',
-          textColor: colors.white,
-          text: 'Ticket was assigned to you',
-          duration: Snackbar.LENGTH_SHORT,
-        });
-        setSubmitted(false);
-        props.navigation.navigate('HomeScreen');
-      })
-      .catch(error => {
-        Snackbar.show({
-          backgroundColor: colors.primary,
-          textColor: colors.white,
-          text: error?.message,
-          duration: Snackbar.LENGTH_SHORT,
-        });
-        setSubmitted(false);
+      );
+      const result = await response.json();
+      if (!response.ok || result?.state !== 'IN_PROGRESS') {
+        throw new Error(
+          result?.message ||
+            'CRM did not move the ticket to In Progress. Please try again.',
+        );
+      }
+      const updated = await notifyTicketMutation(
+        dispatch,
+        token,
+        ticket.id,
+        {state: result.state, stage: result.stage ?? nextStage ?? data?.stage},
+        {...(data ?? ticket), ...result, id: ticket.id},
+      );
+      applyToLocalState(updated);
+      Snackbar.show({
+        backgroundColor: 'green',
+        textColor: colors.white,
+        text: 'Troubleshooting started — ticket is In Progress',
+        duration: Snackbar.LENGTH_SHORT,
       });
+    } catch (error: any) {
+      Snackbar.show({
+        backgroundColor: colors.primary,
+        textColor: colors.white,
+        text: error?.message || 'Failed to start troubleshooting',
+        duration: Snackbar.LENGTH_SHORT,
+      });
+    } finally {
+      setSubmitted(false);
+    }
   }
 
   function closeTicket() {
@@ -170,9 +245,33 @@ const ActivityDetailsScreen = (props: Props) => {
     setProgressTicketModalVisible(true);
   }
 
+  const handleTicketUpdated = React.useCallback(
+    (updated: any) => {
+      applyToLocalState(updated);
+    },
+    [applyToLocalState],
+  );
+
+  const refreshAfterChange = React.useCallback(() => {
+    if (ticket?.id) {
+      fetchTicketById(ticket.id);
+    }
+  }, [fetchTicketById, ticket?.id]);
+
   React.useEffect(() => {
-    fetchTicketById(ticket?.id);
-  }, [ticket?.id]);
+    if (storeTicket) {
+      applyToLocalState(storeTicket);
+    }
+  }, [storeTicket?.state, storeTicket?.stage?.order, applyToLocalState]);
+
+  React.useEffect(() => {
+    if (ticket?.id) {
+      Promise.all([
+        fetchContext({silent: true}),
+        fetchTicketById(ticket.id, {silent: true}),
+      ]);
+    }
+  }, [ticket?.id, fetchContext, fetchTicketById]);
 
   return (
     <SafeAreaView
@@ -201,7 +300,12 @@ const ActivityDetailsScreen = (props: Props) => {
             }}
             refreshing={false}
             onRefresh={() => {
-              fetchTicketById(ticket?.id);
+              if (ticket?.id) {
+                Promise.all([
+                  fetchContext({silent: false}),
+                  fetchTicketById(ticket.id, {silent: false}),
+                ]);
+              }
             }}
           />
         }
@@ -353,47 +457,50 @@ const ActivityDetailsScreen = (props: Props) => {
                 }}>
                 Given Services and Devices
               </Text>
-              <FlatList
-                data={data?.contact?.services?.content ?? []}
-                keyExtractor={(item, index) => index.toString()}
-                horizontal
-                ItemSeparatorComponent={() => <ASeperator />}
-                ListEmptyComponent={() => (
-                  <Text
-                    style={{
-                      color: colors.black,
-                      fontWeight: '600',
-                      fontSize: 13,
-                    }}>
-                    No Services or Devices
-                  </Text>
-                )}
-                renderItem={({item}) => (
-                  <View
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 5,
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      padding: 10,
-                      borderRadius: 10,
-                      borderWidth: 1,
-                      paddingHorizontal: 10,
-                      borderColor: colors.bordergray,
-                      width: Dimensions.get('window').width / 2 - 20,
-                    }}>
-                    <Text>{item?.product?.name}</Text>
-                    <ABadge
-                      backgroundColor={
-                        item?.state == 'EFFECTIVE' ? 'green' : colors.secondary
-                      }
-                      title={item?.state}
-                      color={colors.white}
-                    />
-                  </View>
-                )}
-              />
+              {(data?.contact?.services?.content ?? []).length === 0 ? (
+                <Text
+                  style={{
+                    color: colors.black,
+                    fontWeight: '600',
+                    fontSize: 13,
+                  }}>
+                  No Services or Devices
+                </Text>
+              ) : (
+                <RNScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{gap: 10, paddingVertical: 4}}>
+                  {(data?.contact?.services?.content ?? []).map(
+                    (item: any, index: number) => (
+                      <View
+                        key={String(item?.id ?? index)}
+                        style={{
+                          flexDirection: 'column',
+                          gap: 5,
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: 10,
+                          borderRadius: 10,
+                          borderWidth: 1,
+                          borderColor: colors.bordergray,
+                          width: Dimensions.get('window').width / 2 - 20,
+                        }}>
+                        <Text>{item?.product?.name}</Text>
+                        <ABadge
+                          backgroundColor={
+                            item?.state == 'EFFECTIVE'
+                              ? 'green'
+                              : colors.secondary
+                          }
+                          title={item?.state}
+                          color={colors.white}
+                        />
+                      </View>
+                    ),
+                  )}
+                </RNScrollView>
+              )}
             </View>
           </View>
         </View>
@@ -410,55 +517,48 @@ const ActivityDetailsScreen = (props: Props) => {
             }}>
             Images & Attachments ({data?.attachments?.content?.length})
           </Text>
-          <FlatList
-            contentContainerStyle={{
+          <View
+            style={{
               width: '100%',
               paddingTop: 10,
-            }}
-            data={data?.attachments?.content ?? []}
-            numColumns={3}
-            ItemSeparatorComponent={() => (
-              <View
-                style={{
-                  height: 5,
-                }}></View>
-            )}
-            ListEmptyComponent={() => (
-              <Text
-                style={{
-                  color: colors.black,
-                  fontSize: 16,
-                }}>
+              flexDirection: 'row',
+              flexWrap: 'wrap',
+              gap: 5,
+            }}>
+            {(data?.attachments?.content ?? []).length === 0 ? (
+              <Text style={{color: colors.black, fontSize: 16}}>
                 No Images or Attachments
               </Text>
+            ) : (
+              (data?.attachments?.content ?? []).map(
+                (item: any, index: number) => (
+                  <TouchableOpacity
+                    key={String(item?.id ?? index)}
+                    onPress={() => {
+                      setSelectedImage(item);
+                      setViewImageModalVisible(true);
+                    }}>
+                    <Image
+                      style={{
+                        width: width / 3 - 20,
+                        height: width / 3 - 20,
+                        borderRadius: 10,
+                        backgroundColor: colors.gray,
+                        borderColor: colors.bordergray,
+                        borderWidth: 1,
+                      }}
+                      source={{
+                        uri: `https://app.crm.com/backoffice/v2/files/${item?.file.id}`,
+                        headers: {
+                          api_key: '67225f81-1d60-4401-b6d7-720f9cf68ba3',
+                        },
+                      }}
+                    />
+                  </TouchableOpacity>
+                ),
+              )
             )}
-            renderItem={({item, index}) => (
-              <TouchableOpacity
-                onPress={() => {
-                  setSelectedImage(item);
-                  setViewImageModalVisible(true);
-                }}>
-                <Image
-                  style={{
-                    width: width / 3 - 20,
-                    height: width / 3 - 20,
-                    borderRadius: 10,
-                    backgroundColor: colors.gray,
-                    borderColor: colors.bordergray,
-                    borderWidth: 1,
-                    marginLeft: index % 3 == 0 ? 0 : 5,
-                  }}
-                  alt={item?.file_url}
-                  source={{
-                    uri: `https://app.crm.com/backoffice/v2/files/${item?.file.id}`,
-                    headers: {
-                      api_key: '67225f81-1d60-4401-b6d7-720f9cf68ba3',
-                    },
-                  }}
-                />
-              </TouchableOpacity>
-            )}
-          />
+          </View>
 
           <View
             style={{
@@ -488,15 +588,8 @@ const ActivityDetailsScreen = (props: Props) => {
             }}>
             Activities
           </Text>
-          <FlatList
-            contentContainerStyle={{
-              paddingTop: 10,
-            }}
-            data={data?.activities?.content ?? []}
-            keyExtractor={(item, index) => index.toString()}
-            ItemSeparatorComponent={() => <ASeperator />}
-            // if no data is available, show a message
-            ListEmptyComponent={() => (
+          <View style={{paddingTop: 10, gap: 10}}>
+            {(data?.activities?.content ?? []).length === 0 ? (
               <View
                 style={{
                   justifyContent: 'center',
@@ -512,58 +605,63 @@ const ActivityDetailsScreen = (props: Props) => {
                   No activities available
                 </Text>
               </View>
-            )}
-            renderItem={({item}) => (
-              <TouchableOpacity
-                onPress={() => {
-                  setSelectedActivity(item);
-                  setActivityDetailsModalVisible(true);
-                }}
-                style={{
-                  gap: 10,
-                  padding: 10,
-                  borderRadius: 20,
-                  borderWidth: 1,
-                  paddingHorizontal: 10,
-                  borderColor: colors.bordergray,
-                }}>
-                <View
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}>
-                  <Text
-                    style={{
-                      fontWeight: '600',
-                      marginRight: 5,
-                      color: colors.black,
-                    }}>
-                    {item?.name}
-                  </Text>
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      color: colors.gray,
-                    }}>
-                    {moment(item?.activity_date.date * 1000).format(
-                      'DD MMMM YYYY',
+            ) : (
+              (data?.activities?.content ?? []).map(
+                (item: any, index: number) => (
+                  <View key={String(item?.id ?? index)}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setSelectedActivity(item);
+                        setActivityDetailsModalVisible(true);
+                      }}
+                      style={{
+                        gap: 10,
+                        padding: 10,
+                        borderRadius: 20,
+                        borderWidth: 1,
+                        borderColor: colors.bordergray,
+                      }}>
+                      <View
+                        style={{
+                          flexDirection: 'row',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                        }}>
+                        <Text
+                          style={{
+                            fontWeight: '600',
+                            marginRight: 5,
+                            color: colors.black,
+                          }}>
+                          {item?.name}
+                        </Text>
+                        <Text style={{fontSize: 12, color: colors.gray}}>
+                          {moment(item?.activity_date.date * 1000).format(
+                            'DD MMMM YYYY',
+                          )}
+                        </Text>
+                      </View>
+                      <View
+                        style={{
+                          flexDirection: 'row',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                        }}>
+                        <ABadge
+                          title={item?.type.name}
+                          color={item.type.colour}
+                        />
+                      </View>
+                    </TouchableOpacity>
+                    {index <
+                      (data?.activities?.content?.length ?? 0) - 1 && (
+                      <ASeperator />
                     )}
-                  </Text>
-                </View>
-                <View
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}>
-                  <ABadge title={item?.type.name} color={item.type.colour} />
-                </View>
-              </TouchableOpacity>
+                  </View>
+                ),
+              )
             )}
-          />
+          </View>
           <View
             style={{
               paddingTop: 10,
@@ -591,81 +689,48 @@ const ActivityDetailsScreen = (props: Props) => {
             }}>
             Notes
           </Text>
-          <FlatList
-            contentContainerStyle={{
-              paddingTop: 10,
-            }}
-            data={data?.notes?.content ?? []}
-            keyExtractor={(item, index) => index.toString()}
-            ItemSeparatorComponent={() => (
-              <View
-                style={{
-                  height: 10,
-                }}
-              />
-            )}
-            // if no data is available, show a message
-            ListEmptyComponent={() => (
+          <View style={{paddingTop: 10, gap: 10}}>
+            {(data?.notes?.content ?? []).length === 0 ? (
               <View
                 style={{
                   justifyContent: 'center',
                   alignItems: 'center',
                   padding: 20,
                 }}>
-                <Text
-                  style={{
-                    color: colors.black,
-                  }}>
-                  No Notes available
-                </Text>
+                <Text style={{color: colors.black}}>No Notes available</Text>
               </View>
-            )}
-            renderItem={({item}) => (
-              <View
-                style={{
-                  gap: 10,
-                  padding: 10,
-                  borderRadius: 20,
-                  borderWidth: 1,
-                  paddingHorizontal: 10,
-                  borderColor: colors.bordergray,
-                }}>
+            ) : (
+              (data?.notes?.content ?? []).map((item: any, index: number) => (
                 <View
+                  key={String(item?.id ?? index)}
                   style={{
-                    display: 'flex',
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
+                    gap: 10,
+                    padding: 10,
+                    borderRadius: 20,
+                    borderWidth: 1,
+                    borderColor: colors.bordergray,
                   }}>
                   <Text
                     style={{
                       fontWeight: '400',
-                      marginRight: 5,
                       color: colors.black,
                     }}>
                     {item?.note ?? 'Loading...'}
                   </Text>
-                </View>
-                <View
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'row',
-                    justifyContent: 'flex-end',
-                    alignItems: 'flex-end',
-                  }}>
                   <Text
                     style={{
                       fontSize: 12,
                       color: colors.black,
+                      textAlign: 'right',
                     }}>
                     {moment(item?.created_on * 1000).format(
                       'DD MMMM YYYY hh:mm a',
                     )}
                   </Text>
                 </View>
-              </View>
+              ))
             )}
-          />
+          </View>
           <View
             style={{
               paddingTop: 10,
@@ -731,11 +796,11 @@ const ActivityDetailsScreen = (props: Props) => {
                   });
                 } else {
                   fetch(
-                    `https://api.ticketify.medianet.mv/api/v1/tickets/${data?.id}/no-response`,
+                    `${API_BASE_URL}/tickets/${data?.id}/no-response`,
                     {
                       method: 'PUT',
                       headers: {
-                        Authorization: 'Bearer ' + state?.token,
+                        Authorization: 'Bearer ' + token,
                         'Content-Type': 'application/json',
                       },
                       body: JSON.stringify({
@@ -793,25 +858,29 @@ const ActivityDetailsScreen = (props: Props) => {
               backgroundColor: nextStage?.colour ?? colors.primary,
             }}
             text={
-              data?.assigned_to?.user?.id != user.crm_user_id
-                ? 'Assign to Me' // if the ticket is not assigned to the current user
-                : data?.state == 'NEW' // if the ticket is assigned to the current user and the state is new
-                ? `Start ${nextStage?.name}`
-                : // check if the next stage is the last stage
-                data?.queue_info?.stages?.length == nextStage?.order
-                ? `Close Ticket` // if the ticket is assigned to the current user and the state is in progress
+              submitted
+                ? 'Please wait...'
+                : data?.assigned_to?.user?.id != user.crm_user_id
+                ? 'Assign to Me'
+                : data?.state == 'NEW'
+                ? `Start ${nextStage?.name ?? 'Troubleshooting'}`
+                : data?.queue_info?.stages?.length == nextStage?.order
+                ? 'Close Ticket'
                 : `Start ${nextStage?.name}`
-              // if the ticket is assigned to the current user and the state is in progress
-              // if the ticket is assigned to the current user and the state is new
             }
             onPress={() => {
-              data?.assigned_to?.user?.id != user.crm_user_id
-                ? assignUser()
-                : data?.state == 'NEW'
-                ? progressTicket()
-                : data?.queue_info?.stages?.length == nextStage?.order
-                ? closeTicket()
-                : progressTicket();
+              if (submitted) {
+                return;
+              }
+              if (data?.assigned_to?.user?.id != user.crm_user_id) {
+                assignUser();
+              } else if (data?.state == 'NEW') {
+                startTroubleshooting();
+              } else if (data?.queue_info?.stages?.length == nextStage?.order) {
+                closeTicket();
+              } else {
+                progressTicket();
+              }
             }}
           />
         )}
@@ -828,7 +897,7 @@ const ActivityDetailsScreen = (props: Props) => {
         navigation={props.navigation}
         modalVisible={attachmentModalVisible}
         setModalVisible={setAttachmentModalVisible}
-        onSuccess={() => fetchTicketById(ticket?.id)}
+        onSuccess={refreshAfterChange}
       />
       <AddActivityModal
         ticketId={ticket?.id}
@@ -836,13 +905,13 @@ const ActivityDetailsScreen = (props: Props) => {
         context={context}
         modalVisible={activityModalVisible}
         setModalVisible={setActivityModalVisible}
-        onSuccess={() => fetchTicketById(ticket?.id)}
+        onSuccess={refreshAfterChange}
       />
       <AddNoteModal
         modalVisible={noteModalVisible}
         setModalVisible={setNoteModalVisible}
         ticketId={ticket?.id}
-        onSuccess={() => fetchTicketById(ticket?.id)}
+        onSuccess={refreshAfterChange}
       />
       <ViewImageModal
         modalVisible={viewImageModalVisible}
@@ -854,15 +923,17 @@ const ActivityDetailsScreen = (props: Props) => {
         setModalVisible={setCloseModalVisible}
         ticketId={ticket?.id}
         nextStage={nextStage}
+        onSuccess={handleTicketUpdated}
       />
       {progressTicketModalVisible && (
         <ProgressTicketModal
           modalVisible={progressTicketModalVisible}
           setModalVisible={setProgressTicketModalVisible}
-          navigation={props.navigation}
           ticket={data}
           setSubmitted={setSubmitted}
           nextStage={nextStage}
+          isFirstStart={false}
+          onSuccess={handleTicketUpdated}
         />
       )}
 

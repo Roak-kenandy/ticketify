@@ -946,12 +946,60 @@ Medianet Support Team
     return assign_sr_to_user;
   }
 
-  async startTicket(ticket_id: string) {
-    let ticket = await this.crmFindServiceRequest(ticket_id);
-    let user = await this.user.crmGetUser(ticket.assigned_to?.user?.id);
+  private getCustomerReviewBaseUrl(): string {
+    const configured = this.config.get<string>('CUSTOMER_REVIEW_BASE_URL');
+    if (configured?.trim()) {
+      return configured.trim().replace(/\/$/, '');
+    }
 
-    console.log('Starting ticket' + ticket_id);
-    let crm_start_service_request = await fetch(
+    return this.config.get('NODE_ENV') === 'production'
+      ? 'https://ticketify.medianet.mv'
+      : 'http://127.0.0.1:3000';
+  }
+
+  private buildCustomerReviewUrl(
+    ticketId: string,
+    crmUserId: string,
+  ): string {
+    return `${this.getCustomerReviewBaseUrl()}/customer-review/${ticketId}?userId=${crmUserId}`;
+  }
+
+  private resolveNextStageId(ticket: any, stageIdOverride?: string): string {
+    if (stageIdOverride) {
+      return stageIdOverride;
+    }
+
+    const stages = ticket?.queue_info?.stages ?? [];
+    const currentOrder = ticket?.stage?.order ?? 0;
+    const nextStage = stages.find(
+      (stage: {order: number; id: string}) => stage.order === currentOrder + 1,
+    );
+
+    if (!nextStage?.id) {
+      throw new ForbiddenException(
+        'No next workflow stage found for this ticket queue',
+      );
+    }
+
+    return nextStage.id;
+  }
+
+  async startTicket(ticket_id: string, stage_id?: string) {
+    const ticket = await this.crmFindServiceRequest(ticket_id);
+
+    if (ticket?.state !== 'NEW') {
+      throw new ForbiddenException('Ticket must be assigned before starting');
+    }
+
+    const targetStageId = this.resolveNextStageId(ticket, stage_id);
+    const user = await this.user.crmGetUser(ticket.assigned_to?.user?.id);
+
+    this.logger.log(
+      'Ticket Service',
+      `Starting ticket ${ticket_id} with stage ${targetStageId}`,
+    );
+
+    const crm_start_service_request = await fetch(
       this.config.get('CRM_BACKOFFICE_API_URL') +
         '/service_requests/' +
         ticket_id +
@@ -967,15 +1015,25 @@ Medianet Support Team
           action: 'START_PROGRESS',
           comment: 'Starting ticket',
           achieved_date: new Date().toISOString(),
-          stage_id: 'ffd1e93c-72d9-471d-a2af-f1ad90041b26',
+          stage_id: targetStageId,
         }),
       },
     );
 
-    let response = await crm_start_service_request.json();
+    const response = await crm_start_service_request.json();
 
-    if (response) {
-      let send_sms = await this.sms.publishSMS({
+    if (!crm_start_service_request.ok) {
+      this.logger.error(
+        'Ticket Service',
+        `CRM START_PROGRESS failed: ${JSON.stringify(response)}`,
+      );
+      throw new ForbiddenException(
+        response?.message ?? 'Service request could not be started in CRM',
+      );
+    }
+
+    try {
+      await this.sms.publishSMS({
         phone: ticket?.contact?.phone?.number,
         message: `
 Dear ${ticket?.contact?.person_name?.full_name},
@@ -987,20 +1045,26 @@ Thank you for your patience.
 Medianet Support Team
         `,
       });
-      if (!send_sms) {
-        this.logger.error('Ticket Service', 'SMS not sent');
-        return new ForbiddenException('SMS not sent');
-      } else {
-        this.logger.log('Ticket Service', 'SMS sent');
-        return response;
-      }
-    } else {
-      console.log('Service request not started' + JSON.stringify(response));
-      return new ForbiddenException(
-        'Service request not started',
-        crm_start_service_request.statusText,
+      this.logger.log('Ticket Service', 'SMS sent');
+    } catch {
+      this.logger.error(
+        'Ticket Service',
+        'SMS not sent after ticket start (CRM update succeeded)',
       );
     }
+
+    const updatedTicket = await this.crmFindServiceRequest(ticket_id);
+    if (updatedTicket?.state !== 'IN_PROGRESS') {
+      this.logger.error(
+        'Ticket Service',
+        `Ticket ${ticket_id} state is still ${updatedTicket?.state} after start`,
+      );
+      throw new ForbiddenException(
+        'Ticket was not moved to In Progress in CRM',
+      );
+    }
+
+    return updatedTicket;
   }
 
   async completeTicket(ticket_id: string, comment: string, stage_id: string) {
@@ -1039,14 +1103,16 @@ Medianet Support Team
       );
     }
 
+    const reviewUrl = this.buildCustomerReviewUrl(ticket_id, user.id);
+
     await this.sms.publishSMS({
       phone: ticket.contact.phone.number,
       message: `
 Dear ${ticket.contact.person_name.full_name},
 
 Your ticket: ${ticket.number} has been closed. We would appreciate your feedback on the service provided.
-Pleae take a moment to rate the service you received by clicking on the link below.
-https://ticketify.medianet.mv/customer-review/${ticket.id}?userId=${user.id}
+Please take a moment to rate the service you received by clicking on the link below.
+${reviewUrl}
 
 Thank you for your patience.
 Medianet Support Team
@@ -1054,8 +1120,9 @@ Medianet Support Team
     });
 
     this.logger.log('Ticket Service', 'Service request Closed');
+    this.logger.log('Ticket Service', `Customer review URL: ${reviewUrl}`);
 
-    return response;
+    return this.crmFindServiceRequest(ticket_id);
   }
 
   async progressTicket(
@@ -1108,7 +1175,7 @@ Medianet Support Team
 
       if (smsNotification == false) {
         this.logger.log('Ticket Service', 'SMS notification disabled');
-        return response;
+        return this.crmFindServiceRequest(ticket_id);
       }
       this.logger.log('Ticket Service', 'SMS notification enabled');
       let send_sms = await this.sms.publishSMS({
@@ -1128,7 +1195,7 @@ Medianet Support Team
         return new ForbiddenException('SMS not sent');
       } else {
         this.logger.log('Ticket Service', 'SMS sent');
-        return response;
+        return this.crmFindServiceRequest(ticket_id);
       }
     } else {
       console.log('Service request not started' + JSON.stringify(response));

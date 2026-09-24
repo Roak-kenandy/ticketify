@@ -1,145 +1,57 @@
-import {FlatList, StyleSheet, Text, View} from 'react-native';
+import {StyleSheet, Text, View} from 'react-native';
 import React from 'react';
 import colors from '../../../../constants/colors';
+import {radius, spacing} from '../../../../constants/styles';
 import TicketCard from '../../../../components/ticket-card';
 
-// Define proper types for better type safety
-interface Ticket {
-  id: string;
-  title: string;
-  status: string;
-  priority: string;
-  assignedTo: string;
-  createdAt: string;
-  [key: string]: any; // Allow additional properties
-}
-
-interface Team {
-  id: string;
-  name: string;
-}
-
-interface TicketsContent {
-  content: Ticket[];
-  totalElements: number;
-}
-
-interface TeamGroup {
-  team: Team;
-  tickets: TicketsContent;
-}
-
 interface Props {
-  navigation: any; // TODO: Type this properly with navigation type
-  tickets: TeamGroup[] | null | undefined;
-}
-
-interface TransformedItem {
-  team: Team;
-  data: Array<{type: 'header'; name: string} | (Ticket & {type: 'ticket'})>;
+  navigation: any;
+  tickets: any[] | null | undefined;
 }
 
 const UpcomingTickets = (props: Props) => {
-  if (!props.tickets || props.tickets.length === 0) {
-    return (
-      <View style={styles.emptyContainer}>
-        <Text style={styles.emptyText}>
-          No upcoming tickets available.
-        </Text>
-      </View>
-    );
-  }
-
-  // Transform data with proper error handling
-  const transformed: TransformedItem[] = React.useMemo(() => {
-    try {
-      // Additional safety check for undefined or null tickets
-      if (!props.tickets || !Array.isArray(props.tickets)) {
-        console.warn('UpcomingTickets: tickets is not an array', props.tickets);
-        return [];
-      }
-
-      return props.tickets.map((teamGroup: TeamGroup) => {
-        // Validate that required properties exist
-        if (!teamGroup || !teamGroup.team || !teamGroup.team.name) {
-          console.warn('UpcomingTickets: Invalid team data', teamGroup);
-          return {
-            team: { id: 'unknown', name: 'Unknown Team' },
-            data: [{ type: 'header' as const, name: 'Unknown Team' }]
-          };
-        }
-
-        if (!teamGroup.tickets || !Array.isArray(teamGroup.tickets.content)) {
-          console.warn('UpcomingTickets: Invalid tickets data', teamGroup.tickets);
-          return {
-            team: teamGroup.team,
-            data: [
-              { type: 'header' as const, name: teamGroup.team.name },
-              // No tickets to display
-            ]
-          };
-        }
-
-        return {
-          team: teamGroup.team,
-          data: [
-            { type: 'header' as const, name: teamGroup.team.name },
-            ...teamGroup.tickets.content.map(ticket => ({
-              ...ticket,
-              type: 'ticket' as const,
-            }))
-          ]
-        };
-      });
-    } catch (error) {
-      console.error('UpcomingTickets: Error transforming data', error);
+  const teamGroups = React.useMemo(() => {
+    if (!props.tickets || !Array.isArray(props.tickets)) {
       return [];
     }
-  }, [props.tickets]);
-  return (
-    <View
-      style={{
-        gap: 14,
-      }}>
-      <View
-        style={{
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}>
-        <Text style={[{fontSize: 18, fontWeight: 'bold', color: colors.black}]}>
-          Team Tickets
-        </Text>
-      </View>
 
-      <FlatList
-        contentContainerStyle={{gap: 10}}
-        data={transformed}
-        keyExtractor={(item, index) => item.team?.id || `team-${index}`}
-        renderItem={({item}) => (
-          <FlatList
-            data={item.data}
-            keyExtractor={(subItem, subIndex) => {
-              if (subItem.type === 'header') {
-                return `header-${item.team.id}`;
-              }
-              return subItem.id || `ticket-${subIndex}`;
-            }}
-            stickyHeaderIndices={[0]} // Header is first
-            renderItem={({item: subItem}) =>
-              subItem.type === 'header' ? (
-                <View style={styles.headerContainer}>
-                  <Text style={styles.headerText}>
-                    {subItem.name}
-                  </Text>
-                </View>
-              ) : (
-                <TicketCard ticket={subItem} navigation={props.navigation} />
-              )
-            }
-          />
-        )}
-      />
+    return props.tickets
+      .filter(teamGroup => teamGroup?.team?.name)
+      .map(teamGroup => ({
+        team: teamGroup.team,
+        tickets: Array.isArray(teamGroup.tickets?.content)
+          ? teamGroup.tickets.content
+          : [],
+      }));
+  }, [props.tickets]);
+
+  return (
+    <View style={styles.wrap}>
+      <Text style={styles.title}>Team tickets</Text>
+      <Text style={styles.subtitle}>Open assignments across your teams</Text>
+
+      {teamGroups.length === 0 ? (
+        <View style={styles.empty}>
+          <Text style={styles.emptyText}>No team tickets right now</Text>
+        </View>
+      ) : (
+        teamGroups.map(teamGroup => (
+          <View key={teamGroup.team.id ?? teamGroup.team.name} style={styles.group}>
+            <Text style={styles.teamName}>{teamGroup.team.name}</Text>
+            {teamGroup.tickets.length === 0 ? (
+              <Text style={styles.emptyTeam}>No tickets in this team</Text>
+            ) : (
+              teamGroup.tickets.map(ticket => (
+                <TicketCard
+                  key={String(ticket.id ?? ticket.ticket_id)}
+                  ticket={ticket}
+                  navigation={props.navigation}
+                />
+              ))
+            )}
+          </View>
+        ))
+      )}
     </View>
   );
 };
@@ -147,45 +59,41 @@ const UpcomingTickets = (props: Props) => {
 export default UpcomingTickets;
 
 const styles = StyleSheet.create({
-  container: {
-    width: '100%',
-    backgroundColor: colors.primary,
-    padding: 20,
-    borderRadius: 20,
-    gap: 10,
-    shadowColor: colors.black,
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
+  wrap: {gap: spacing.md},
+  title: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.black,
   },
-  emptyContainer: {
-    width: '100%',
+  subtitle: {
+    fontSize: 13,
+    color: colors.gray2,
+    marginTop: -4,
+    marginBottom: spacing.xs,
+  },
+  group: {gap: spacing.sm, marginTop: spacing.sm},
+  teamName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.primary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  empty: {
     backgroundColor: colors.white,
-    padding: 20,
-    borderRadius: 20,
+    borderRadius: radius.lg,
+    padding: spacing.xxl,
     alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 120,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
   },
   emptyText: {
-    color: colors.black,
-    fontSize: 16,
-    textAlign: 'center',
-    opacity: 0.7,
-  },
-  headerContainer: {
-    backgroundColor: colors.white,
-    paddingHorizontal: 0,
-  },
-  headerText: {
+    color: colors.gray2,
     fontSize: 14,
-    fontWeight: 'bold',
-    paddingVertical: 10,
-    backgroundColor: colors.white,
-    color: colors.black,
   },
-  text: {
-    color: colors.white,
+  emptyTeam: {
+    color: colors.gray3,
+    fontSize: 13,
+    paddingVertical: spacing.sm,
   },
 });

@@ -3,6 +3,7 @@ import {
   HttpException,
   Inject,
   Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -25,22 +26,33 @@ export class AuthService {
 
   async signUp(dto: SignUpDto) {
     try {
-      let crm_user = await fetch(
-        this.config.get('CRM_BACKOFFICE_API_URL') + '/users/' + dto.crm_user_id,
-        {
-          headers: {
-            content_type: 'application/json',
-            api_key: this.config.get('CRM_API_KEY'),
-          },
-        },
-      );
+      const skipCrmValidation =
+        this.config.get('SKIP_CRM_VALIDATION') === 'true';
 
-      // if crm_user is not found
-      if (!crm_user.ok) {
-        this.logger.error('AuthService', 'CRM User not found');
-        return new HttpException('CRM User not found', 404);
+      if (!skipCrmValidation) {
+        const crm_user = await fetch(
+          this.config.get('CRM_BACKOFFICE_API_URL') +
+            '/users/' +
+            dto.crm_user_id,
+          {
+            headers: {
+              content_type: 'application/json',
+              api_key: this.config.get('CRM_API_KEY'),
+            },
+          },
+        );
+
+        if (!crm_user.ok) {
+          this.logger.error('AuthService', 'CRM User not found');
+          throw new NotFoundException('CRM User not found');
+        }
+
+        this.logger.log('AuthService', 'CRM User found');
       } else {
-        this.logger.log('AuthService', 'CRM User found' + crm_user);
+        this.logger.log(
+          'AuthService',
+          'Skipping CRM validation (local development)',
+        );
       }
 
       const user = await this.prisma.user.create({
@@ -77,6 +89,7 @@ export class AuthService {
           throw new ForbiddenException(e.meta.target[0] + ' already exists');
         }
       }
+      throw e;
     }
   }
 
@@ -140,7 +153,13 @@ export class AuthService {
 
     delete user.password;
 
-    // log the activity
+    if (user.role.name === 'Technician') {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { availability: true },
+      });
+      user.availability = true;
+    }
 
     await this.activity.createUserLog('User logged in', user);
 

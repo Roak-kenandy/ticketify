@@ -40,17 +40,19 @@ export default function UserProfilePage() {
 
   useEffect(() => {
     if (userId) {
-      fetchUser();
+      fetchUser({ silent: true });
     }
   }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const fetchUser = async () => {
+  const fetchUser = async (options?: { silent?: boolean }) => {
     try {
       const userData = await AdminAPI.getUserById(userId);
       setUser(userData);
     } catch (error) {
       console.error('Failed to fetch user:', error);
-      toast.error('Failed to load user profile');
+      if (!options?.silent) {
+        toast.error('Failed to load user profile');
+      }
     } finally {
       setLoading(false);
     }

@@ -8,7 +8,7 @@ export default function AdminLayout({
 }) {
   return (
     <AdminProtection>
-      <div className="min-h-screen bg-black">
+      <div className="min-h-screen bg-background text-foreground">
         <AdminNavigation />
         <main className="lg:ml-64 p-6 overflow-scroll max-h-[calc(100vh-20px)] ">
           {children}

@@ -11,12 +11,12 @@ import {
   Keyboard,
   View,
 } from 'react-native';
-import SecondaryButton from '../../../../components/ui/secondary-button';
 import ASeperator from '../../../../components/ui/seperator';
 import colors from '../../../../constants/colors';
-import PrimaryButton from '../../../../components/ui/primary-button';
+import ModalFooterActions from '../../../../components/ui/modal-footer-actions';
 import {useSelector} from 'react-redux';
 import Snackbar from 'react-native-snackbar';
+import {API_BASE_URL} from '../../../../config/api';
 
 type Props = {
   ticketId: string | number;
@@ -88,7 +88,7 @@ const AddActivityModal = (props: Props) => {
       console.log('Creating activity with data:', activityData);
 
       const response = await fetch(
-        `https://api.ticketify.medianet.mv/api/v1/activities`,
+        `${API_BASE_URL}/activities`,
         {
           method: 'POST',
           headers: {
@@ -293,28 +293,11 @@ const AddActivityModal = (props: Props) => {
               </View>
             </View>
 
-            <View
-              style={{
-                alignSelf: 'flex-end',
-                gap: 10,
-                flexDirection: 'row',
-              }}>
-              <SecondaryButton
-                text="Close"
-                onPress={() => props.setModalVisible(false)}
-              />
-              <View
-                style={{
-                  alignSelf: 'flex-end',
-                  gap: 10,
-                  flexDirection: 'row',
-                }}>
-                <PrimaryButton
-                  text={isSubmitting ? 'Submitting...' : 'Submit'}
-                  onPress={() => (isSubmitting ? null : submitActivity())}
-                />
-              </View>
-            </View>
+            <ModalFooterActions
+              onCancel={() => props.setModalVisible(false)}
+              onSubmit={submitActivity}
+              loading={isSubmitting}
+            />
               </View>
             </KeyboardAvoidingView>
           </View>

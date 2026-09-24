@@ -6,6 +6,7 @@ import * as yup from 'yup';
 import PrimaryButton from '../../../components/ui/primary-button';
 import {globalStyles} from '../../../constants/styles';
 import Snackbar from 'react-native-snackbar';
+import {API_BASE_URL} from '../../../config/api';
 
 type Props = {
   navigation: any;
@@ -47,7 +48,7 @@ const ChangePasswordForm = (props: Props) => {
         validationSchema={validationSchema}
         onSubmit={values => {
           fetch(
-            'https://api.ticketify.medianet.mv/api/v1/auth/change-password',
+            `${API_BASE_URL}/auth/change-password`,
             {
               method: 'POST',
               headers: {

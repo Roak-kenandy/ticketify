@@ -17,7 +17,7 @@ class EnhancedLocationService {
   private backgroundTimerRunning = false;
   private backgroundIntervalId: number | null = null;
   private lastLocationTime = 0;
-  private locationUpdateFrequency = 15000; // 15 seconds
+  private locationUpdateFrequency = 60000; // 60 seconds
   private consecutiveFailures = 0;
   private maxConsecutiveFailures = 5;
   private backgroundStats = {
@@ -122,20 +122,12 @@ class EnhancedLocationService {
     const now = Date.now();
 
     // Throttle requests to avoid too frequent calls
-    if (now - this.lastLocationTime < 12000) {
-      // Minimum 12 seconds between calls for 15s interval
-      console.log('[EnhancedLocationService] Throttling location request');
+    if (now - this.lastLocationTime < 55000) {
       return;
     }
 
     this.lastLocationTime = now;
     this.backgroundStats.totalAttempts++;
-    
-    // Save proof of background attempt
-    this.saveBackgroundProof('attempt', { 
-      timestamp: new Date().toISOString(),
-      attempt: this.backgroundStats.totalAttempts 
-    });
 
     // Try progressive fallback strategy for better success rate
     this.getLocationWithFallback();

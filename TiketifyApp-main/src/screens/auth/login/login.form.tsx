@@ -1,15 +1,12 @@
 import {Formik} from 'formik';
 import React from 'react';
 import {
-  Alert,
-  Dimensions,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
@@ -17,112 +14,110 @@ import * as yup from 'yup';
 import PrimaryButton from '../../../components/ui/primary-button';
 import colors from '../../../constants/colors';
 import {globalStyles} from '../../../constants/styles';
-
 import {useDispatch} from 'react-redux';
-// import {OneSignal} from 'react-native-onesignal';
 import * as KeyChain from 'react-native-keychain';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Snackbar from 'react-native-snackbar';
 import {OneSignal} from 'react-native-onesignal';
+import {apiFetch, formatApiError} from '../../../utils/apiClient';
 
 type Props = {
   navigation: any;
 };
 
-let initialValues: {
-  email: string;
-  password: string;
-} = {
+const initialValues = {
   email: '',
   password: '',
 };
 
-let validationSchema = yup.object().shape({
+const validationSchema = yup.object().shape({
   email: yup.string().required().email('Please enter a valid email address'),
-  password: yup.string().required(),
+  password: yup.string().required('Password is required'),
 });
 
-const LoginForm = (props: Props) => {
-  let dispatch = useDispatch();
-  function login(email: string, password: string) {
-    console.log('Login called with:', email, password);
-    fetch('https://api.ticketify.medianet.mv/api/v1/auth/login', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        email: email,
-        password: password,
-      }),
-    })
-      .then(response => {
-        return response.json();
-      })
-      .then(data => {
-        console.log(data);
-        if (data.statusCode === 200) {
-          // store the token
-          KeyChain.setGenericPassword(
-            JSON.stringify(data.user),
-            data.access_token,
-          );
+const LoginForm = (_props: Props) => {
+  const dispatch = useDispatch();
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [loginError, setLoginError] = React.useState('');
+  const passwordRef = React.useRef<TextInput>(null);
 
-          OneSignal.login(data?.user?.id.toString() ?? '0');
-          OneSignal.Notifications.requestPermission(true);
+  async function login(email: string, password: string) {
+    if (isSubmitting) {
+      return;
+    }
+    setLoginError('');
+    setIsSubmitting(true);
 
-          // OneSignal.login(data?.user?.id.toString() ?? '0');
-          // OneSignal.Notifications.requestPermission(true);
-          AsyncStorage.setItem('user', JSON.stringify(data.user));
-          dispatch({
-            type: 'LOGIN_SUCCESS',
-            payload: {
-              user: data.user,
-              isLoggedIn: true,
-              token: data.access_token,
-            },
-          });
-          props.navigation.navigate('HomeScreen');
-        } else if (data.statusCode === 403) {
-          Snackbar.show({
-            backgroundColor: 'red',
-            textColor: colors.white,
-            text: 'Invalid email or password',
-            duration: Snackbar.LENGTH_SHORT,
-          });
-        } else {
-          Alert.alert('Error', 'An error occurred', [
-            {
-              text: 'OK',
-              onPress: () => console.log('OK Pressed'),
-            },
-          ]);
-        }
-      })
-      .catch(err => {
-        Snackbar.show({
-          backgroundColor: 'red',
-          textColor: colors.white,
-          text: 'An error occurred',
-          duration: Snackbar.LENGTH_SHORT,
-        });
-        console.log('Error');
-        console.log(err);
+    try {
+      const {data, response} = await apiFetch('/auth/login', null, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({email, password}),
       });
+
+      const token = data?.access_token;
+      const isSuccess =
+        response.ok && Boolean(token) && Boolean(data?.user);
+
+      if (!isSuccess) {
+        setLoginError(
+          formatApiError(data, 'Invalid email or password'),
+        );
+        return;
+      }
+
+      try {
+        await KeyChain.setGenericPassword(
+          JSON.stringify(data.user),
+          token,
+        );
+      } catch {
+        // Session still valid in memory for this session
+      }
+
+      try {
+        await AsyncStorage.setItem('user', JSON.stringify(data.user));
+      } catch {
+        // Non-blocking
+      }
+
+      dispatch({
+        type: 'LOGIN_SUCCESS',
+        payload: {
+          user: data.user,
+          isLoggedIn: true,
+          token,
+        },
+      });
+
+      setTimeout(() => {
+        try {
+          OneSignal.login(String(data.user?.id ?? '0'));
+          OneSignal.Notifications.requestPermission(false);
+        } catch {
+          // Push setup must never block login
+        }
+      }, 1500);
+    } catch (err: any) {
+      const message =
+        err?.message === 'Network request failed'
+          ? 'Cannot reach server. Check USB connection and ensure the API is running.'
+          : err?.message || 'Something went wrong. Please try again.';
+      setLoginError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={{flex: 1}}>
-        <View style={{flex: 1, paddingHorizontal: 16}}>
+        style={styles.flex}>
+        <View style={styles.formWrap}>
           <Formik
             initialValues={initialValues}
             validationSchema={validationSchema}
-            onSubmit={values => {
-              login(values.email, values.password);
-            }}>
+            onSubmit={values => login(values.email, values.password)}>
             {({
               handleChange,
               handleBlur,
@@ -131,60 +126,65 @@ const LoginForm = (props: Props) => {
               errors,
               touched,
             }) => (
-              <View style={{flex: 1, justifyContent: 'space-between'}}>
-                <View style={{paddingTop: 40}}>
-                  <View style={globalStyles.inputWrapper}>
-                    <View style={globalStyles.inputContainer}>
-                      <Text style={globalStyles.label}>Email</Text>
-                      <View
-                        style={{flexDirection: 'row', alignItems: 'center'}}>
-                        <TextInput
-                          ref={ref => {
-                            // @ts-ignore
-                            this._emailRef = ref;
-                          }}
-                          onSubmitEditing={() => {
-                            // @ts-ignore
-                            this._passwordInput.focus();
-                          }}
-                          keyboardType="default"
-                          style={globalStyles.input}
-                          onChangeText={handleChange('email')}
-                          onBlur={handleBlur('email')}
-                          value={values.email}
-                        />
-                      </View>
-                    </View>
-                    {errors.email && touched.email && (
-                      <Text style={globalStyles.error}>{errors.email}</Text>
-                    )}
+              <View style={styles.formInner}>
+                {loginError ? (
+                  <View style={globalStyles.errorBanner}>
+                    <Text style={globalStyles.errorBannerText}>
+                      {loginError}
+                    </Text>
                   </View>
+                ) : null}
 
-                  {/* Password */}
-                  <View style={globalStyles.inputWrapper}>
-                    <View style={globalStyles.inputContainer}>
-                      <Text style={globalStyles.label}>Password</Text>
-                      <TextInput
-                        ref={ref => {
-                          // @ts-ignore
-                          this._passwordInput = ref;
-                        }}
-                        secureTextEntry
-                        style={globalStyles.input}
-                        onChangeText={handleChange('password')}
-                        onBlur={handleBlur('password')}
-                        value={values.password}
-                      />
-                    </View>
-                    {errors.password && touched.password && (
-                      <Text style={globalStyles.error}>{errors.password}</Text>
-                    )}
-                  </View>
+                <View style={globalStyles.inputWrapper}>
+                  <Text style={globalStyles.label}>Email</Text>
+                  <TextInput
+                    onSubmitEditing={() => passwordRef.current?.focus()}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    placeholder="name@company.com"
+                    placeholderTextColor={colors.gray3}
+                    style={globalStyles.input}
+                    onChangeText={text => {
+                      setLoginError('');
+                      handleChange('email')(text);
+                    }}
+                    onBlur={handleBlur('email')}
+                    value={values.email}
+                  />
+                  {errors.email && touched.email ? (
+                    <Text style={globalStyles.error}>{errors.email}</Text>
+                  ) : null}
                 </View>
 
-                {/* Login button at the bottom */}
-                <View style={{marginBottom: 40}}>
-                  <PrimaryButton text="Log in" onPress={handleSubmit} />
+                <View style={globalStyles.inputWrapper}>
+                  <Text style={globalStyles.label}>Password</Text>
+                  <TextInput
+                    ref={passwordRef}
+                    secureTextEntry
+                    placeholder="Enter your password"
+                    placeholderTextColor={colors.gray3}
+                    style={globalStyles.input}
+                    onChangeText={text => {
+                      setLoginError('');
+                      handleChange('password')(text);
+                    }}
+                    onBlur={handleBlur('password')}
+                    value={values.password}
+                    onSubmitEditing={() => handleSubmit()}
+                  />
+                  {errors.password && touched.password ? (
+                    <Text style={globalStyles.error}>{errors.password}</Text>
+                  ) : null}
+                </View>
+
+                <View style={styles.buttonWrap}>
+                  <PrimaryButton
+                    text={isSubmitting ? 'Signing in…' : 'Sign in'}
+                    onPress={handleSubmit}
+                    disabled={isSubmitting}
+                    loading={isSubmitting}
+                  />
                 </View>
               </View>
             )}
@@ -196,14 +196,10 @@ const LoginForm = (props: Props) => {
 };
 
 const styles = StyleSheet.create({
-  input: {
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-    borderRadius: 10,
-    padding: 10,
-    height: 40,
-    color: colors.black,
-  },
+  flex: {flex: 1},
+  formWrap: {flex: 1, paddingHorizontal: 4},
+  formInner: {flex: 1, justifyContent: 'center', gap: 4},
+  buttonWrap: {marginTop: 8, marginBottom: 24},
 });
 
 export default LoginForm;

@@ -91,7 +91,6 @@ export default function Reports({}: Props) {
         setTicketReportFetching(false);
       })
       .catch((error) => {
-        setTicketReportFetching(true);
         console.error(error);
       })
       .finally(() => {
@@ -110,13 +109,10 @@ export default function Reports({}: Props) {
           selectedQueue
       )
       .then((response) => {
-        console.log(response.data);
-        setAgingReport(response.data[0]);
-        groupedByOwnerTeam(response.data[0]);
+        setAgingReport(response.data?.[0] ?? {});
         setAgingReportFetching(false);
       })
       .catch((error) => {
-        setAgingReportFetching(true);
         console.error(error);
       })
       .finally(() => {

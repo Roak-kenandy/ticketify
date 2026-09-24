@@ -1,168 +1,220 @@
 import {
   View,
   Text,
-  ImageBackground,
-  Image,
   TouchableOpacity,
   StyleSheet,
-  Switch,
   Linking,
-  ScrollView,
-  ScrollViewProps,
 } from 'react-native';
-import {
-  DrawerContentScrollView,
-  DrawerItemList,
-} from '@react-navigation/drawer';
+import {DrawerContentScrollView} from '@react-navigation/drawer';
+import Icon from 'react-native-vector-icons/Ionicons';
 import colors from '../../constants/colors';
 import {useDispatch, useSelector} from 'react-redux';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as KeyChain from 'react-native-keychain';
-import {
-  DrawerNavigationHelpers,
-  DrawerDescriptorMap,
-} from '@react-navigation/drawer/lib/typescript/src/types';
-import {DrawerNavigationState, ParamListBase} from '@react-navigation/native';
-import {JSX, RefAttributes} from 'react';
+import {spacing} from '../../constants/styles';
 
-const CustomDrawer = (
-  props:
-    | (JSX.IntrinsicAttributes &
-        ScrollViewProps & {
-          children: React.ReactNode;
-        } & RefAttributes<ScrollView>)
-    | (JSX.IntrinsicAttributes & {
-        state: DrawerNavigationState<ParamListBase>;
-        navigation: DrawerNavigationHelpers;
-        descriptors: DrawerDescriptorMap;
-      }),
-) => {
-  let dispatch = useDispatch();
-  let user = useSelector((state: any) => state.auth.user);
+const NAV_ITEMS = [
+  {route: 'Home', label: 'Dashboard', icon: 'grid-outline'},
+  {route: 'My Tickets', label: 'My tickets', icon: 'layers-outline'},
+  {route: 'Feedbacks', label: 'Feedbacks', icon: 'chatbubble-ellipses-outline'},
+] as const;
+
+function getInitials(name?: string) {
+  if (!name) {
+    return '?';
+  }
+  return name
+    .split(' ')
+    .map(part => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+const CustomDrawer = (props: any) => {
+  const dispatch = useDispatch();
+  const user = useSelector((state: any) => state.auth.user);
+  const activeRoute = props.state.routeNames[props.state.index];
+
   return (
-    <View style={{flex: 1}}>
+    <View style={styles.root}>
       <DrawerContentScrollView
         {...props}
-        contentContainerStyle={{
-          backgroundColor: colors.primary,
-          marginTop: -50,
-          zIndex: 10,
-        }}>
-        <ImageBackground style={{padding: 20}}>
-          <Image
-            alt="Not find"
-            src={
-              'https://img.freepik.com/premium-photo/memoji-happy-man-white-background-emoji_826801-6839.jpg'
-            }
-            style={styles.userAvatar}
-          />
-          <Text
-            style={{
-              color: '#fff',
-              fontSize: 18,
-              marginBottom: 5,
-              fontWeight: 'bold',
-            }}>
-            {user?.name ?? 'Loading'}
+        contentContainerStyle={styles.scrollContent}>
+        <View style={styles.header}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{getInitials(user?.name)}</Text>
+          </View>
+          <Text style={styles.name}>{user?.name ?? 'Technician'}</Text>
+          <Text style={styles.email} numberOfLines={1}>
+            {user?.email ?? ''}
           </Text>
-          <Text style={{color: colors.gray2, fontSize: 15}}>
-            {user?.email ?? 'Loading'}
-          </Text>
-        </ImageBackground>
-        <View style={{flex: 1, backgroundColor: '#fff', paddingTop: 10}}>
-          <DrawerItemList {...props} />
+        </View>
+
+        <View style={styles.menu}>
+          {NAV_ITEMS.map(item => {
+            const focused = activeRoute === item.route;
+            return (
+              <TouchableOpacity
+                key={item.route}
+                style={[styles.navItem, focused && styles.navItemActive]}
+                activeOpacity={0.75}
+                onPress={() => props.navigation.navigate(item.route)}>
+                <Icon
+                  name={item.icon}
+                  size={22}
+                  color={focused ? colors.primary : colors.gray2}
+                  style={styles.navIcon}
+                />
+                <Text
+                  style={[styles.navLabel, focused && styles.navLabelActive]}>
+                  {item.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
       </DrawerContentScrollView>
-      <View style={{padding: 20, borderTopWidth: 1, borderTopColor: '#ccc'}}>
-        <TouchableOpacity
-          onPress={() => {
-            // call support
-            props.navigation.navigate('ChangePasswordScreen');
-          }}
-          style={{paddingVertical: 15}}>
-          <View style={{flexDirection: 'row', alignItems: 'center'}}>
-            <Text
-              style={{
-                fontSize: 15,
 
-                marginLeft: 5,
-              }}>
-              Change Password
-            </Text>
-          </View>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => {
-            // call support
-            Linking.openURL('tel:+9609993529');
-          }}
-          style={{paddingVertical: 15}}>
-          <View style={{flexDirection: 'row', alignItems: 'center'}}>
-            <Text
-              style={{
-                fontSize: 15,
-
-                marginLeft: 5,
-              }}>
-              Contact Support
-            </Text>
-          </View>
-        </TouchableOpacity>
-        <TouchableOpacity
+      <View style={styles.footer}>
+        <DrawerAction
+          icon="key-outline"
+          label="Change password"
+          onPress={() => props.navigation.navigate('ChangePasswordScreen')}
+        />
+        <DrawerAction
+          icon="call-outline"
+          label="Contact support"
+          onPress={() => Linking.openURL('tel:+9609993529')}
+        />
+        <DrawerAction
+          icon="log-out-outline"
+          label="Sign out"
+          danger
           onPress={async () => {
-            // remove user from redux
             await KeyChain.resetGenericPassword();
-            await AsyncStorage.removeItem('user');
-            await AsyncStorage.removeItem('token');
-            await dispatch({
-              type: 'LOGOUT',
-            });
-            props.navigation.navigate('LoginScreen');
+            await AsyncStorage.multiRemove(['user', 'token']);
+            dispatch({type: 'LOGOUT'});
           }}
-          style={{paddingVertical: 15}}>
-          <View style={{flexDirection: 'row', alignItems: 'center'}}>
-            <Text
-              style={{
-                fontSize: 15,
-
-                marginLeft: 5,
-              }}>
-              Sign Out
-            </Text>
-          </View>
-        </TouchableOpacity>
+        />
       </View>
     </View>
   );
 };
 
+function DrawerAction({
+  icon,
+  label,
+  onPress,
+  danger,
+}: {
+  icon: string;
+  label: string;
+  onPress: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <TouchableOpacity style={styles.action} onPress={onPress} activeOpacity={0.7}>
+      <Icon
+        name={icon}
+        size={20}
+        color={danger ? colors.error : colors.gray2}
+        style={styles.actionIcon}
+      />
+      <Text style={[styles.actionText, danger && styles.actionDanger]}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
 export default CustomDrawer;
 
 const styles = StyleSheet.create({
-  userAvatar: {
-    height: 67.5,
-    width: 67.5,
-    borderRadius: 40,
-    marginBottom: 10,
-    marginTop: 30,
+  root: {flex: 1, backgroundColor: colors.white},
+  scrollContent: {
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
   },
-  switchTextContainer: {
+  header: {
+    backgroundColor: colors.primary,
+    marginHorizontal: spacing.lg,
+    borderRadius: 16,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
+  },
+  avatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.secondary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  avatarText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  name: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.white,
+  },
+  email: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.8)',
+    marginTop: 4,
+  },
+  menu: {
+    paddingHorizontal: spacing.lg,
+    gap: spacing.xs,
+  },
+  navItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginLeft: 7,
-    paddingVertical: 5,
+    paddingVertical: 14,
+    paddingHorizontal: spacing.md,
+    borderRadius: 12,
   },
-  preferences: {
+  navItemActive: {
+    backgroundColor: colors.tertiary,
+  },
+  navIcon: {
+    width: 28,
+    textAlign: 'center',
+  },
+  navLabel: {
     fontSize: 16,
-    color: '#ccc',
-    paddingTop: 10,
+    fontWeight: '600',
+    color: colors.gray2,
+    marginLeft: spacing.md,
+  },
+  navLabelActive: {
+    color: colors.primary,
+  },
+  footer: {
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+    padding: spacing.lg,
+    gap: spacing.xs,
+  },
+  action: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+  },
+  actionIcon: {
+    width: 28,
+    textAlign: 'center',
+  },
+  actionText: {
+    fontSize: 15,
     fontWeight: '500',
-    paddingLeft: 20,
+    color: colors.black,
+    marginLeft: spacing.md,
   },
-  switchText: {
-    fontSize: 17,
-    color: '',
-    paddingTop: 10,
-    fontWeight: 'bold',
-  },
+  actionDanger: {color: colors.error},
 });

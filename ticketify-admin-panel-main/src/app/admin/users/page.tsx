@@ -50,25 +50,32 @@ export default function UsersPage() {
   });
 
   useEffect(() => {
-    fetchUsers();
-    fetchRoles();
+    fetchRoles({ silent: true });
+  }, []);
+
+  useEffect(() => {
+    fetchUsers({ silent: true });
   }, [filters]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const fetchUsers = async () => {
+  const fetchUsers = async (options?: { silent?: boolean }) => {
     try {
       setLoading(true);
       const response = await AdminAPI.getAllUsers(filters);
-      // @ts-ignore
-      setUsers(response);
+      const userList = Array.isArray(response)
+        ? response
+        : response?.users ?? [];
+      setUsers(userList);
     } catch (error) {
       console.error("Failed to fetch users:", error);
-      toast.error("Failed to load users");
+      if (!options?.silent) {
+        toast.error("Failed to load users");
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchRoles = async () => {
+  const fetchRoles = async (options?: { silent?: boolean }) => {
     try {
       const rolesData = await AdminAPI.getAllRoles();
 
@@ -133,7 +140,8 @@ export default function UsersPage() {
   const handleAvailabilityFilter = (value: string) => {
     setFilters((prev) => ({
       ...prev,
-      availability: value === "all" ? undefined : value === "true",
+      availability:
+        value === "all" ? undefined : value === "active" ? true : false,
       page: 1,
     }));
   };
@@ -179,6 +187,15 @@ export default function UsersPage() {
       {/* Filters */}
       <Card className="p-6">
         <div className="flex flex-col sm:flex-row gap-4">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search by name or email..."
+              className="pl-9"
+              value={filters.search}
+              onChange={(e) => handleSearch(e.target.value)}
+            />
+          </div>
           <Select
             value={filters.role || "all"}
             onValueChange={handleRoleFilter}
@@ -193,6 +210,25 @@ export default function UsersPage() {
                   {role.name}
                 </SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={
+              filters.availability === undefined
+                ? "all"
+                : filters.availability
+                ? "active"
+                : "inactive"
+            }
+            onValueChange={handleAvailabilityFilter}
+          >
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder="Filter by status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="active">Active (Online)</SelectItem>
+              <SelectItem value="inactive">Inactive (Offline)</SelectItem>
             </SelectContent>
           </Select>
         </div>

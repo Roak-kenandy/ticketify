@@ -51,6 +51,18 @@ async function main() {
     },
   });
 
+  await prisma.user.create({
+    data: {
+      role: { connect: { id: '1' } },
+      name: 'RND Admin',
+      email: 'rnd@medianet.mv',
+      password: await argon.hash('Medianet@123'),
+      crm_user_id: 'rnd-admin-seed-user-id',
+      created_at: new Date(),
+      updated_at: new Date(),
+    },
+  });
+
   // create a technician user
 }
 

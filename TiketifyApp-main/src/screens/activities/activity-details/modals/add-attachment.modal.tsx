@@ -13,14 +13,14 @@ import {
   View,
 } from 'react-native';
 import {KeyboardAvoidingView, Platform} from 'react-native';
-import SecondaryButton from '../../../../components/ui/secondary-button';
 import ASeperator from '../../../../components/ui/seperator';
 import colors from '../../../../constants/colors';
-import PrimaryButton from '../../../../components/ui/primary-button';
+import ModalFooterActions from '../../../../components/ui/modal-footer-actions';
 import Icon from 'react-native-vector-icons/Ionicons';
 import {launchImageLibrary} from 'react-native-image-picker';
 import {useSelector} from 'react-redux';
 import Snackbar from 'react-native-snackbar';
+import {API_BASE_URL} from '../../../../config/api';
 
 let {width} = Dimensions.get('window');
 
@@ -80,10 +80,12 @@ const AddAttachmentModal = (props: Props) => {
     let formData = new FormData();
 
     if (selectedImage.uri === '') {
+      setIsSubmitting(false);
       Alert.alert('Error', 'Please select an image');
       return;
     }
     if (description === '') {
+      setIsSubmitting(false);
       Alert.alert('Error', 'Please enter description');
       return;
     }
@@ -119,7 +121,7 @@ const AddAttachmentModal = (props: Props) => {
 
         console.log('File ID', data.id);
         fetch(
-          `https://api.ticketify.medianet.mv/api/v1/tickets/${props.ticketId}/attachments`,
+          `${API_BASE_URL}/tickets/${props.ticketId}/attachments`,
           {
             method: 'POST',
             headers: {
@@ -208,26 +210,14 @@ const AddAttachmentModal = (props: Props) => {
               behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
               style={{width: '100%', alignItems: 'center'}}>
               <View style={styles.modalView}>
-                <View
+                <Text
                   style={{
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                    width: '100%',
-                    alignItems: 'center',
+                    fontSize: 18,
+                    fontWeight: '600',
+                    color: colors.black,
                   }}>
-                  <Text
-                    style={{
-                      fontSize: 18,
-                      fontWeight: '600',
-                      color: colors.black,
-                    }}>
-                    Add Attachment
-                  </Text>
-                  <SecondaryButton
-                    text="Close"
-                    onPress={() => props.setModalVisible(false)}
-                  />
-                </View>
+                  Add Attachment
+                </Text>
                 <ASeperator />
                 <View
                   style={{
@@ -363,23 +353,12 @@ const AddAttachmentModal = (props: Props) => {
                   </View>
                 </View>
 
-                <View
-                  style={{
-                    alignSelf: 'flex-end',
-                    gap: 10,
-                    flexDirection: 'row',
-                  }}>
-                  <PrimaryButton
-                    text={
-                      isSubmitting
-                        ? 'Submitting Attachment...'
-                        : 'Submit Attachment'
-                    }
-                    onPress={() => {
-                      isSubmitting ? null : submitAttachment();
-                    }}
-                  />
-                </View>
+                <ModalFooterActions
+                  onCancel={() => props.setModalVisible(false)}
+                  onSubmit={submitAttachment}
+                  submitText="Submit"
+                  loading={isSubmitting}
+                />
               </View>
             </KeyboardAvoidingView>
           </View>

@@ -1,28 +1,35 @@
-// Utility to sync authentication between localStorage and cookies
+/** Sync auth token between localStorage (client) and cookies (middleware). */
+
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
+
+function cookieFlags(): string {
+  const secure =
+    typeof window !== 'undefined' && window.location.protocol === 'https:';
+  return `path=/; samesite=strict; max-age=${COOKIE_MAX_AGE}${
+    secure ? '; secure' : ''
+  }`;
+}
 
 export function setAuthToken(token: string) {
-  // Store in localStorage (for client-side)
-  if (typeof window !== 'undefined') {
-    localStorage.setItem('access_token', token);
+  if (typeof window === 'undefined') {
+    return;
   }
-  
-  // Store in cookie (for server-side middleware)
-  document.cookie = `access_token=${token}; path=/; secure; samesite=strict; max-age=2592000`; // 30 days
+  localStorage.setItem('access_token', token);
+  document.cookie = `access_token=${encodeURIComponent(token)}; ${cookieFlags()}`;
 }
 
 export function removeAuthToken() {
-  // Remove from localStorage
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem('access_token');
+  if (typeof window === 'undefined') {
+    return;
   }
-  
-  // Remove from cookies
-  document.cookie = 'access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+  localStorage.removeItem('access_token');
+  document.cookie =
+    'access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; samesite=strict';
 }
 
 export function getAuthToken(): string | null {
-  if (typeof window !== 'undefined') {
-    return localStorage.getItem('access_token');
+  if (typeof window === 'undefined') {
+    return null;
   }
-  return null;
+  return localStorage.getItem('access_token');
 }

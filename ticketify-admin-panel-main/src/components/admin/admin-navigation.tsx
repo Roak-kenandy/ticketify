@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
   Users,
   UserPlus,
@@ -16,22 +16,22 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AdminAuth } from "@/lib/admin-auth";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const navigation = [
   { name: "Dashboard", href: "/admin", icon: LayoutDashboard },
   { name: "User Management", href: "/admin/users", icon: Users },
   { name: "Create User", href: "/admin/users/create", icon: UserPlus },
+  { name: "Settings", href: "/settings", icon: Settings },
   { name: "Back to Main App", href: "/", icon: Ticket },
 ];
 
 export function AdminNavigation() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pathname = usePathname();
-  const router = useRouter();
 
   const handleLogout = () => {
     AdminAuth.logout();
-    router.push("/auth/login");
   };
 
   return (
@@ -111,7 +111,11 @@ export function AdminNavigation() {
           </nav>
 
           {/* Footer */}
-          <div className="p-4 border-t border-border">
+          <div className="p-4 border-t border-border space-y-2">
+            <div className="flex items-center justify-between px-1">
+              <span className="text-xs text-muted-foreground">Theme</span>
+              <ThemeToggle />
+            </div>
             <Button
               variant="ghost"
               onClick={handleLogout}

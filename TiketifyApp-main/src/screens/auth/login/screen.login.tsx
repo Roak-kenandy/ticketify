@@ -13,8 +13,8 @@ const LoginScreen = (props: Props) => {
   return (
     <AuthLayout
       showLogo={true}
-      heading="Welcome back to Techify"
-      subHeading="Login to your account using the provided email and password"
+      heading="Welcome to Ticketify"
+      subHeading="Sign in to manage your field tasks and tickets"
       navigation={props.navigation}>
       <LoginForm navigation={props.navigation} />
       {/* sign up */}

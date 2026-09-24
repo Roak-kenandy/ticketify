@@ -1,21 +1,22 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 
-import StatBoard from "@/components/statistics-board/stat-board";
 import { Toaster } from "sonner";
+import { ThemeProvider } from "@/components/theme-provider";
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Ticketify - Dashboard",
   description: "Remote support ticketing system",
-  viewport: {
-    width: "device-width",
-    initialScale: 1,
-    maximumScale: 1,
-    userScalable: false,
-  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
 };
 
 export default function RootLayout({
@@ -24,19 +25,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
-      <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-      </head>
+    <html lang="en" suppressHydrationWarning>
       <body
-        className={
-          "h-screen w-screen overflow-hidden bg-background " +
-          inter.className
-        }
-        style={{ touchAction: "pan-x pan-y" }}
-      >
-        <main className="w-full h-full">{children}</main>
-        <Toaster />
+        className={`h-screen w-screen overflow-hidden bg-background ${inter.className}`}
+        style={{ touchAction: "pan-x pan-y" }}>
+        <ThemeProvider>
+          <main className="w-full h-full">{children}</main>
+          <Toaster richColors closeButton position="top-right" />
+        </ThemeProvider>
       </body>
     </html>
   );

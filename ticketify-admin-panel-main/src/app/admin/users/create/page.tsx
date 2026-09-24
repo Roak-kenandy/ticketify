@@ -33,16 +33,18 @@ export default function CreateUserPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    fetchRoles();
+    fetchRoles({ silent: true });
   }, []);
 
-  const fetchRoles = async () => {
+  const fetchRoles = async (options?: { silent?: boolean }) => {
     try {
       const rolesData = await AdminAPI.getAllRoles();
       setRoles(rolesData);
     } catch (error) {
       console.error("Failed to fetch roles:", error);
-      toast.error("Failed to load roles");
+      if (!options?.silent) {
+        toast.error("Failed to load roles");
+      }
     }
   };
 
@@ -92,7 +94,11 @@ export default function CreateUserPage() {
 
     try {
       setLoading(true);
-      await AdminAPI.createUser(formData);
+      const result = await AdminAPI.createUser(formData);
+      if (!result?.user) {
+        toast.error("User was not created. Please check the form and try again.");
+        return;
+      }
       toast.success("User created successfully");
       router.push("/admin/users");
     } catch (error: any) {

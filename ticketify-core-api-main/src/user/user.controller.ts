@@ -89,14 +89,11 @@ export class UserController {
   @UseGuards(JwtGuard)
   @Patch('status')
   updateStatus(
-    @Query()
-    status: {
-      status: 'AVAILABLE' | 'UNAVAILABLE' | 'BREAK' | 'OFFLINE';
-    },
+    @Query('status')
+    status: 'AVAILABLE' | 'UNAVAILABLE' | 'BREAK' | 'OFFLINE',
     @Req() req: { user: any },
   ) {
-    console.log('hello', status);
-    return this.userService.updateStatus(status, req.user);
+    return this.userService.updateStatus({ status }, req.user);
   }
 
   @UseGuards(JwtGuard)

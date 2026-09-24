@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   Alert,
-  Dimensions,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -12,88 +11,104 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
-import SecondaryButton from '../../../../components/ui/secondary-button';
 import ASeperator from '../../../../components/ui/seperator';
 import colors from '../../../../constants/colors';
-import PrimaryButton from '../../../../components/ui/primary-button';
+import ModalFooterActions from '../../../../components/ui/modal-footer-actions';
 import Snackbar from 'react-native-snackbar';
-import {useSelector} from 'react-redux';
+import {useDispatch, useSelector} from 'react-redux';
+import {API_BASE_URL} from '../../../../config/api';
+import {notifyTicketMutation} from '../../../../services/ticketsSync';
 
 type Props = {
   modalVisible: boolean;
   setModalVisible: (value: boolean) => void;
   ticketId: number;
   nextStage: any;
+  onSuccess?: (updatedTicket: any) => void;
 };
 
 const ClosingModal = (props: Props) => {
-  let [isSubmitting, setIsSubmitting] = React.useState(false);
-  let auth = useSelector((state: any) => state.auth);
-  let [note, setNote] = React.useState('');
+  const dispatch = useDispatch();
+  const token = useSelector((state: any) => state.auth?.token);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [note, setNote] = React.useState('');
 
   async function submitNote() {
-    setIsSubmitting(true);
-    if (!note) {
-      setIsSubmitting(false);
+    if (isSubmitting) {
+      return;
+    }
+    if (!note.trim()) {
       Snackbar.show({
         text: 'Please enter a note',
         duration: Snackbar.LENGTH_SHORT,
         backgroundColor: 'red',
         textColor: colors.white,
       });
+      return;
     }
 
-    await fetch(
-      `https://api.ticketify.medianet.mv/api/v1/tickets/${props.ticketId}/complete`,
-      {
-        method: 'PUT',
-        headers: {
-          Authorization: 'Bearer ' + auth?.token,
-          'Content-Type': 'application/json',
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/tickets/${props.ticketId}/complete`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: 'Bearer ' + token,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            comment: note,
+            pinned: false,
+            stage_id: props.nextStage.id,
+          }),
         },
-        body: JSON.stringify({
-          comment: note,
-          pinned: false,
-          stage_id: props.nextStage.id,
-        }),
-      },
-    )
-      .then(response => response.json())
-      .then(data => {
-        console.log(data);
-        if (data.status == 403) {
-          Snackbar.show({
-            text: data.message,
-            duration: Snackbar.LENGTH_SHORT,
-            backgroundColor: 'red',
-            textColor: colors.white,
-          });
-          setIsSubmitting(false);
-          props.setModalVisible(false);
-        } else {
-          Snackbar.show({
-            text: 'Ticket Closed Successfully',
-            duration: Snackbar.LENGTH_SHORT,
-            backgroundColor: colors.primary,
-            textColor: colors.white,
-          });
-          setIsSubmitting(false);
-          props.setModalVisible(false);
-        }
-      })
-      .catch(error => {
-        console.error('Error:', error);
-        setIsSubmitting(false);
+      );
+      const data = await response.json();
+
+      if (data.status == 403) {
         Snackbar.show({
-          text: error?.message,
+          text: data.message,
           duration: Snackbar.LENGTH_SHORT,
           backgroundColor: 'red',
           textColor: colors.white,
         });
-      });
+        props.setModalVisible(false);
+        return;
+      }
 
-    // Submit note
+      if (!response.ok) {
+        throw new Error(data?.message || 'Failed to close ticket');
+      }
+
+      const updated = await notifyTicketMutation(
+        dispatch,
+        token,
+        props.ticketId,
+        {state: 'CLOSED'},
+        {id: props.ticketId, state: 'CLOSED'},
+      );
+
+      Snackbar.show({
+        text: 'Ticket Closed Successfully',
+        duration: Snackbar.LENGTH_SHORT,
+        backgroundColor: colors.primary,
+        textColor: colors.white,
+      });
+      props.setModalVisible(false);
+      props.onSuccess?.(updated);
+    } catch (error: any) {
+      Snackbar.show({
+        text: error?.message || 'Failed to close ticket',
+        duration: Snackbar.LENGTH_SHORT,
+        backgroundColor: 'red',
+        textColor: colors.white,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   }
+
   return (
     <View style={styles.centeredView}>
       <Modal
@@ -118,31 +133,17 @@ const ClosingModal = (props: Props) => {
               behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
               style={{width: '100%', alignItems: 'center'}}>
               <View style={styles.modalView}>
-                {/* Header */}
-                <View
+                <Text
                   style={{
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                    width: '100%',
-                    alignItems: 'center',
+                    fontSize: 18,
+                    fontWeight: '600',
+                    color: colors.black,
                   }}>
-                  <Text
-                    style={{
-                      fontSize: 18,
-                      fontWeight: '600',
-                      color: colors.black,
-                    }}>
-                    Add Closing Comment
-                  </Text>
-                  <SecondaryButton
-                    text="Close"
-                    onPress={() => props.setModalVisible(false)}
-                  />
-                </View>
+                  Add Closing Comment
+                </Text>
 
                 <ASeperator />
 
-                {/* Comment Input */}
                 <View style={{gap: 10, width: '100%'}}>
                   <Text style={{fontSize: 14, color: colors.black}}>
                     Comment
@@ -164,18 +165,11 @@ const ClosingModal = (props: Props) => {
                   />
                 </View>
 
-                {/* Buttons */}
-                <View
-                  style={{
-                    alignSelf: 'flex-end',
-                    gap: 10,
-                    flexDirection: 'row',
-                  }}>
-                  <PrimaryButton
-                    text={isSubmitting ? 'Submitting...' : 'Submit'}
-                    onPress={() => (isSubmitting ? null : submitNote())}
-                  />
-                </View>
+                <ModalFooterActions
+                  onCancel={() => props.setModalVisible(false)}
+                  onSubmit={submitNote}
+                  loading={isSubmitting}
+                />
               </View>
             </KeyboardAvoidingView>
           </View>
@@ -202,21 +196,9 @@ const styles = StyleSheet.create({
     padding: 15,
     alignItems: 'flex-start',
     shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
+    shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.25,
     shadowRadius: 4,
     elevation: 5,
-  },
-  textStyle: {
-    color: 'white',
-    fontWeight: 'bold',
-    textAlign: 'center',
-  },
-  modalText: {
-    marginBottom: 15,
-    textAlign: 'center',
   },
 });

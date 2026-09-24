@@ -1,12 +1,8 @@
-import React from 'react';
-import {
-  Dimensions,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import React, {useMemo} from 'react';
+import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
+import Icon from 'react-native-vector-icons/Ionicons';
 import colors from '../../../../constants/colors';
+import {radius, shadows, spacing} from '../../../../constants/styles';
 
 type Props = {
   tickets: any;
@@ -14,215 +10,173 @@ type Props = {
 };
 
 const StatsCard = (props: Props) => {
+  const {assigned, inProgress, closed, currentTask, nextTask} = useMemo(() => {
+    const ticketList = props.tickets ?? [];
+    const assignedTickets = ticketList.filter((t: any) => t.state === 'NEW');
+    const inProgressTickets = ticketList.filter(
+      (t: any) => t.state === 'IN_PROGRESS',
+    );
+    const closedTickets = ticketList.filter((t: any) => t.state === 'CLOSED');
+
+    return {
+      assigned: assignedTickets,
+      inProgress: inProgressTickets,
+      closed: closedTickets,
+      currentTask: inProgressTickets[0],
+      nextTask: assignedTickets[0],
+    };
+  }, [props.tickets]);
+
+  const stats = [
+    {
+      label: 'Assigned',
+      value: assigned.length,
+      color: colors.primary,
+      bg: colors.tertiary,
+    },
+    {
+      label: 'In Progress',
+      value: inProgress.length,
+      color: colors.success,
+      bg: colors.successBg,
+    },
+    {
+      label: 'Completed',
+      value: closed.length,
+      color: colors.warning,
+      bg: colors.warningBg,
+    },
+  ];
+
   return (
     <View style={styles.card}>
-      <View style={styles.rowConatiner}>
-        <View style={styles.statContainer}>
-          <Text
-            style={{
-              color: colors.primary,
-            }}>
-            Assigned
-          </Text>
-          <Text style={styles.statValue}>
-            {props.tickets?.filter((ticket: any) => ticket.state === 'NEW')
-              ?.length ?? 0}
-          </Text>
-        </View>
-        <View
-          style={[
-            styles.statContainer,
-            {
-              borderLeftWidth: 1,
-              borderLeftColor: colors.gray2,
-              borderRightWidth: 1,
-              borderRightColor: colors.gray2,
-              paddingHorizontal: 30,
-            },
-          ]}>
-          <Text
-            style={{
-              color: 'green',
-            }}>
-            In Progress
-          </Text>
-          <Text style={styles.statValue}>
-            {props.tickets?.filter(
-              (ticket: any) => ticket.state === 'IN_PROGRESS',
-            )?.length ?? 0}
-          </Text>
-        </View>
-        <View style={styles.statContainer}>
-          <Text
-            style={{
-              color: 'orange',
-            }}>
-            Completed
-          </Text>
-          <Text style={styles.statValue}>
-            {props.tickets?.filter((ticket: any) => ticket.state === 'CLOSED')
-              ?.length ?? 0}
-          </Text>
-        </View>
+      <View style={styles.statsRow}>
+        {stats.map(stat => (
+          <View key={stat.label} style={[styles.statBox, {backgroundColor: stat.bg}]}>
+            <Text style={[styles.statValue, {color: stat.color}]}>
+              {stat.value}
+            </Text>
+            <Text style={styles.statLabel}>{stat.label}</Text>
+          </View>
+        ))}
       </View>
-      <View
-        style={{
-          gap: 10,
-          marginTop: 10,
-        }}>
-        <View
-          style={{
-            display: 'flex',
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            gap: 80,
-            alignItems: 'center',
-          }}>
-          <Text
-            style={{
-              display: 'flex',
-              flexDirection: 'row',
-              justifyContent: 'space-between',
-              gap: 10,
-              alignItems: 'center',
-            }}>
-            Current Task
-          </Text>
-          <TouchableOpacity
-            onPress={() =>
-              props.tickets?.filter(
-                (ticket: any) => ticket.state === 'IN_PROGRESS',
-              ).length === 0
-                ? null
-                : props.navigation.navigate('ActivityDetailsScreen', {
-                    ticket: props.tickets?.filter(
-                      (ticket: any) => ticket.state === 'IN_PROGRESS',
-                    )[0],
-                  })
-            }>
-            <Text
-              numberOfLines={1}
-              ellipsizeMode="clip"
-              style={{
-                fontSize: 12,
-                color: colors.black,
-                overflow: 'hidden',
-                width: '80%',
-                minWidth: 200,
-                textAlign: 'right',
-              }}>
-              {props.tickets?.filter(
-                (ticket: any) => ticket.state === 'IN_PROGRESS',
-              )[0]?.description ?? 'No Task'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-        <View
-          style={{
-            display: 'flex',
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            gap: 10,
-            alignItems: 'center',
-          }}>
-          <Text>Next Task</Text>
-          <TouchableOpacity
-            style={{
-              width: '80%',
-              display: 'flex',
-              flexDirection: 'row',
-              justifyContent: 'flex-end',
-              alignItems: 'center',
-            }}
-            onPress={() =>
-              props.tickets?.filter((ticket: any) => ticket.state === 'NEW')
-                .length === 0
-                ? null
-                : props.navigation.navigate('ActivityDetailsScreen', {
-                    ticket: props.tickets?.filter(
-                      (ticket: any) => ticket.state === 'NEW',
-                    )[0],
-                  })
-            }>
-            <Text
-              ellipsizeMode="tail"
-              numberOfLines={1}
-              style={{
-                fontSize: 12,
-                color: colors.black,
-                overflow: 'hidden',
-                width: 200,
-                textAlign: 'right',
-              }}>
-              {props.tickets?.filter((ticket: any) => ticket.state === 'NEW')[0]
-                ?.description ?? 'No Task'}
-            </Text>
-          </TouchableOpacity>
-        </View>
+
+      <View style={styles.taskSection}>
+        <TaskRow
+          icon="play-circle-outline"
+          label="Current task"
+          task={currentTask}
+          onPress={() =>
+            currentTask &&
+            props.navigation.navigate('ActivityDetailsScreen', {
+              ticket: currentTask,
+            })
+          }
+        />
+        <View style={styles.divider} />
+        <TaskRow
+          icon="arrow-forward-circle-outline"
+          label="Next up"
+          task={nextTask}
+          onPress={() =>
+            nextTask &&
+            props.navigation.navigate('ActivityDetailsScreen', {
+              ticket: nextTask,
+            })
+          }
+        />
       </View>
     </View>
   );
 };
 
-export default StatsCard;
+function TaskRow({
+  icon,
+  label,
+  task,
+  onPress,
+}: {
+  icon: string;
+  label: string;
+  task: any;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={styles.taskRow}
+      onPress={onPress}
+      disabled={!task}
+      activeOpacity={0.7}>
+      <View style={styles.taskLeft}>
+        <Icon name={icon} size={20} color={colors.primary} />
+        <Text style={styles.taskLabel}>{label}</Text>
+      </View>
+      <Text style={styles.taskValue} numberOfLines={1}>
+        {task?.number ?? task?.description ?? 'None'}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+export default React.memo(StatsCard);
 
 const styles = StyleSheet.create({
-  container: {
-    position: 'relative',
-    width: Dimensions.get('window').width,
-    padding: 20,
-  },
-  subContainer: {
-    zIndex: 999,
-    position: 'absolute',
-    top: -110,
-    left: 20,
-    right: 0,
-    padding: 0,
-    gap: 20,
-    width: Dimensions.get('window').width - 40,
-  },
-  statContainer: {
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'space-between',
-    gap: 10,
-    alignItems: 'center',
-  },
   card: {
     backgroundColor: colors.white,
-    padding: 20,
-    borderRadius: 20,
-    gap: 10,
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowColor: '#000',
-    shadowOpacity: 0.23,
-    shadowRadius: 2.62,
-    // Elevation for Android
-    elevation: 4,
-
-    borderWidth: 2,
-    borderColor: colors.gray,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    gap: spacing.lg,
+    ...shadows.card,
   },
-  rowConatiner: {
-    display: 'flex',
+  statsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    gap: 0,
+    gap: spacing.sm,
   },
-  heading: {
-    color: colors.white,
-    fontSize: 18,
-    fontWeight: 'bold',
+  statBox: {
+    flex: 1,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    gap: 4,
   },
   statValue: {
-    color: colors.primary,
-    fontSize: 24,
-    fontWeight: 'bold',
-    width: 50,
-    textAlign: 'center',
+    fontSize: 26,
+    fontWeight: '700',
+  },
+  statLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.gray2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  taskSection: {
+    gap: spacing.sm,
+  },
+  taskRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  taskLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  taskLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.black,
+  },
+  taskValue: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.gray2,
+    textAlign: 'right',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: colors.borderLight,
   },
 });

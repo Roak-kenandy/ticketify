@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Platform, PermissionsAndroid, Alert, Linking } from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
 
@@ -286,16 +286,19 @@ export const useLocationPermissions = () => {
     return status;
   };
 
-  const requestPermissionWithAlert = async (): Promise<LocationPermissionStatus> => {
-    const status = await requestLocationPermission();
-    setPermissionStatus(status);
+  const requestPermissionWithAlert = useCallback(
+    async (): Promise<LocationPermissionStatus> => {
+      const status = await requestLocationPermission();
+      setPermissionStatus(status);
 
-    if (!status.granted) {
-      showPermissionAlert(status);
-    }
+      if (!status.granted) {
+        showPermissionAlert(status);
+      }
 
-    return status;
-  };
+      return status;
+    },
+    [],
+  );
 
   return {
     permissionStatus,

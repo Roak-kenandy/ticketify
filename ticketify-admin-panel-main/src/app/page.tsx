@@ -12,6 +12,9 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import axiosInterceptorInstance from "@/lib/axios-interceptor";
+import { AdminAuth } from "@/lib/admin-auth";
+import { ThemeToggle } from "@/components/theme-toggle";
+import Link from "next/link";
 import GoogleMap from "google-maps-react-markers";
 import moment from "moment";
 import React from "react";
@@ -103,20 +106,17 @@ export default function HomePage() {
   const [isPathPlaying, setIsPathPlaying] = React.useState(false);
 
   function fetchTickets() {
-    if (!localStorage.getItem("access_token")) {
+    if (!AdminAuth.getToken()) {
       route.push("/auth/login");
       return;
     }
     axiosInterceptorInstance
-      .get("/tickets/all", {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-        },
-      })
+      .get("/tickets/all")
       .then((response) => {
-        console.log(response);
         setTickets(response.data);
+      })
+      .catch((error) => {
+        console.error("Failed to fetch tickets:", error);
       });
   }
 
@@ -171,16 +171,17 @@ export default function HomePage() {
   };
 
   function fetchTechnicians() {
+    if (!AdminAuth.getToken()) {
+      route.push("/auth/login");
+      return;
+    }
     axiosInterceptorInstance
-      .get("/users/technicians", {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-        },
-      })
+      .get("/users/technicians")
       .then((response) => {
-        console.log(response);
-        setTechnicians(response.data); // Access the 'data' property of the response object
+        setTechnicians(response.data);
+      })
+      .catch((error) => {
+        console.error("Failed to fetch technicians:", error);
       });
   }
 
@@ -196,12 +197,6 @@ export default function HomePage() {
     try {
       const response = await axiosInterceptorInstance.get(
         `/users/technician/${technicianId}/details`,
-        {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-          },
-        }
       );
       setSelectedTechnicianDetails(response.data);
     } catch (error) {
@@ -519,8 +514,14 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Admin Panel Access */}
-      <div className="h-20 z-50 absolute bottom-0   md:right-0 md:top-0 flex items-center gap-3 px-4">
+      {/* Top bar: theme, settings, admin, logout */}
+      <div className="h-20 z-50 absolute bottom-0 md:bottom-auto md:right-0 md:top-0 flex items-center gap-2 px-4">
+        <ThemeToggle />
+        <Link
+          href="/settings"
+          className="px-3 py-2 bg-background/90 border border-border hover:bg-muted text-foreground rounded-lg transition-colors text-sm font-medium">
+          Settings
+        </Link>
         <a
           href="/admin"
           className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium flex items-center gap-2"
@@ -547,7 +548,10 @@ export default function HomePage() {
           </div>
           Admin Panel
         </a>
-        <button className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors text-sm font-medium">
+        <button
+          type="button"
+          onClick={() => AdminAuth.logout()}
+          className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors text-sm font-medium">
           Logout
         </button>
       </div>

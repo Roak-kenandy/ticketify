@@ -1,4 +1,8 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
@@ -77,20 +81,12 @@ export class UserService {
     },
     user: any,
   ) {
-    let get_user = await this.findOne(user.id);
-
-    if (!get_user) {
-      throw new ForbiddenException('User not found');
-    }
-
-    console.log('User', get_user);
-
     const update_user = await this.prisma.user.update({
       where: {
         id: user.id,
       },
       data: {
-        availability: status.status === 'AVAILABLE' ? true : false,
+        availability: status.status === 'AVAILABLE',
       },
     });
 
@@ -98,10 +94,12 @@ export class UserService {
       throw new ForbiddenException('Status not updated');
     }
 
-    await this.activity.createUserLog(
-      `User went ${update_user.availability == true ? 'online' : 'offline'}`,
-      user,
-    );
+    void this.activity
+      .createUserLog(
+        `User went ${update_user.availability ? 'online' : 'offline'}`,
+        user,
+      )
+      .catch(() => {});
 
     return {
       ...update_user,
@@ -582,5 +580,55 @@ export class UserService {
     }
   }
 
+  async deleteUser(id: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: { role: { select: { name: true } } },
+    });
 
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.userLocationTracking.deleteMany({ where: { user_id: id } }),
+      this.prisma.userLog.deleteMany({ where: { user_id: id } }),
+      this.prisma.userTicket.deleteMany({ where: { user_id: id } }),
+      this.prisma.userFeedback.deleteMany({ where: { user_id: id } }),
+      this.prisma.user.delete({ where: { id } }),
+    ]);
+
+    this.logger.log(
+      'User Service',
+      `Deleted user ${user.email} (${user.role.name})`,
+    );
+
+    return { message: 'User deleted successfully' };
+  }
+
+  async toggleUserStatus(id: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: { role: { select: { id: true, name: true } } },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id },
+      data: { availability: !user.availability },
+      include: { role: { select: { id: true, name: true } } },
+    });
+
+    delete updated.password;
+
+    await this.activity.createUserLog(
+      `Admin toggled availability to ${updated.availability ? 'active' : 'inactive'}`,
+      updated,
+    );
+
+    return updated;
+  }
 }

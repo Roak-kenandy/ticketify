@@ -130,8 +130,9 @@ export class TicketsController {
       };
     },
     @Param('id') ticket_id: string,
+    @Body() body?: { stage_id?: string },
   ) {
-    return this.ticketsService.startTicket(ticket_id);
+    return this.ticketsService.startTicket(ticket_id, body?.stage_id);
   }
 
   @UseGuards(JwtGuard)

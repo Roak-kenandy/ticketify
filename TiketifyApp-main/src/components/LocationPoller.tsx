@@ -3,6 +3,7 @@ import {useEffect} from 'react';
 import {PermissionsAndroid, Platform} from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
 import {useSelector} from 'react-redux';
+import {API_BASE_URL} from '../config/api';
 
 const LocationPoller = () => {
   const {isOnline, token} = useSelector((state: any) => state.auth);
@@ -49,7 +50,7 @@ const LocationPoller = () => {
           console.log('📍 Location:', location);
 
           await fetch(
-            `https://api.ticketify.medianet.mv/api/v1/users/location`,
+            `${API_BASE_URL}/users/location`,
             {
               method: 'POST',
               headers: {

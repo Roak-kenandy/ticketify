@@ -1,19 +1,27 @@
 "use client";
 
-import Image from "next/image";
 import { useRouter } from "next/navigation";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { AdminAuth } from "@/lib/admin-auth";
 import axiosInterceptorInstance from "@/lib/axios-interceptor";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    const token = AdminAuth.getToken();
+    if (token && AdminAuth.isTokenValid(token)) {
+      router.replace("/");
+    }
+  }, [router]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -23,31 +31,40 @@ export default function Login() {
       return;
     }
 
+    setSubmitting(true);
     try {
       const response = await axiosInterceptorInstance.post("/auth/login", {
         email,
         password,
       });
 
-      localStorage.setItem("access_token", response.data.access_token);
-      localStorage.setItem("refresh_token", response.data.refresh_token);
+      const roleName = response.data?.user?.role?.name ?? "";
+      const allowedRoles = ["Admin", "Administrator", "Supervisor"];
+
+      if (!allowedRoles.includes(roleName)) {
+        AdminAuth.clearSession();
+        toast.error("You are not authorized to access this application");
+        return;
+      }
+
+      AdminAuth.setToken(response.data.access_token);
+      if (response.data.refresh_token) {
+        localStorage.setItem("refresh_token", response.data.refresh_token);
+      }
       localStorage.setItem("user", JSON.stringify(response.data.user));
 
-      if (
-        response.data.user.role.name == "Admin" ||
-        response.data.user.role.name == "Supervisor"
-      ) {
-        router.push("/");
-      } else {
-        toast.error("You are not authorized to access this page");
-      }
+      toast.success("Login successful");
+      router.replace("/");
     } catch (error: any) {
-      if (error.response?.status === 403) {
+      AdminAuth.clearSession();
+      const status = error.response?.status;
+      if (status === 401 || status === 403) {
         toast.error("Invalid email or password");
       } else {
         toast.error("Login failed. Please try again later.");
-        console.error("Login error:", error);
       }
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -72,6 +89,7 @@ export default function Login() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
+                autoComplete="email"
               />
             </div>
 
@@ -83,21 +101,18 @@ export default function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
+                autoComplete="current-password"
               />
             </div>
 
-            <Button type="submit" className="w-full">
-              Login
+            <Button type="submit" className="w-full" disabled={submitting}>
+              {submitting ? "Signing in..." : "Login"}
             </Button>
           </div>
         </form>
       </div>
 
-      <div
-        className="hidden bg-muted lg:block
-        bg-gradient-to-tr from-blue-950 to-blue-800
-        text-white relative"
-      />
+      <div className="hidden bg-muted lg:block bg-gradient-to-tr from-blue-950 to-blue-800 text-white relative" />
     </div>
   );
 }

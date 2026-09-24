@@ -1,13 +1,16 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useParams } from "next/navigation";
-import Image from "next/image";
 import JSConfetti from "js-confetti";
 import { StarIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
-export default function ReviewPage() {
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333/api/v1";
+
+function ReviewForm() {
   const searchParams = useSearchParams();
   const params = useParams();
   const ticketId = params?.ticketId as string;
@@ -18,10 +21,9 @@ export default function ReviewPage() {
   const [ratingSelected, setRatingSelected] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [review, setReview] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  const ratingTexts: {
-    [key: number]: string;
-  } = {
+  const ratingTexts: Record<number, string> = {
     1: "We are sorry for the inconvenience. Please let us know how we can improve",
     2: "We are sorry for the inconvenience. Please let us know how we can improve",
     3: "Let us know how we can improve",
@@ -41,43 +43,51 @@ export default function ReviewPage() {
   }, [submitted]);
 
   const handleSubmit = async () => {
+    if (!userId) {
+      toast.error("Invalid review link. Missing user information.");
+      return;
+    }
     if (rating === 0) {
-      alert("Please select a rating");
+      toast.error("Please select a rating");
+      return;
+    }
+    if (!review.trim()) {
+      toast.error("Please enter a short review comment");
       return;
     }
 
+    setSubmitting(true);
     try {
-      const res = await fetch(
-        `https://api.ticketify.medianet.mv/api/v1/feedbacks/${ticketId}`,
-        {
-          method: "POST",
-          mode: "cors",
-          headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            userId,
-            rating,
-            review,
-          }),
-        }
-      );
+      const res = await fetch(`${API_BASE_URL}/feedbacks/${ticketId}`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userId,
+          rating,
+          review: review.trim(),
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
 
       if (res.status === 403) {
-        alert("You have already submitted a review");
+        toast.error(data?.message ?? "You have already submitted a review");
         return;
       }
 
-      const data = await res.json();
-      if (data.statusText === 403) {
-        alert(data.message);
-      } else {
-        setSubmitted(true);
+      if (!res.ok) {
+        toast.error(data?.message ?? "Failed to submit review");
+        return;
       }
-    } catch (err) {
-      console.error(err);
-      alert("Something went wrong. Please try again later.");
+
+      setSubmitted(true);
+    } catch {
+      toast.error("Something went wrong. Please try again later.");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -93,69 +103,63 @@ export default function ReviewPage() {
 
       {submitted ? (
         <div className="flex flex-col space-y-5 items-center text-center justify-center">
-          <h1 className="text-3xl text-black font-bold">Thank you for your feedback</h1>
-          <p className="text-gray-500 text-black w-72">
-            We appreciate your feedback to improve our services. You may close
-            this window
+          <h1 className="text-3xl text-black font-bold">
+            Thank you for your feedback
+          </h1>
+          <p className="text-gray-500 w-72">
+            Your feedback helps us improve our service
           </p>
         </div>
       ) : (
-        <div className="flex flex-col space-y-10 items-center justify-center">
-          <div className="space-y-3 text-center">
-            <h1 className="text-3xl text-black font-bold">
-              Please rate the service you received
-            </h1>
-            <p className="text-gray-500">
-              We appreciate your feedback to improve our services
-            </p>
-          </div>
-
-          <div className="flex items-center justify-center space-x-4">
+        <div className="flex flex-col space-y-5 items-center text-center justify-center">
+          <h1 className="text-3xl text-black font-bold">
+            How was your experience?
+          </h1>
+          <div className="flex space-x-2">
             {[1, 2, 3, 4, 5].map((star) => (
-              <button
+              <StarIcon
                 key={star}
+                className={`w-10 h-10 cursor-pointer ${
+                  star <= (hoveredRating || rating)
+                    ? "fill-yellow-400 text-yellow-400"
+                    : "text-gray-300"
+                }`}
                 onMouseEnter={() => setHoveredRating(star)}
                 onMouseLeave={() => setHoveredRating(0)}
                 onClick={() => {
                   setRating(star);
                   setRatingSelected(true);
                 }}
-                className="text-6xl"
-              >
-                <StarIcon
-                  className={`h-16 w-16 ${
-                    star <= (hoveredRating || rating)
-                      ? "text-yellow-500"
-                      : "text-gray-300"
-                  }`}
-                />
-              </button>
+              />
             ))}
           </div>
-
           {ratingSelected && (
-            <div className="text-center max-w-lg w-72">
-              <p className="text-gray-800 text-sm font-medium">
-                {ratingTexts[rating]}
-              </p>
-            </div>
+            <p className="text-gray-500 w-72">{ratingTexts[rating]}</p>
           )}
-
           <textarea
-            onChange={(e) => setReview(e.target.value)}
+            className="w-72 h-24 p-3 border border-gray-300 rounded-lg text-black"
+            placeholder="Tell us about your experience..."
             value={review}
-            className="border-2 text-black max-w-sm w-full h-32 rounded-xl bg-white border-gray-300 p-2"
-            placeholder="Write your review here..."
+            onChange={(e) => setReview(e.target.value)}
           />
-
-          <Button
-            onClick={handleSubmit}
-            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            Submit Review
+          <Button onClick={handleSubmit} disabled={submitting}>
+            {submitting ? "Submitting..." : "Submit"}
           </Button>
         </div>
       )}
     </div>
+  );
+}
+
+export default function ReviewPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-screen items-center justify-center">
+          Loading...
+        </div>
+      }>
+      <ReviewForm />
+    </Suspense>
   );
 }

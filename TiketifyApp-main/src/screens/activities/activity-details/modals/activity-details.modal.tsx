@@ -12,10 +12,10 @@ import {
 import Icon from 'react-native-vector-icons/Ionicons';
 import colors from '../../../../constants/colors';
 import {useSelector} from 'react-redux';
-import Snackbar from 'react-native-snackbar';
 import moment from 'moment';
 import ABadge from '../../../../components/ui/badge';
 import ASeperator from '../../../../components/ui/seperator';
+import {API_BASE_URL} from '../../../../config/api';
 
 type Props = {
   activity: any;
@@ -34,7 +34,7 @@ const ActivityDetailModal = (props: Props) => {
       console.log('Fetching activity details for ID:', props.activity?.id);
 
       const response = await fetch(
-        `https://api.ticketify.medianet.mv/api/v1/activities/${props.activity?.id}`,
+        `${API_BASE_URL}/activities/${props.activity?.id}`,
         {
           method: 'GET',
           headers: {
@@ -79,24 +79,18 @@ const ActivityDetailModal = (props: Props) => {
       }
 
       setActivityDetails(data);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching activity details:', error);
-      setActivityDetails({error: error.message});
-
-      Snackbar.show({
-        backgroundColor: 'red',
-        textColor: colors.white,
-        text: error?.message || 'Failed to fetch activity details',
-        duration: Snackbar.LENGTH_SHORT,
-      });
+      setActivityDetails({error: error?.message || 'Failed to load details'});
     }
   };
 
   React.useEffect(() => {
-    if (props.modalVisible) {
+    if (props.modalVisible && props.activity?.id) {
+      setActivityDetails(null);
       fetchActivityDetails();
     }
-  }, [props.modalVisible]);
+  }, [props.modalVisible, props.activity?.id]);
 
   return (
     <View style={styles.centeredView}>

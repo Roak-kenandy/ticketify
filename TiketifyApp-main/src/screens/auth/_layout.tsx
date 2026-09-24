@@ -1,19 +1,17 @@
 import React from 'react';
 import {
-  Dimensions,
   Image,
-  ImageBackground,
   KeyboardAvoidingView,
   Platform,
+  SafeAreaView,
   StyleSheet,
   View,
 } from 'react-native';
-import BackButton from '../../components/buttons/back-button/BackButton';
 import HeadCard from '../../components/head-card/head-card';
 import colors from '../../constants/colors';
-const Logo = require('../../assets/logo.png');
+import {spacing} from '../../constants/styles';
 
-let {width} = Dimensions.get('window');
+const Logo = require('../../assets/logo.png');
 
 type Props = {
   heading: string;
@@ -27,89 +25,59 @@ type Props = {
 
 const AuthLayout = (props: Props) => {
   return (
-    <View
-      style={{
-        flex: 1,
-        paddingTop: Platform.OS === 'ios' ? 60 : 175,
-        backgroundColor: colors.white,
-      }}>
-      {props.isBackButton && (
-        <View
-          style={{
-            marginLeft: 20,
-          }}>
-          <BackButton
-            style={{
-              zIndex: 1000,
-            }}
-            route={props.route}
-            navigation={props.navigation}
-          />
-        </View>
-      )}
-      <View
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          padding: 20,
-          paddingTop: 80,
-          backgroundColor: colors.primary,
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          width: '100%',
-        }}>
+    <SafeAreaView style={styles.safe}>
+      <View style={styles.hero}>
         <Image source={Logo} style={styles.logo} />
-        <View
-          style={{
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            gap: 20,
-            paddingTop: 20,
-          }}>
-          <HeadCard heading={props.heading} subHeading={props.subHeading} />
-        </View>
+        <HeadCard heading={props.heading} subHeading={props.subHeading} />
       </View>
 
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={{
-          ...styles.container,
-          marginTop: Platform.OS === 'ios' ? 200 : 80,
-        }}>
-        {props.children}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.formArea}>
+        <View style={styles.formCard}>{props.children}</View>
       </KeyboardAvoidingView>
-    </View>
+    </SafeAreaView>
   );
 };
 
 export default AuthLayout;
 
 const styles = StyleSheet.create({
-  container: {
+  safe: {
     flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    gap: 30,
+    backgroundColor: colors.primary,
+  },
+  hero: {
+    paddingTop: spacing.xxxl,
+    paddingBottom: spacing.xxxl,
+    paddingHorizontal: spacing.xxl,
+    alignItems: 'center',
+    gap: spacing.lg,
   },
   logo: {
-    width: 100,
-    height: 100,
-    objectFit: 'contain',
-    alignSelf: 'center',
+    width: 88,
+    height: 88,
+    resizeMode: 'contain',
   },
-  lowerText: {
-    marginTop: 20,
-    position: 'absolute',
-    bottom: 0,
-    left: (width - 200) / 2,
-    right: (width - 200) / 2,
-    width: 300,
-    display: 'flex',
-    flexDirection: 'row',
-    gap: 5,
+  formArea: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    overflow: 'hidden',
+  },
+  formCard: {
+    flex: 1,
+    backgroundColor: colors.white,
+    marginTop: spacing.lg,
+    marginHorizontal: spacing.lg,
+    borderRadius: 20,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.xxl,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: -2},
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 4,
   },
 });

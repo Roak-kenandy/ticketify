@@ -12,12 +12,12 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
-import SecondaryButton from '../../../../components/ui/secondary-button';
 import ASeperator from '../../../../components/ui/seperator';
 import colors from '../../../../constants/colors';
-import PrimaryButton from '../../../../components/ui/primary-button';
+import ModalFooterActions from '../../../../components/ui/modal-footer-actions';
 import Snackbar from 'react-native-snackbar';
 import {useSelector} from 'react-redux';
+import {API_BASE_URL} from '../../../../config/api';
 
 type Props = {
   modalVisible: boolean;
@@ -44,7 +44,7 @@ const AddNoteModal = (props: Props) => {
     }
 
     await fetch(
-      `https://api.ticketify.medianet.mv/api/v1/tickets/${props.ticketId}/notes`,
+      `${API_BASE_URL}/tickets/${props.ticketId}/notes`,
       {
         method: 'POST',
         headers: {
@@ -113,26 +113,14 @@ const AddNoteModal = (props: Props) => {
               behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
               style={{width: '100%', alignItems: 'center'}}>
               <View style={styles.modalView}>
-                <View
+                <Text
                   style={{
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                    width: '100%',
-                    alignItems: 'center',
+                    fontSize: 18,
+                    fontWeight: '600',
+                    color: colors.black,
                   }}>
-                  <Text
-                    style={{
-                      fontSize: 18,
-                      fontWeight: '600',
-                      color: colors.black,
-                    }}>
-                    Add Note
-                  </Text>
-                  <SecondaryButton
-                    text="Close"
-                    onPress={() => props.setModalVisible(false)}
-                  />
-                </View>
+                  Add Note
+                </Text>
                 <ASeperator />
 
                 <View
@@ -161,17 +149,11 @@ const AddNoteModal = (props: Props) => {
                   />
                 </View>
 
-                <View
-                  style={{
-                    alignSelf: 'flex-end',
-                    gap: 10,
-                    flexDirection: 'row',
-                  }}>
-                  <PrimaryButton
-                    text={isSubmitting ? 'Submitting...' : 'Submit'}
-                    onPress={() => (isSubmitting ? null : submitNote())}
-                  />
-                </View>
+                <ModalFooterActions
+                  onCancel={() => props.setModalVisible(false)}
+                  onSubmit={submitNote}
+                  loading={isSubmitting}
+                />
               </View>
             </KeyboardAvoidingView>
           </View>
