@@ -1,4 +1,5 @@
 import {
+  ActivityIndicator,
   FlatList,
   RefreshControl,
   StyleSheet,
@@ -20,13 +21,17 @@ type Props = {
   navigation: any;
 };
 
-const FEEDBACK_COOLDOWN_MS = 60000;
-let lastFeedbackFetchAt = 0;
+/** Show last list immediately; refresh in background on each visit */
+let cachedFeedbacks: any[] = [];
+let fetchInFlight: Promise<void> | null = null;
 
 const FeedbacksScreen = (props: Props) => {
   const dispatch = useDispatch();
-  const [feedbacks, setFeedbacks] = React.useState<any[]>([]);
+  const [feedbacks, setFeedbacks] = React.useState<any[]>(cachedFeedbacks);
   const [refreshing, setRefreshing] = React.useState(false);
+  const [initialLoading, setInitialLoading] = React.useState(
+    cachedFeedbacks.length === 0,
+  );
   const token = useSelector((state: any) => state.auth?.token);
 
   const loadFeedbacks = React.useCallback(
@@ -35,38 +40,53 @@ const FeedbacksScreen = (props: Props) => {
         return;
       }
 
-      const now = Date.now();
-      if (!options?.force && now - lastFeedbackFetchAt < FEEDBACK_COOLDOWN_MS) {
-        return;
+      if (fetchInFlight && !options?.force) {
+        return fetchInFlight;
       }
 
-      if (!options?.silent) {
+      const showSpinner =
+        !options?.silent && (options?.force || cachedFeedbacks.length === 0);
+
+      if (showSpinner) {
         setRefreshing(true);
       }
-
-      try {
-        const data = await apiGet('/feedbacks', token);
-        setFeedbacks(Array.isArray(data) ? data : []);
-        lastFeedbackFetchAt = Date.now();
-      } catch (error: any) {
-        if (error?.status === 401) {
-          await clearStoredSession(dispatch);
-          return;
-        }
-        if (!options?.silent) {
-          showError(error?.message || 'Failed to fetch feedbacks');
-        }
-      } finally {
-        if (!options?.silent) {
-          setRefreshing(false);
-        }
+      if (cachedFeedbacks.length === 0) {
+        setInitialLoading(true);
       }
+
+      fetchInFlight = (async () => {
+        try {
+          const data = await apiGet('/feedbacks', token);
+          const list = Array.isArray(data) ? data : [];
+          cachedFeedbacks = list;
+          setFeedbacks(list);
+        } catch (error: any) {
+          if (error?.status === 401) {
+            await clearStoredSession(dispatch);
+            return;
+          }
+          if (!options?.silent) {
+            showError(error?.message || 'Failed to fetch feedbacks');
+          }
+        } finally {
+          setInitialLoading(false);
+          if (showSpinner) {
+            setRefreshing(false);
+          }
+          fetchInFlight = null;
+        }
+      })();
+
+      return fetchInFlight;
     },
     [dispatch, token],
   );
 
   useFocusEffect(
     React.useCallback(() => {
+      if (cachedFeedbacks.length > 0) {
+        setFeedbacks(cachedFeedbacks);
+      }
       loadFeedbacks({silent: true});
     }, [loadFeedbacks]),
   );
@@ -79,28 +99,36 @@ const FeedbacksScreen = (props: Props) => {
         onMenuPress={() => props.navigation.openDrawer()}
       />
 
-      <FlatList
-        style={styles.list}
-        contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => loadFeedbacks({silent: false, force: true})}
-            colors={[colors.primary]}
-            tintColor={colors.primary}
-          />
-        }
-        data={feedbacks}
-        keyExtractor={(item: any, index) => String(item?.id ?? index)}
-        renderItem={({item}) => (
-          <FeedBack navigation={props.navigation} data={item} />
-        )}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Text style={styles.emptyText}>No feedbacks yet</Text>
-          </View>
-        }
-      />
+      {initialLoading && feedbacks.length === 0 ? (
+        <View style={styles.loading}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      ) : (
+        <FlatList
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => loadFeedbacks({silent: false, force: true})}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
+          }
+          data={feedbacks}
+          keyExtractor={(item: any, index) =>
+            String(item?.feedback?.id ?? item?.id ?? index)
+          }
+          renderItem={({item}) => (
+            <FeedBack navigation={props.navigation} data={item} />
+          )}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Text style={styles.emptyText}>No feedbacks yet</Text>
+            </View>
+          }
+        />
+      )}
     </View>
   );
 };
@@ -117,6 +145,11 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     gap: spacing.sm,
     paddingBottom: spacing.xxxl,
+  },
+  loading: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   empty: {
     padding: spacing.xxxl,

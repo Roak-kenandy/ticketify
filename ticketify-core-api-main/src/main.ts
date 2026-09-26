@@ -1,22 +1,46 @@
 import { NestFactory, Reflector } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import helmet from 'helmet';
+
+function parseCorsOrigins(raw: string | undefined): string[] | true {
+  if (!raw?.trim()) {
+    return true;
+  }
+  const origins = raw
+    .split(',')
+    .map(o => o.trim())
+    .filter(Boolean);
+  return origins.length ? origins : true;
+}
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const config = app.get(ConfigService);
+
+  app.use(
+    helmet({
+      contentSecurityPolicy: process.env.NODE_ENV === 'production',
+      crossOriginEmbedderPolicy: false,
+    }),
+  );
 
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: false,
-      forbidNonWhitelisted: false,
+      whitelist: true,
+      forbidNonWhitelisted: true,
       transform: true,
       validateCustomDecorators: true,
       skipMissingProperties: false,
     }),
   );
-  // cors setup
+
+  const nodeEnv = config.get<string>('NODE_ENV') ?? 'development';
+  const corsOrigins = parseCorsOrigins(config.get<string>('CORS_ORIGINS'));
+
   app.enableCors({
-    origin: '*',
+    origin: nodeEnv === 'production' ? corsOrigins : corsOrigins,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     preflightContinue: false,
     optionsSuccessStatus: 204,
@@ -25,6 +49,6 @@ async function bootstrap() {
 
   app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
   app.setGlobalPrefix('api/v1');
-  await app.listen(3333);
+  await app.listen(config.get<number>('PORT') ?? 3333);
 }
 bootstrap();

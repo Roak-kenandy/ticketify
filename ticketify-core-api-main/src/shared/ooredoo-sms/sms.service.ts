@@ -1,4 +1,3 @@
-import * as OneSignal from 'onesignal-node';
 import { HttpException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LoggerService } from 'src/infrastructure/logger/logger.service';
@@ -11,32 +10,53 @@ export default class SMSService {
   ) {}
 
   async publishSMS(newNotification: { phone: string; message: string }) {
-    try {
-      const new_notification = await fetch(
-        'https://o-papi1-lb01.ooredoo.mv/bulk_sms/v2',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: 'Bearer Bearer 5f39b5d6-b51f-3cd6-928a-0882ea03fa63',
-          },
-          body: JSON.stringify({
-            username: 'sms@medianet.mv',
-            access_key:
-              'eGRWT2w1cmtTT1loWUZzL09mQlY2SXpES1VTZjhnWGJrdkhFWEs0eTZaeGRxZlBvdFVXWmFWdVV2UnJNMkpOUA==',
-            message: newNotification.message,
-            batch: `960${newNotification.phone}`,
-          }),
-        },
+    const apiUrl =
+      this.configService.get<string>('SMS_API_URL') ??
+      'https://o-papi1-lb01.ooredoo.mv/bulk_sms/v2';
+    const username = this.configService.get<string>('SMS_USERNAME');
+    const accessKey = this.configService.get<string>('SMS_ACCESS_KEY');
+    const authBearer = this.configService.get<string>('SMS_AUTH_BEARER');
+
+    if (!username || !accessKey) {
+      this.logger.error(
+        'Notification Service',
+        'SMS credentials missing (SMS_USERNAME / SMS_ACCESS_KEY)',
       );
+      throw new HttpException(
+        { status: 503, error: 'SMS not configured' },
+        503,
+      );
+    }
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (authBearer) {
+        headers.Authorization = authBearer.startsWith('Bearer ')
+          ? authBearer
+          : `Bearer ${authBearer}`;
+      }
+
+      const new_notification = await fetch(apiUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          username,
+          access_key: accessKey,
+          message: newNotification.message,
+          batch: `960${newNotification.phone}`,
+        }),
+      });
 
       this.logger.log(
         'Notification Service',
-        'Sending notification' + JSON.stringify(newNotification),
+        `SMS dispatch status ${new_notification.status}`,
       );
 
       return new_notification;
     } catch (error) {
+      this.logger.error('Notification Service', `SMS failed: ${error}`);
       throw new HttpException(
         {
           status: 500,

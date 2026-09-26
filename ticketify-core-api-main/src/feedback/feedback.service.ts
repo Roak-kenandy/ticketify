@@ -1,7 +1,7 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
+import { CrmApiClient } from 'src/infrastructure/crm/crm-api.client';
 import NotificationService from 'src/shared/one-signal/notification/notification.service';
-import { CreateTicketDto } from 'src/tickets/dto/create-ticket.dto';
 import { TicketsService } from 'src/tickets/tickets.service';
 import { UserService } from 'src/user/user.service';
 
@@ -12,6 +12,7 @@ export class FeedbackService {
     private user: UserService,
     private ticket: TicketsService,
     private notification: NotificationService,
+    private crm: CrmApiClient,
   ) {}
 
   async create(
@@ -23,6 +24,24 @@ export class FeedbackService {
     try {
       if (!user_id || !ticket_id || !rating || !review) {
         throw new Error('Invalid input');
+      }
+
+      const crmTicket = await this.crm.getServiceRequest(ticket_id);
+      if (!crmTicket.ok) {
+        throw new ForbiddenException('Ticket not found');
+      }
+      const ticketData = crmTicket.data as {
+        state?: string;
+        assigned_to?: { user?: { id?: string } };
+      };
+      if (ticketData?.state !== 'CLOSED') {
+        throw new ForbiddenException(
+          'Feedback is only allowed for closed tickets',
+        );
+      }
+      const assignedCrmUserId = ticketData?.assigned_to?.user?.id;
+      if (!assignedCrmUserId || String(assignedCrmUserId) !== String(user_id)) {
+        throw new ForbiddenException('Invalid review link for this ticket');
       }
       // let ticket = await this.ticket.findOne(ticket_id);
       // if (!ticket) {
@@ -66,30 +85,53 @@ export class FeedbackService {
     }
   }
 
+  /** Lightweight ticket shape for feedback list (avoids full crmFindServiceRequest per row). */
+  private async ticketSummaryForFeedbackList(ticketId: string) {
+    const crmResult = await this.crm.getServiceRequest(ticketId);
+    if (!crmResult.ok) {
+      return {
+        id: ticketId,
+        number: ticketId,
+        contact: { person_name: { full_name: 'Customer' } },
+      };
+    }
+
+    const ticket = crmResult.data as {
+      id?: string;
+      number?: string;
+      contact?: {
+        id?: string;
+        person_name?: { full_name?: string };
+      };
+    };
+
+    const fullName = ticket?.contact?.person_name?.full_name;
+
+    return {
+      id: ticket?.id ?? ticketId,
+      number: ticket?.number ?? ticketId,
+      contact: {
+        person_name: { full_name: fullName ?? 'Customer' },
+      },
+    };
+  }
+
   async findAllByUser(user_id: string) {
-    let feedbacks = await this.prisma.userFeedback.findMany({
-      where: {
-        user_id: user_id,
-      },
-      // order
-      orderBy: {
-        created_at: 'desc',
-      },
+    const feedbacks = await this.prisma.userFeedback.findMany({
+      where: { user_id },
+      orderBy: { created_at: 'desc' },
     });
 
-    let feedback_ticket = await Promise.all(
-      feedbacks.map(async (feedback) => {
-        let ticket = await this.ticket.crmFindServiceRequest(
-          feedback.ticket_id,
-        );
-        return {
-          ticket,
-          feedback,
-        };
-      }),
-    );
+    if (!feedbacks.length) {
+      return [];
+    }
 
-    return feedback_ticket;
+    return Promise.all(
+      feedbacks.map(async feedback => ({
+        feedback,
+        ticket: await this.ticketSummaryForFeedbackList(feedback.ticket_id),
+      })),
+    );
   }
 
   async findOneByTicketId(ticket_id: string) {

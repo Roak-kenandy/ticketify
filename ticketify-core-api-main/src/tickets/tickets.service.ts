@@ -17,6 +17,7 @@ import { JwtGuard } from 'src/auth/guard';
 import SMSService from 'src/shared/ooredoo-sms/sms.service';
 import NotificationService from 'src/shared/one-signal/notification/notification.service';
 import { CreateActivityDto } from './dto/create-activity';
+import { CrmApiClient } from 'src/infrastructure/crm/crm-api.client';
 
 @Injectable()
 export class TicketsService {
@@ -28,6 +29,7 @@ export class TicketsService {
     private user: UserService,
     private sms: SMSService,
     private notification: NotificationService,
+    private crmApi: CrmApiClient,
   ) {}
 
   async createNewTicket(dto: CreateTicketDto) {
@@ -999,34 +1001,16 @@ Medianet Support Team
       `Starting ticket ${ticket_id} with stage ${targetStageId}`,
     );
 
-    const crm_start_service_request = await fetch(
-      this.config.get('CRM_BACKOFFICE_API_URL') +
-        '/service_requests/' +
-        ticket_id +
-        '/actions',
-      {
-        method: 'POST',
-        headers: {
-          api_key: this.config.get('CRM_API_KEY'),
-          accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action: 'START_PROGRESS',
-          comment: 'Starting ticket',
-          achieved_date: new Date().toISOString(),
-          stage_id: targetStageId,
-        }),
-      },
-    );
+    const crmResult = await this.crmApi.postServiceRequestAction(ticket_id, {
+      action: 'START_PROGRESS',
+      comment: 'Starting ticket',
+      achieved_date: new Date().toISOString(),
+      stage_id: targetStageId,
+    });
 
-    const response = await crm_start_service_request.json();
+    const response = crmResult.data as { message?: string };
 
-    if (!crm_start_service_request.ok) {
-      this.logger.error(
-        'Ticket Service',
-        `CRM START_PROGRESS failed: ${JSON.stringify(response)}`,
-      );
+    if (!crmResult.ok) {
       throw new ForbiddenException(
         response?.message ?? 'Service request could not be started in CRM',
       );
