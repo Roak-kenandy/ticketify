@@ -22,7 +22,6 @@ import SecondaryButton from '../../../components/ui/secondary-button';
 import ASeperator from '../../../components/ui/seperator';
 import colors from '../../../constants/colors';
 import {ServiceRequest} from '../../../types/service-request.type';
-import AddActivityModal from './modals/add-activity.modal';
 import AddAttachmentModal from './modals/add-attachment.modal';
 import AddNoteModal from './modals/add-note.modal';
 import ViewImageModal from './modals/view-image.modal';
@@ -31,6 +30,9 @@ import ClosingModal from './modals/complete-ticket.modal';
 import Icon from 'react-native-vector-icons/Ionicons';
 import ViewInfoModal from './modals/view-info.modal';
 import ProgressTicketModal from './modals/progress-ticket.modal';
+import ScheduleVisitModal from './modals/schedule-visit.modal';
+import LmHandoffModal from './modals/lm-handoff.modal';
+import BillingWorkflowModal from './modals/billing-workflow.modal';
 import TertiaryButton from '../../../components/ui/tertiary-button';
 import ActivityDetailModal from './modals/activity-details.modal';
 import {API_BASE_URL} from '../../../config/api';
@@ -39,6 +41,12 @@ import {
   notifyTicketMutation,
   sameTicketId,
 } from '../../../services/ticketsSync';
+import {
+  hasPendingLastMile,
+  hasPendingNoResponse,
+  lmStatusLabel,
+  resolveCrmActivityState,
+} from '../../../utils/crmActivityState';
 
 type Props = {
   navigation: any;
@@ -57,7 +65,6 @@ const ActivityDetailsScreen = (props: Props) => {
   let [loading, setLoading] = React.useState(false);
   let [attachmentModalVisible, setAttachmentModalVisible] =
     React.useState(false);
-  let [activityModalVisible, setActivityModalVisible] = React.useState(false);
   let [activityDetailsModalVisible, setActivityDetailsModalVisible] =
     React.useState(false);
   let [selectedActivity, setSelectedActivity] = React.useState<any>();
@@ -70,6 +77,25 @@ const ActivityDetailsScreen = (props: Props) => {
   let [submitted, setSubmitted] = React.useState(false);
   let [progressTicketModalVisible, setProgressTicketModalVisible] =
     React.useState(false);
+  let [scheduleModalVisible, setScheduleModalVisible] = React.useState(false);
+  let [lmHandoffVisible, setLmHandoffVisible] = React.useState(false);
+  const [lmPending, setLmPending] = React.useState(false);
+  const [nrPending, setNrPending] = React.useState(false);
+  const [paymentModalVisible, setPaymentModalVisible] = React.useState(false);
+  const [billingWorkflow, setBillingWorkflow] = React.useState<any>(null);
+
+  const fetchBillingWorkflow = React.useCallback(async () => {
+    if (!token || !ticket?.id) return;
+    try {
+      const data = await apiGet(
+        `/billing/tickets/${ticket.id}/workflow`,
+        token,
+      );
+      setBillingWorkflow(data);
+    } catch {
+      setBillingWorkflow(null);
+    }
+  }, [token, ticket?.id]);
 
   const [context, setContext] = React.useState<any>(null);
 
@@ -101,6 +127,11 @@ const ActivityDetailsScreen = (props: Props) => {
           token,
         );
         setContext(contextData);
+        setLmPending(Boolean(contextData?.pending_lm));
+        setNrPending(
+          Boolean(contextData?.pending_no_response) ||
+            hasPendingNoResponse(contextData?.no_response_activities),
+        );
       } catch (error: any) {
         if (!options?.silent) {
           Snackbar.show({
@@ -149,6 +180,15 @@ const ActivityDetailsScreen = (props: Props) => {
   );
 
   async function assignUser() {
+    if (lmBlocking) {
+      Snackbar.show({
+        backgroundColor: colors.primary,
+        textColor: colors.white,
+        text: 'Last Mile cabling is still pending. You can assign after LM completes.',
+        duration: Snackbar.LENGTH_SHORT,
+      });
+      return;
+    }
     setSubmitted(true);
     try {
       const response = await fetch(
@@ -189,6 +229,15 @@ const ActivityDetailsScreen = (props: Props) => {
   }
 
   async function startTroubleshooting() {
+    if (lmBlocking) {
+      Snackbar.show({
+        backgroundColor: colors.primary,
+        textColor: colors.white,
+        text: 'Complete Last Mile cabling before starting troubleshooting.',
+        duration: Snackbar.LENGTH_SHORT,
+      });
+      return;
+    }
     setSubmitted(true);
     try {
       const response = await fetch(
@@ -254,9 +303,28 @@ const ActivityDetailsScreen = (props: Props) => {
 
   const refreshAfterChange = React.useCallback(() => {
     if (ticket?.id) {
+      fetchContext({silent: true});
       fetchTicketById(ticket.id);
+      fetchBillingWorkflow();
     }
-  }, [fetchTicketById, ticket?.id]);
+  }, [fetchContext, fetchTicketById, fetchBillingWorkflow, ticket?.id]);
+
+  const lmBlocking = React.useMemo(
+    () => lmPending || hasPendingLastMile(data?.activities?.content),
+    [lmPending, data?.activities?.content],
+  );
+
+  const noResponseBlocking = React.useMemo(
+    () =>
+      nrPending ||
+      hasPendingNoResponse(context?.no_response_activities) ||
+      hasPendingNoResponse(data?.activities?.content),
+    [nrPending, context?.no_response_activities, data?.activities?.content],
+  );
+
+  const isAssignedToMe =
+    user?.crm_user_id === data?.assigned_to?.user?.id &&
+    data?.state !== 'CLOSED';
 
   React.useEffect(() => {
     if (storeTicket) {
@@ -269,9 +337,19 @@ const ActivityDetailsScreen = (props: Props) => {
       Promise.all([
         fetchContext({silent: true}),
         fetchTicketById(ticket.id, {silent: true}),
+        fetchBillingWorkflow(),
       ]);
     }
-  }, [ticket?.id, fetchContext, fetchTicketById]);
+  }, [ticket?.id, fetchContext, fetchTicketById, fetchBillingWorkflow]);
+
+  const billingBlocksClose =
+    isAssignedToMe &&
+    billingWorkflow &&
+    billingWorkflow.can_close_ticket === false &&
+    data?.queue_info?.stages?.length == nextStage?.order;
+
+  const closeStageActive =
+    data?.queue_info?.stages?.length == nextStage?.order;
 
   return (
     <SafeAreaView
@@ -299,11 +377,12 @@ const ActivityDetailsScreen = (props: Props) => {
               zIndex: 999,
             }}
             refreshing={false}
-            onRefresh={() => {
+              onRefresh={() => {
               if (ticket?.id) {
                 Promise.all([
                   fetchContext({silent: false}),
                   fetchTicketById(ticket.id, {silent: false}),
+                  fetchBillingWorkflow(),
                 ]);
               }
             }}
@@ -636,9 +715,9 @@ const ActivityDetailsScreen = (props: Props) => {
                           {item?.name}
                         </Text>
                         <Text style={{fontSize: 12, color: colors.gray}}>
-                          {moment(item?.activity_date.date * 1000).format(
-                            'DD MMMM YYYY',
-                          )}
+                          {moment(
+                            (item?.date ?? item?.activity_date?.date) * 1000,
+                          ).format('DD MMMM YYYY')}
                         </Text>
                       </View>
                       <View
@@ -647,10 +726,27 @@ const ActivityDetailsScreen = (props: Props) => {
                           justifyContent: 'space-between',
                           alignItems: 'center',
                         }}>
-                        <ABadge
-                          title={item?.type.name}
-                          color={item.type.colour}
-                        />
+                        <View
+                          style={{
+                            flexDirection: 'row',
+                            gap: 8,
+                            flexWrap: 'wrap',
+                          }}>
+                          <ABadge
+                            title={item?.type?.name ?? 'Activity'}
+                            color={item?.type?.colour ?? colors.primary}
+                          />
+                          <ABadge
+                            title={lmStatusLabel(
+                              resolveCrmActivityState(item),
+                            )}
+                            color={
+                              resolveCrmActivityState(item) === 'COMPLETED'
+                                ? '#22C55E'
+                                : '#F59E0B'
+                            }
+                          />
+                        </View>
                       </View>
                     </TouchableOpacity>
                     {index <
@@ -666,15 +762,41 @@ const ActivityDetailsScreen = (props: Props) => {
             style={{
               paddingTop: 10,
             }}>
-            {user?.crm_user_id == data?.assigned_to?.user?.id &&
-              data?.state != 'CLOSED' && (
-                <SecondaryButton
-                  text="+ Add Activity"
-                  onPress={() => {
-                    setActivityModalVisible(true);
-                  }}
-                />
-              )}
+            {isAssignedToMe && (
+              <>
+                {lmBlocking ? (
+                  <View style={styles.lmBanner}>
+                    <Text style={styles.lmBannerText}>
+                      Last Mile in progress — finish cabling in Transport
+                      Network before continuing this ticket.
+                    </Text>
+                  </View>
+                ) : (
+                  <PrimaryButton
+                    text="Hand over to Last Mile"
+                    onPress={() => setLmHandoffVisible(true)}
+                    style={styles.lmHandoffButton}
+                  />
+                )}
+                {data?.state === 'IN_PROGRESS' && billingWorkflow && (
+                  <View style={styles.lmBanner}>
+                    <Text style={styles.lmBannerText}>
+                      {billingWorkflow.payment_status === 'confirmed'
+                        ? `Payment received (${billingWorkflow.confirmed_receipt_number ?? 'receipt'}) — finish work, then close ticket.`
+                        : billingWorkflow.block_close_reason ??
+                          'Complete billing before closing this ticket.'}
+                    </Text>
+                    {billingWorkflow.next_step !== 'complete_work_then_close' &&
+                      billingWorkflow.next_step !== 'close_ticket' && (
+                        <TertiaryButton
+                          text="Open charges & payment"
+                          onPress={() => setPaymentModalVisible(true)}
+                        />
+                      )}
+                  </View>
+                )}
+              </>
+            )}
           </View>
         </View>
 
@@ -777,25 +899,11 @@ const ActivityDetailsScreen = (props: Props) => {
           {!loading && data?.state == 'IN_PROGRESS' && (
             <TertiaryButton
               style={{
-                backgroundColor: data?.categories?.some(
-                  (tag: {name: string}) => tag.name === 'No Response',
-                )
-                  ? colors.gray
-                  : colors.white,
+                backgroundColor: noResponseBlocking ? colors.gray : colors.white,
               }}
-              onPress={() => {
-                const responseTag: boolean = data?.tags?.some(
-                  (tag: {name: string}) => tag.name === 'No Response',
-                );
-                if (responseTag) {
-                  Snackbar.show({
-                    backgroundColor: colors.primary,
-                    textColor: colors.white,
-                    text: 'Ticket already marked as No Response',
-                    duration: Snackbar.LENGTH_SHORT,
-                  });
-                } else {
-                  fetch(
+              onPress={async () => {
+                try {
+                  const response = await fetch(
                     `${API_BASE_URL}/tickets/${data?.id}/no-response`,
                     {
                       method: 'PUT',
@@ -803,46 +911,53 @@ const ActivityDetailsScreen = (props: Props) => {
                         Authorization: 'Bearer ' + token,
                         'Content-Type': 'application/json',
                       },
-                      body: JSON.stringify({
-                        name: 'No Response',
-                      }),
                     },
-                  )
-                    .then(response => response.json())
-                    .then(data => {
-                      console.log(
-                        'Ticket marked as No Response' + JSON.stringify(data),
-                      );
-
-                      Snackbar.show({
-                        backgroundColor: 'green',
-                        textColor: colors.white,
-                        text: data?.message,
-                        duration: Snackbar.LENGTH_SHORT,
-                      });
-                      fetchTicketById(ticket?.id);
-                    })
-                    .catch(error => {
-                      console.error('Error:', error);
-                      Snackbar.show({
-                        backgroundColor: colors.primary,
-                        textColor: colors.white,
-                        text: error?.message,
-                        duration: Snackbar.LENGTH_SHORT,
-                      });
-                    });
+                  );
+                  const result = await response.json();
+                  if (!response.ok) {
+                    throw new Error(result?.message || 'No Response failed');
+                  }
+                  Snackbar.show({
+                    backgroundColor: 'green',
+                    textColor: colors.white,
+                    text: result?.message,
+                    duration: Snackbar.LENGTH_SHORT,
+                  });
+                  fetchContext({silent: true});
+                  fetchTicketById(ticket?.id);
+                } catch (error: any) {
+                  Snackbar.show({
+                    backgroundColor: colors.primary,
+                    textColor: colors.white,
+                    text: error?.message || 'No Response failed',
+                    duration: Snackbar.LENGTH_SHORT,
+                  });
                 }
               }}
               text={
-                data.categories?.some(
-                  (tag: {name: string}) => tag.name === 'No Response',
-                )
+                noResponseBlocking
                   ? 'Remove No Response'
                   : 'Mark as No Response'
               }
             />
           )}
           {/* if the ticket is assigned to the current user, show the close ticket button */}
+          {!loading &&
+            data?.assigned_to?.user?.id == user.crm_user_id &&
+            data?.stage?.name != 'Closed' && (
+              <TertiaryButton
+                text="Schedule visit"
+                onPress={() => setScheduleModalVisible(true)}
+              />
+            )}
+          {!loading &&
+            data?.assigned_to?.user?.id == user.crm_user_id &&
+            data?.state === 'IN_PROGRESS' && (
+              <TertiaryButton
+                text="Charge required"
+                onPress={() => setPaymentModalVisible(true)}
+              />
+            )}
           {!loading && (
             <TertiaryButton
               text="Call Customer"
@@ -860,16 +975,66 @@ const ActivityDetailsScreen = (props: Props) => {
             text={
               submitted
                 ? 'Please wait...'
-                : data?.assigned_to?.user?.id != user.crm_user_id
-                ? 'Assign to Me'
-                : data?.state == 'NEW'
-                ? `Start ${nextStage?.name ?? 'Troubleshooting'}`
-                : data?.queue_info?.stages?.length == nextStage?.order
-                ? 'Close Ticket'
-                : `Start ${nextStage?.name}`
+                : lmBlocking
+                  ? 'Waiting for Last Mile…'
+                  : data?.assigned_to?.user?.id != user.crm_user_id
+                    ? 'Assign to Me'
+                    : data?.state == 'NEW'
+                      ? `Start ${nextStage?.name ?? 'Troubleshooting'}`
+                      : data?.queue_info?.stages?.length == nextStage?.order
+                        ? 'Close Ticket'
+                        : `Start ${nextStage?.name}`
+            }
+            disabled={
+              submitted ||
+              lmBlocking ||
+              billingBlocksClose ||
+              (noResponseBlocking && closeStageActive)
             }
             onPress={() => {
               if (submitted) {
+                return;
+              }
+              if (
+                lmBlocking &&
+                data?.assigned_to?.user?.id == user.crm_user_id
+              ) {
+                Snackbar.show({
+                  backgroundColor: colors.primary,
+                  textColor: colors.white,
+                  text: 'Complete Last Mile cabling before continuing this ticket.',
+                  duration: Snackbar.LENGTH_SHORT,
+                });
+                return;
+              }
+              if (noResponseBlocking && closeStageActive) {
+                Snackbar.show({
+                  backgroundColor: colors.primary,
+                  textColor: colors.white,
+                  text: 'Clear No Response before closing this ticket.',
+                  duration: Snackbar.LENGTH_SHORT,
+                });
+                return;
+              }
+              if (billingBlocksClose) {
+                Snackbar.show({
+                  backgroundColor: colors.primary,
+                  textColor: colors.white,
+                  text:
+                    billingWorkflow?.block_close_reason ??
+                    'Complete charges and customer payment before closing.',
+                  duration: Snackbar.LENGTH_LONG,
+                });
+                setPaymentModalVisible(true);
+                return;
+              }
+              if (lmBlocking) {
+                Snackbar.show({
+                  backgroundColor: colors.primary,
+                  textColor: colors.white,
+                  text: 'Complete Last Mile cabling before continuing this ticket.',
+                  duration: Snackbar.LENGTH_SHORT,
+                });
                 return;
               }
               if (data?.assigned_to?.user?.id != user.crm_user_id) {
@@ -899,14 +1064,6 @@ const ActivityDetailsScreen = (props: Props) => {
         setModalVisible={setAttachmentModalVisible}
         onSuccess={refreshAfterChange}
       />
-      <AddActivityModal
-        ticketId={ticket?.id}
-        contactId={ticket?.contact?.id}
-        context={context}
-        modalVisible={activityModalVisible}
-        setModalVisible={setActivityModalVisible}
-        onSuccess={refreshAfterChange}
-      />
       <AddNoteModal
         modalVisible={noteModalVisible}
         setModalVisible={setNoteModalVisible}
@@ -924,6 +1081,25 @@ const ActivityDetailsScreen = (props: Props) => {
         ticketId={ticket?.id}
         nextStage={nextStage}
         onSuccess={handleTicketUpdated}
+      />
+      <ScheduleVisitModal
+        modalVisible={scheduleModalVisible}
+        setModalVisible={setScheduleModalVisible}
+        ticketId={ticket?.id}
+        onSuccess={refreshAfterChange}
+      />
+      <BillingWorkflowModal
+        visible={paymentModalVisible}
+        onClose={() => setPaymentModalVisible(false)}
+        ticketId={ticket?.id}
+        token={token}
+        onUpdated={refreshAfterChange}
+      />
+      <LmHandoffModal
+        modalVisible={lmHandoffVisible}
+        setModalVisible={setLmHandoffVisible}
+        ticketId={ticket?.id}
+        onSuccess={refreshAfterChange}
       />
       {progressTicketModalVisible && (
         <ProgressTicketModal
@@ -969,5 +1145,21 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: colors.white,
+  },
+  lmBanner: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 8,
+  },
+  lmBannerText: {
+    color: '#92400E',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  lmHandoffButton: {
+    width: '100%',
+    backgroundColor: colors.primary,
   },
 });

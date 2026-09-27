@@ -2,7 +2,9 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import axiosInterceptorInstance from "@/lib/axios-interceptor";
+import { AdminAuth } from "@/lib/admin-auth";
 import React from "react";
+import { useRouter } from "next/navigation";
 
 import {
   Table,
@@ -18,6 +20,48 @@ import Image from "next/image";
 type Props = {};
 
 export default function Reports({}: Props) {
+  const router = useRouter();
+
+  React.useEffect(() => {
+    if (!AdminAuth.getToken()) {
+      router.push("/auth/login");
+      return;
+    }
+    if (!AdminAuth.canAccessReports()) {
+      router.replace("/");
+    }
+  }, [router]);
+
+  const downloadAgingCsv = () => {
+    if (!selectedTeam || !selectedQueue) {
+      return;
+    }
+    const url = `/reports/tickets/aging/export?team=${encodeURIComponent(selectedTeam)}&queue=${encodeURIComponent(selectedQueue)}`;
+    axiosInterceptorInstance
+      .get(url, { responseType: "blob" })
+      .then((res) => {
+        const blob = new Blob([res.data], { type: "text/csv" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `ticket-aging-${selectedTeam}-${selectedQueue}.csv`;
+        link.click();
+      })
+      .catch(console.error);
+  };
+
+  const downloadTeamCsv = () => {
+    axiosInterceptorInstance
+      .get("/reports/tickets/team/export", { responseType: "blob" })
+      .then((res) => {
+        const blob = new Blob([res.data], { type: "text/csv" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "tickets-by-team.csv";
+        link.click();
+      })
+      .catch(console.error);
+  };
+
   const [teams, setTeams] = React.useState<
     | {
         value: string;
@@ -191,6 +235,14 @@ export default function Reports({}: Props) {
             >
               {agingReportFetching ? "Fetching...." : "Get Report"}
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!selectedTeam || !selectedQueue}
+              onClick={downloadAgingCsv}
+            >
+              Download CSV
+            </Button>
           </div>
         </CardHeader>
         <CardContent>
@@ -247,7 +299,12 @@ export default function Reports({}: Props) {
 
       <Card className="col-span-2">
         <CardHeader>
-          <CardTitle>Details Service Request Report</CardTitle>
+          <div className="flex items-center justify-between gap-4">
+            <CardTitle>Details Service Request Report</CardTitle>
+            <Button type="button" variant="outline" onClick={downloadTeamCsv}>
+              Download CSV
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {Object.entries(groupedByOwnerTeam).map(([ownerTeam, teams]) => (

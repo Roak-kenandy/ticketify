@@ -11,11 +11,14 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { JwtGuard } from 'src/auth/guard';
+import { RolesGuard } from 'src/auth/guard/roles.guard';
 import { Roles } from 'src/infrastructure/decorators/roles.decorator';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { TicketsService } from './tickets.service';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CreateActivityDto } from './dto/create-activity';
+import { ScheduleVisitDto } from 'src/config/dto/schedule-visit.dto';
+import { LmHandoffDto } from './dto/lm-handoff.dto';
 
 @Controller('tickets')
 export class TicketsController {
@@ -27,8 +30,8 @@ export class TicketsController {
     return await this.ticketsService.create(createTicketDto.data);
   }
 
-  @UseGuards(JwtGuard)
-  @Roles(['ADMIN', 'SUPERVISOR'])
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(['Admin', 'Supervisor', 'Administrator'])
   @Get('all')
   async fetchAllTickets() {
     return this.ticketsService.findAllTickets();
@@ -117,6 +120,17 @@ export class TicketsController {
       ticket_id,
       req.user.crm_user_id,
     );
+  }
+
+  @UseGuards(JwtGuard)
+  @Roles(['TECHNICIAN'])
+  @Put(':id/schedule')
+  async scheduleVisit(
+    @Req() req: { user: { id: string; name?: string; phone?: string } },
+    @Param('id') ticket_id: string,
+    @Body() body: ScheduleVisitDto,
+  ) {
+    return this.ticketsService.scheduleVisit(ticket_id, req.user, body);
   }
 
   @UseGuards(JwtGuard)
@@ -245,6 +259,41 @@ ${body.note}
   @Get(':id/context')
   async findTicketActivitiesContext(@Param('id') ticket_id: string) {
     return this.ticketsService.findTicketActivitiesContext(ticket_id);
+  }
+
+  @UseGuards(JwtGuard)
+  @Roles(['TECHNICIAN'])
+  @Get(':id/lm/context')
+  async lmHandoffContext(@Param('id') ticket_id: string) {
+    return this.ticketsService.getLmHandoffContext(ticket_id);
+  }
+
+  @UseGuards(JwtGuard)
+  @Roles(['TECHNICIAN'])
+  @Get(':id/lm')
+  async listLmActivities(@Param('id') ticket_id: string) {
+    return this.ticketsService.listLastMileActivities(ticket_id);
+  }
+
+  @UseGuards(JwtGuard)
+  @Roles(['TECHNICIAN'])
+  @Post(':id/lm/handoff')
+  async lmHandoff(
+    @Req() req: { user: { id: string; name?: string } },
+    @Param('id') ticket_id: string,
+    @Body() body: LmHandoffDto,
+  ) {
+    return this.ticketsService.handoffToLastMile(ticket_id, body, req.user);
+  }
+
+  @UseGuards(JwtGuard)
+  @Roles(['TECHNICIAN'])
+  @Put(':id/lm/activities/:activityId/complete')
+  async completeLmActivity(
+    @Req() req: { user: { id: string; name?: string } },
+    @Param('activityId') activityId: string,
+  ) {
+    return this.ticketsService.completeLastMileActivity(activityId, req.user);
   }
 
   @UseGuards(JwtGuard)

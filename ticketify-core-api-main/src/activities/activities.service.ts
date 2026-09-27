@@ -67,6 +67,13 @@ export class ActivitiesService {
         activityData.date = createActivityDto.date;
       }
 
+      activityData.from_time = null;
+      activityData.to_time = null;
+
+      if (createActivityDto.address_id) {
+        activityData.address_id = createActivityDto.address_id;
+      }
+
       if (createActivityDto.notes) {
         activityData.notes = createActivityDto.notes;
       }
@@ -99,11 +106,27 @@ export class ActivitiesService {
         );
       }
 
-      const response = await crmCreateActivity.json();
+      const response = (await crmCreateActivity.json()) as { id?: string };
       this.logger.log(
         'Activities Service',
         'CRM Activity created successfully',
       );
+
+      if (createActivityDto.notes?.trim() && response?.id) {
+        await fetch(
+          this.config.get('CRM_BACKOFFICE_API_URL') +
+            `/activities/${response.id}/notes`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ note: createActivityDto.notes.trim() }),
+            headers: {
+              api_key: this.config.get('CRM_API_KEY'),
+              accept: 'application/json',
+              'Content-Type': 'application/json',
+            },
+          },
+        );
+      }
 
       return response;
     } catch (error) {
@@ -184,6 +207,28 @@ export class ActivitiesService {
 
   findOne(id: string) {
     return this.getActivityDetails(id);
+  }
+
+  async completeActivity(id: string) {
+    const res = await fetch(
+      this.config.get('CRM_BACKOFFICE_API_URL') + `/activities/${id}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ state: 'COMPLETED' }),
+        headers: {
+          api_key: this.config.get('CRM_API_KEY'),
+          accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new ForbiddenException(
+        `CRM could not complete activity: ${errorText}`,
+      );
+    }
+    return res.json();
   }
 
   update(id: number, updateActivityDto: UpdateActivityDto) {

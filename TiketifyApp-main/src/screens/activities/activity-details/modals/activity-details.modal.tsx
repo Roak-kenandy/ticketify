@@ -16,6 +16,10 @@ import moment from 'moment';
 import ABadge from '../../../../components/ui/badge';
 import ASeperator from '../../../../components/ui/seperator';
 import {API_BASE_URL} from '../../../../config/api';
+import {
+  lmStatusLabel,
+  resolveCrmActivityState,
+} from '../../../../utils/crmActivityState';
 
 type Props = {
   activity: any;
@@ -226,30 +230,35 @@ const ActivityDetailModal = (props: Props) => {
                 )}
 
                 {/* Status */}
-                {activityDetails.states &&
-                  activityDetails.states.length > 0 && (
-                    <View style={styles.section}>
-                      <Text style={styles.sectionTitle}>Status</Text>
-                      <View style={styles.statusContainer}>
-                        <ABadge
-                          title={
-                            activityDetails.states[
-                              activityDetails.states.length - 1
-                            ].state
-                          }
-                          color={colors.primary}
-                        />
+                {!activityDetails.error && (
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Status</Text>
+                    <View style={styles.statusContainer}>
+                      <ABadge
+                        title={lmStatusLabel(
+                          resolveCrmActivityState(activityDetails),
+                        )}
+                        color={
+                          resolveCrmActivityState(activityDetails) ===
+                          'COMPLETED'
+                            ? '#22C55E'
+                            : colors.primary
+                        }
+                      />
+                      {activityDetails.states?.length > 0 && (
                         <Text style={styles.statusDate}>
                           Since:{' '}
                           {moment(
-                            activityDetails.states[
-                              activityDetails.states.length - 1
-                            ].date * 1000,
+                            [...activityDetails.states].sort(
+                              (a: {date: number}, b: {date: number}) =>
+                                b.date - a.date,
+                            )[0].date * 1000,
                           ).format('DD MMM YYYY, hh:mm A')}
                         </Text>
-                      </View>
+                      )}
                     </View>
-                  )}
+                  </View>
+                )}
 
                 {/* Custom Fields */}
                 {activityDetails.custom_fields &&

@@ -24,7 +24,7 @@ export function AdminProtection({ children }: AdminProtectionProps) {
           return;
         }
 
-        if (!AdminAuth.hasAdminRole(token)) {
+        if (!AdminAuth.canAccessAdminPanel()) {
           router.replace("/");
           return;
         }

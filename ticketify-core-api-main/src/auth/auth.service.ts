@@ -156,9 +156,10 @@ export class AuthService {
     if (user.role.name === 'Technician') {
       await this.prisma.user.update({
         where: { id: user.id },
-        data: { availability: true },
+        data: { availability: true, presence: 'ONLINE', busy_comment: null, busy_until: null },
       });
       user.availability = true;
+      user.presence = 'ONLINE';
     }
 
     await this.activity.createUserLog('User logged in', user);

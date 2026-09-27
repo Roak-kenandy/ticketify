@@ -34,6 +34,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         email: true,
         password: true,
         name: true,
+        phone: true,
       },
     });
 
@@ -45,6 +46,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       id: user.id,
       name: user.name,
       email: user.email,
+      phone: user.phone,
       crm_user_id: payload.crm_user_id,
       role: payload.Roles,
     };

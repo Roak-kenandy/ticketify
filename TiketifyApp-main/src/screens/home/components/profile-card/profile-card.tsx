@@ -1,7 +1,6 @@
 import {
   SafeAreaView,
   StyleSheet,
-  Switch,
   Text,
   TouchableOpacity,
   View,
@@ -13,6 +12,9 @@ import {useDispatch, useSelector} from 'react-redux';
 import {apiFetch, normalizeAvailability} from '../../../../utils/apiClient';
 import {showError} from '../../../../utils/notify';
 import {spacing} from '../../../../constants/styles';
+import PresenceBusyModal from './presence-busy.modal';
+
+type Presence = 'ONLINE' | 'BUSY' | 'OFFLINE';
 
 type Props = {
   navigation: any;
@@ -30,55 +32,112 @@ function getInitials(name?: string) {
     .toUpperCase();
 }
 
+function presenceFromUser(user: any, isOnline: boolean): Presence {
+  const p = user?.presence;
+  if (p === 'ONLINE' || p === 'BUSY' || p === 'OFFLINE') {
+    return p;
+  }
+  return isOnline ? 'ONLINE' : 'OFFLINE';
+}
+
+const PRESENCE_META: Record<
+  Presence,
+  {label: string; color: string; ring: string}
+> = {
+  ONLINE: {label: 'Green', color: '#22C55E', ring: '#86EFAC'},
+  BUSY: {label: 'Yellow', color: '#EAB308', ring: '#FDE047'},
+  OFFLINE: {label: 'Red', color: '#EF4444', ring: '#FCA5A5'},
+};
+
 const ProfileCard = (props: Props) => {
   const dispatch = useDispatch();
   const token = useSelector((state: any) => state.auth?.token);
   const isOnline = useSelector((state: any) => state.auth?.isOnline);
   const user = useSelector((state: any) => state.auth?.user);
   const requestRef = React.useRef(0);
+  const [busyModal, setBusyModal] = React.useState(false);
+  const [submitting, setSubmitting] = React.useState(false);
 
-  const changeAvailability = React.useCallback(
-    (nextOnline: boolean) => {
+  const presence = presenceFromUser(user, isOnline);
+
+  const applyPresence = React.useCallback(
+    async (next: Presence, busyComment?: string) => {
       if (!token) {
         return;
       }
-
-      const previousOnline = isOnline;
-      if (previousOnline === nextOnline) {
+      const previous = presence;
+      if (previous === next && next !== 'BUSY') {
         return;
       }
 
       const requestId = ++requestRef.current;
-      const nextStatus = nextOnline ? 'AVAILABLE' : 'UNAVAILABLE';
+      const optimisticOnline = next === 'ONLINE';
+      dispatch({
+        type: 'USER_PRESENCE',
+        payload: {
+          presence: next,
+          availability: optimisticOnline,
+          busy_comment: next === 'BUSY' ? busyComment : null,
+        },
+      });
 
-      dispatch({type: 'USER_STATUS', payload: nextOnline});
-
-      apiFetch(`/users/status?status=${nextStatus}`, token, {
-        method: 'PATCH',
-        headers: {'Content-Type': 'application/json'},
-      })
-        .then(({data, response}) => {
-          if (requestId !== requestRef.current) {
-            return;
-          }
-          if (!response.ok) {
-            throw new Error(data?.message || 'Could not update availability');
-          }
-          dispatch({
-            type: 'USER_STATUS',
-            payload: normalizeAvailability(data?.availability ?? nextOnline),
-          });
-        })
-        .catch((error: any) => {
-          if (requestId !== requestRef.current) {
-            return;
-          }
-          dispatch({type: 'USER_STATUS', payload: previousOnline});
-          showError(error?.message || 'Could not update availability');
+      setSubmitting(true);
+      try {
+        const body: Record<string, string> = {presence: next};
+        if (next === 'BUSY' && busyComment) {
+          body.busy_comment = busyComment;
+        }
+        const {data, response} = await apiFetch('/users/presence', token, {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body),
         });
+        if (requestId !== requestRef.current) {
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(data?.message || 'Could not update status');
+        }
+        dispatch({
+          type: 'USER_PRESENCE',
+          payload: {
+            presence: data.presence ?? next,
+            availability: normalizeAvailability(data?.availability),
+            busy_comment: data.busy_comment,
+            user: data,
+          },
+        });
+      } catch (error: any) {
+        if (requestId !== requestRef.current) {
+          return;
+        }
+        dispatch({
+          type: 'USER_PRESENCE',
+          payload: {
+            presence: previous,
+            availability: previous === 'ONLINE',
+          },
+        });
+        showError(error?.message || 'Could not update status');
+      } finally {
+        if (requestId === requestRef.current) {
+          setSubmitting(false);
+        }
+      }
     },
-    [dispatch, isOnline, token],
+    [dispatch, presence, token],
   );
+
+  const onSelectPresence = (next: Presence) => {
+    if (submitting) {
+      return;
+    }
+    if (next === 'BUSY') {
+      setBusyModal(true);
+      return;
+    }
+    void applyPresence(next);
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -106,18 +165,43 @@ const ProfileCard = (props: Props) => {
         </View>
 
         <View style={styles.statusWrap}>
-          <Text style={[styles.statusLabel, isOnline && styles.statusOnline]}>
-            {isOnline ? 'Online' : 'Offline'}
+          <Text style={styles.statusCaption}>Availability</Text>
+          <View style={styles.presenceRow}>
+            {(['ONLINE', 'BUSY', 'OFFLINE'] as Presence[]).map(key => {
+              const meta = PRESENCE_META[key];
+              const active = presence === key;
+              return (
+                <TouchableOpacity
+                  key={key}
+                  accessibilityLabel={meta.label}
+                  onPress={() => onSelectPresence(key)}
+                  style={[
+                    styles.presenceDot,
+                    {
+                      backgroundColor: meta.color,
+                      borderColor: active ? meta.ring : 'transparent',
+                    },
+                    active && styles.presenceDotActive,
+                  ]}
+                />
+              );
+            })}
+          </View>
+          <Text style={styles.statusLabel}>
+            {PRESENCE_META[presence].label}
           </Text>
-          <Switch
-            value={isOnline}
-            onValueChange={changeAvailability}
-            trackColor={{false: '#475569', true: '#22C55E'}}
-            thumbColor={colors.white}
-            ios_backgroundColor="#475569"
-          />
         </View>
       </View>
+
+      <PresenceBusyModal
+        visible={busyModal}
+        onClose={() => setBusyModal(false)}
+        loading={submitting}
+        onConfirm={comment => {
+          setBusyModal(false);
+          void applyPresence('BUSY', comment);
+        }}
+      />
     </SafeAreaView>
   );
 };
@@ -176,16 +260,34 @@ const styles = StyleSheet.create({
   },
   statusWrap: {
     alignItems: 'center',
-    gap: 6,
+    gap: 4,
+  },
+  statusCaption: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.65)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  presenceRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
+  },
+  presenceDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 3,
+  },
+  presenceDotActive: {
+    transform: [{scale: 1.12}],
   },
   statusLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: 'rgba(255,255,255,0.75)',
+    color: '#F8FAFC',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
-  },
-  statusOnline: {
-    color: '#86EFAC',
   },
 });

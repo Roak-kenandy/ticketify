@@ -22,6 +22,10 @@ import { mapStyles } from "./mapStyles";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
+  PRESENCE_UI,
+  resolveTechnicianPresence,
+} from "@/lib/technician-presence";
+import {
   Search,
   Menu,
   X,
@@ -38,6 +42,24 @@ import {
   RotateCcw,
   MapPin,
 } from "lucide-react";
+
+function technicianMapCoords(technician: {
+  user_location_tracking?: { latitude: unknown; longitude: unknown }[];
+}): { lat: number; lng: number } | null {
+  const row = technician?.user_location_tracking?.[0];
+  if (!row) {
+    return null;
+  }
+  const lat = Number(row.latitude);
+  const lng = Number(row.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return null;
+  }
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    return null;
+  }
+  return { lat, lng };
+}
 
 export default function HomePage() {
   // CSS styles for the custom range slider
@@ -104,6 +126,64 @@ export default function HomePage() {
   const [pathAnimationInterval, setPathAnimationInterval] =
     React.useState<NodeJS.Timeout | null>(null);
   const [isPathPlaying, setIsPathPlaying] = React.useState(false);
+  const [autoAssignEnabled, setAutoAssignEnabled] = React.useState(false);
+  const [autoAssignLoading, setAutoAssignLoading] = React.useState(false);
+  const [autoAssignSaving, setAutoAssignSaving] = React.useState(false);
+  /** Set in useEffect only — avoids SSR/client mismatch from localStorage */
+  const [canManageDispatch, setCanManageDispatch] = React.useState(false);
+  const [showAdminPanelLink, setShowAdminPanelLink] = React.useState(false);
+  const [isCeoUser, setIsCeoUser] = React.useState(false);
+  const [operationsSnapshot, setOperationsSnapshot] =
+    React.useState<any>(null);
+
+  const fetchOperationsSnapshot = React.useCallback(() => {
+    if (!AdminAuth.getToken() || !AdminAuth.canViewOpsMap()) {
+      return;
+    }
+    axiosInterceptorInstance
+      .get("/dashboard/operations")
+      .then((response) => setOperationsSnapshot(response.data))
+      .catch((error) => {
+        console.error("Failed to load operations dashboard:", error);
+      });
+  }, []);
+
+  const fetchAutoAssignSettings = React.useCallback(() => {
+    if (!AdminAuth.getToken()) {
+      return;
+    }
+    setAutoAssignLoading(true);
+    axiosInterceptorInstance
+      .get("/assignments/settings")
+      .then((response) => {
+        setAutoAssignEnabled(Boolean(response.data?.enabled));
+      })
+      .catch((error) => {
+        console.error("Failed to load auto-assign settings:", error);
+      })
+      .finally(() => setAutoAssignLoading(false));
+  }, []);
+
+  async function handleAutoAssignToggle(next: boolean) {
+    if (!canManageDispatch || autoAssignSaving) {
+      return;
+    }
+    setAutoAssignSaving(true);
+    try {
+      const response = await axiosInterceptorInstance.patch(
+        "/assignments/settings",
+        { enabled: next },
+      );
+      setAutoAssignEnabled(Boolean(response.data?.enabled));
+      if (next) {
+        fetchTickets();
+      }
+    } catch (error) {
+      console.error("Failed to update auto-assign:", error);
+    } finally {
+      setAutoAssignSaving(false);
+    }
+  }
 
   function fetchTickets() {
     if (!AdminAuth.getToken()) {
@@ -140,6 +220,8 @@ export default function HomePage() {
     technician: any;
     markerId: string;
   }) => {
+    const presence = resolveTechnicianPresence(technician);
+    const ui = PRESENCE_UI[presence];
     return (
       <div className="relative group">
         <div
@@ -151,19 +233,26 @@ export default function HomePage() {
           onMouseLeave={() => setHoveredTechnician(null)}
           className="w-12 h-12 rounded-full border-4 border-white shadow-lg cursor-pointer hover:scale-110 transition-all duration-200 flex items-center justify-center"
           style={{
-            backgroundColor:
-              technician?.availability === true ? "#10b981" : "#dc2626",
+            backgroundColor: ui.markerColor,
           }}
         >
           <User className="w-5 h-5 text-white" />
         </div>
-        {technician?.availability && (
-          <div className="absolute -top-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-white apple-pulse"></div>
+        {presence !== "offline" && (
+          <div
+            className={`absolute -top-1 -right-1 w-4 h-4 ${ui.pulseClass} rounded-full border-2 border-white apple-pulse`}
+          ></div>
         )}
 
         {/* Hover Tooltip */}
-        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-1 bg-black/90 text-white text-sm rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-10">
-          {technician.name}
+        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-1 bg-black/90 text-white text-sm rounded-lg max-w-[220px] opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-10">
+          <div className="font-medium">{technician.name}</div>
+          <div className={`text-xs ${ui.textClass}`}>{ui.label}</div>
+          {presence === "busy" && technician.busy_comment && (
+            <div className="text-xs text-gray-300 mt-1 whitespace-normal">
+              {technician.busy_comment}
+            </div>
+          )}
           <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-black/90"></div>
         </div>
       </div>
@@ -233,9 +322,7 @@ export default function HomePage() {
       setAnimationIndex(0);
     }
 
-    // Focus map on the current location (reverse chronological order - start from oldest)
-    const chronologicalIndex = locations.length - 1 - animationIndex;
-    const currentLocation = locations[chronologicalIndex];
+    const currentLocation = locations[animationIndex];
     if (currentLocation && mapRef.current) {
       mapRef.current.panTo({
         lat: currentLocation.latitude,
@@ -255,12 +342,10 @@ export default function HomePage() {
           return prevIndex;
         }
 
-        // Pan map to current location (reverse chronological order)
         if (mapRef.current) {
-          const chronologicalIndex = locations.length - 1 - nextIndex;
           mapRef.current.panTo({
-            lat: locations[chronologicalIndex].latitude,
-            lng: locations[chronologicalIndex].longitude,
+            lat: locations[nextIndex].latitude,
+            lng: locations[nextIndex].longitude,
           });
         }
 
@@ -292,10 +377,13 @@ export default function HomePage() {
     setAnimationIndex(0);
     setIsAnimatingPath(false);
     // Return to technician's current location
-    if (
-      selectedTechnicianDetails?.locationTracking?.currentLocation &&
-      mapRef.current
-    ) {
+    const current =
+      selectedTechnicianDetails?.locationTracking?.currentLocation;
+    if (current && mapRef.current) {
+      mapRef.current.panTo({
+        lat: current.latitude,
+        lng: current.longitude,
+      });
       mapRef.current.setZoom(17);
     }
   };
@@ -308,9 +396,7 @@ export default function HomePage() {
     if (newIndex >= 0 && newIndex < locations.length) {
       setAnimationIndex(newIndex);
 
-      // Pan map to the selected location (reverse chronological order)
-      const chronologicalIndex = locations.length - 1 - newIndex;
-      const selectedLocation = locations[chronologicalIndex];
+      const selectedLocation = locations[newIndex];
       if (selectedLocation && mapRef.current) {
         mapRef.current.panTo({
           lat: selectedLocation.latitude,
@@ -339,19 +425,52 @@ export default function HomePage() {
   };
 
   React.useEffect(() => {
+    const canDispatch = AdminAuth.canManageDispatch();
+    setCanManageDispatch(canDispatch);
+    setShowAdminPanelLink(AdminAuth.canAccessAdminPanel());
+    setIsCeoUser(AdminAuth.isCeo());
+    if (canDispatch) {
+      fetchAutoAssignSettings();
+      fetchTickets();
+    }
+    if (AdminAuth.canViewOpsMap()) {
+      fetchOperationsSnapshot();
+    }
+  }, [fetchAutoAssignSettings, fetchOperationsSnapshot]);
+
+  React.useEffect(() => {
     fetchTechnicians();
 
     const interval = setInterval(() => {
       fetchTechnicians();
+      fetchOperationsSnapshot();
     }, 10000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchOperationsSnapshot]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  React.useEffect(() => {
+    if (!isDrawerOpen || !selectedTechnicianId) {
+      return;
+    }
+    const interval = setInterval(() => {
+      axiosInterceptorInstance
+        .get(`/users/technician/${selectedTechnicianId}/details`)
+        .then((response) => setSelectedTechnicianDetails(response.data))
+        .catch(() => {});
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [isDrawerOpen, selectedTechnicianId]);
 
   const filteredTechnicians = technicians.filter(
     (tech: any) =>
       tech.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       tech.email.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const drawerPresence = selectedTechnicianDetails
+    ? resolveTechnicianPresence(selectedTechnicianDetails.user)
+    : null;
+  const drawerUi = drawerPresence ? PRESENCE_UI[drawerPresence] : null;
 
   return (
     <div className="h-screen bg-background relative">
@@ -399,9 +518,152 @@ export default function HomePage() {
               </div>
             </div>
             <div className="text-xs pt-4 text-gray-300 whitespace-nowrap">
-              {filteredTechnicians.filter((t: any) => t.availability).length} of{" "}
-              {filteredTechnicians.length} available
+              {filteredTechnicians.filter(
+                (t: any) => resolveTechnicianPresence(t) === "online",
+              ).length}{" "}
+              available ·{" "}
+              {filteredTechnicians.filter(
+                (t: any) => resolveTechnicianPresence(t) === "busy",
+              ).length}{" "}
+              busy ·{" "}
+              {filteredTechnicians.filter(
+                (t: any) => resolveTechnicianPresence(t) === "offline",
+              ).length}{" "}
+              offline
             </div>
+
+            {AdminAuth.canViewOpsMap() && operationsSnapshot && (
+              <div className="mt-3 p-3 rounded-xl bg-white/10 border border-white/20 space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium text-white">
+                    Operations
+                  </p>
+                  <Link
+                    href="/dispatch"
+                    className="text-xs text-blue-300 underline"
+                  >
+                    {isCeoUser ? "Full screen" : "Dispatch"}
+                  </Link>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-lg bg-black/20 p-2 col-span-2">
+                    <p className="text-gray-400 font-medium">Malé Access</p>
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      Unassigned NEW:{" "}
+                      <span className="text-white font-semibold">
+                        {operationsSnapshot.regions?.male?.unassigned_new ?? 0}
+                      </span>
+                      {" · "}
+                      Assigned NEW:{" "}
+                      {operationsSnapshot.regions?.male?.assigned_new ?? 0}
+                      {" · "}
+                      In progress:{" "}
+                      {operationsSnapshot.regions?.male?.in_progress ?? 0}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-black/20 p-2 col-span-2">
+                    <p className="text-gray-400 font-medium">Hulhumalé Access</p>
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      Unassigned NEW:{" "}
+                      <span className="text-white font-semibold">
+                        {operationsSnapshot.regions?.hulhumale?.unassigned_new ??
+                          0}
+                      </span>
+                      {" · "}
+                      Assigned NEW:{" "}
+                      {operationsSnapshot.regions?.hulhumale?.assigned_new ?? 0}
+                      {" · "}
+                      In progress:{" "}
+                      {operationsSnapshot.regions?.hulhumale?.in_progress ?? 0}
+                    </p>
+                  </div>
+                  {operationsSnapshot.regions?.transport_lm && (
+                    <div className="rounded-lg bg-black/20 p-2 col-span-2">
+                      <p className="text-gray-400 font-medium">
+                        {operationsSnapshot.regions.transport_lm.label ??
+                          "Transport · Last Mile"}
+                      </p>
+                      <p className="text-[11px] text-gray-500 mt-1">
+                        Unassigned NEW:{" "}
+                        <span className="text-white font-semibold">
+                          {operationsSnapshot.regions.transport_lm
+                            .unassigned_new ?? 0}
+                        </span>
+                        {" · "}
+                        Assigned NEW:{" "}
+                        {operationsSnapshot.regions.transport_lm.assigned_new ??
+                          0}
+                        {" · "}
+                        In progress:{" "}
+                        {operationsSnapshot.regions.transport_lm.in_progress ??
+                          0}
+                      </p>
+                    </div>
+                  )}
+                  <div className="rounded-lg bg-black/20 p-2">
+                    <p className="text-gray-400">Online</p>
+                    <p className="text-lg font-semibold text-emerald-400">
+                      {operationsSnapshot.technicians?.online ?? 0}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-black/20 p-2">
+                    <p className="text-gray-400">Offline</p>
+                    <p className="text-lg font-semibold text-red-300">
+                      {operationsSnapshot.technicians?.offline ?? 0}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-black/20 p-2">
+                    <p className="text-gray-400">Busy</p>
+                    <p className="text-lg font-semibold text-yellow-300">
+                      {operationsSnapshot.technicians?.busy ?? 0}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-black/20 p-2">
+                    <p className="text-gray-400">Auto-assign pool</p>
+                    <p className="text-lg font-semibold text-white">
+                      {operationsSnapshot.technicians?.auto_assign_eligible ??
+                        0}
+                    </p>
+                    <p className="text-[10px] text-gray-500">ONLINE+OFFLINE</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {canManageDispatch && (
+              <div className="mt-3 p-3 rounded-xl bg-white/10 border border-white/20">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-white">
+                      Auto-assign
+                    </p>
+                    <p className="text-xs text-gray-300 mt-0.5">
+                      {autoAssignEnabled
+                        ? "ON — unassigned NEW tickets (online + offline techs; busy excluded)"
+                        : "OFF — manual assignment only"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={autoAssignLoading || autoAssignSaving}
+                    onClick={() =>
+                      handleAutoAssignToggle(!autoAssignEnabled)
+                    }
+                    className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ${
+                      autoAssignEnabled ? "bg-emerald-500" : "bg-gray-500/80"
+                    } ${autoAssignLoading || autoAssignSaving ? "opacity-60" : ""}`}
+                    aria-pressed={autoAssignEnabled}
+                    aria-label="Toggle auto-assign"
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                        autoAssignEnabled ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Technicians List */}
             <div
@@ -413,17 +675,19 @@ export default function HomePage() {
             >
               <div className="apple-scrollbar o ">
                 <div className="flex flex-col gap-3 pb-2">
-                  {filteredTechnicians?.map((technician: any) => (
-                    <ContextMenu key={technician.phone}>
+                  {filteredTechnicians?.map((technician: any) => {
+                    const listPresence = resolveTechnicianPresence(technician);
+                    const listUi = PRESENCE_UI[listPresence];
+                    return (
+                    <ContextMenu key={technician.id ?? technician.phone}>
                       <ContextMenuTrigger>
                         <div
                           onClick={() => {
-                            if (technician?.user_location_tracking?.[0]) {
+                            const coords = technicianMapCoords(technician);
+                            if (coords) {
                               onMarkerClick(null, {
-                                lat: technician.user_location_tracking[0]
-                                  .latitude,
-                                lng: technician.user_location_tracking[0]
-                                  .longitude,
+                                lat: coords.lat,
+                                lng: coords.lng,
                                 markerId: technician.id,
                               });
                               setHoveredTechnician(technician);
@@ -444,16 +708,15 @@ export default function HomePage() {
                               <div
                                 className="w-10 h-10 rounded-full flex items-center justify-center shadow-sm"
                                 style={{
-                                  backgroundColor:
-                                    technician?.availability === true
-                                      ? "#10b981"
-                                      : "#dc2626",
+                                  backgroundColor: listUi.markerColor,
                                 }}
                               >
                                 <User className="w-5 h-5 text-white" />
                               </div>
-                              {technician?.availability && (
-                                <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white apple-pulse"></div>
+                              {listPresence !== "offline" && (
+                                <div
+                                  className={`absolute -bottom-1 -right-1 w-3 h-3 ${listUi.dotClass} rounded-full border-2 border-white apple-pulse`}
+                                ></div>
                               )}
                             </div>
 
@@ -466,24 +729,18 @@ export default function HomePage() {
                               </p>
                               <div className="flex items-center gap-1 mt-1">
                                 <div
-                                  className={`w-2 h-2 rounded-full ${
-                                    technician?.availability
-                                      ? "bg-green-400"
-                                      : "bg-red-400"
-                                  }`}
+                                  className={`w-2 h-2 rounded-full ${listUi.dotClass}`}
                                 ></div>
-                                <span
-                                  className={`text-xs ${
-                                    technician?.availability
-                                      ? "text-green-400"
-                                      : "text-red-400"
-                                  }`}
-                                >
-                                  {technician?.availability
-                                    ? "Available"
-                                    : "Offline"}
+                                <span className={`text-xs ${listUi.textClass}`}>
+                                  {listUi.label}
                                 </span>
                               </div>
+                              {listPresence === "busy" &&
+                                technician.busy_comment && (
+                                  <p className="text-xs text-yellow-200/90 mt-1 line-clamp-2">
+                                    {technician.busy_comment}
+                                  </p>
+                                )}
                             </div>
 
                             <div className="text-xs text-gray-400 flex-shrink-0">
@@ -506,7 +763,8 @@ export default function HomePage() {
                         </ContextMenuItem>
                       </ContextMenuContent>
                     </ContextMenu>
-                  ))}
+                  );
+                  })}
                 </div>
               </div>
             </div>
@@ -516,38 +774,50 @@ export default function HomePage() {
 
       {/* Top bar: theme, settings, admin, logout */}
       <div className="h-20 z-50 absolute bottom-0 md:bottom-auto md:right-0 md:top-0 flex items-center gap-2 px-4">
+        {isCeoUser && (
+          <Link
+            href="/dispatch"
+            className="px-4 py-2 bg-slate-800/90 border border-white/20 hover:bg-slate-700 text-white rounded-lg transition-colors text-sm font-medium"
+          >
+            Operations board
+          </Link>
+        )}
         <ThemeToggle />
-        <Link
-          href="/settings"
-          className="px-3 py-2 bg-background/90 border border-border hover:bg-muted text-foreground rounded-lg transition-colors text-sm font-medium">
-          Settings
-        </Link>
-        <a
-          href="/admin"
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium flex items-center gap-2"
-        >
-          <div className="w-4 h-4">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
+        {!isCeoUser && (
+          <Link
+            href="/settings"
+            className="px-3 py-2 bg-background/90 border border-border hover:bg-muted text-foreground rounded-lg transition-colors text-sm font-medium">
+            Settings
+          </Link>
+        )}
+        {showAdminPanelLink && (
+            <a
+              href="/admin"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium flex items-center gap-2"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.107-1.204l-.527-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z"
-              />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-              />
-            </svg>
-          </div>
-          Admin Panel
-        </a>
+              <div className="w-4 h-4">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={1.5}
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.107-1.204l-.527-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                  />
+                </svg>
+              </div>
+              Admin Panel
+            </a>
+        )}
         <button
           type="button"
           onClick={() => AdminAuth.logout()}
@@ -577,29 +847,31 @@ export default function HomePage() {
           {/* Regular technician markers - hidden during path animation */}
           {!isAnimatingPath &&
             filteredTechnicians
-              ?.filter(
-                (technician: any) =>
-                  technician?.user_location_tracking?.length > 0 &&
-                  (selectedTechnicianId
-                    ? technician.id === selectedTechnicianId
-                    : true)
-              )
-              ?.map((technician: any) => (
+              ?.filter((technician: any) => {
+                const coords = technicianMapCoords(technician);
+                if (!coords) {
+                  return false;
+                }
+                return selectedTechnicianId
+                  ? technician.id === selectedTechnicianId
+                  : true;
+              })
+              ?.map((technician: any) => {
+                const coords = technicianMapCoords(technician)!;
+                return (
                 <Marker
                   key={technician.id}
-                  lat={technician.user_location_tracking[0].latitude}
-                  lng={technician.user_location_tracking[0].longitude}
+                  lat={coords.lat}
+                  lng={coords.lng}
                   technician={technician}
                   markerId={technician?.id ?? ""}
                 />
-              ))}
+              )})}
 
           {/* Animated path waypoints */}
           {isAnimatingPath &&
             selectedTechnicianDetails?.locationTracking?.last8Hours &&
             selectedTechnicianDetails.locationTracking.last8Hours
-              .slice()
-              .reverse()
               .slice(0, animationIndex + 1)
               .map((location: any, index: number) => {
                 const isCurrentWaypoint = index === animationIndex;
@@ -656,9 +928,7 @@ export default function HomePage() {
                 className="w-8 h-8 rounded-full flex items-center justify-center"
                 style={{
                   backgroundColor:
-                    selectedTechnicianDetails?.user?.availability === true
-                      ? "#10b981"
-                      : "#dc2626",
+                    drawerUi?.markerColor ?? PRESENCE_UI.offline.markerColor,
                 }}
               >
                 <User className="w-4 h-4 text-white" />
@@ -684,28 +954,25 @@ export default function HomePage() {
                 <span className="text-gray-400">
                   {selectedTechnicianDetails?.locationTracking?.last8Hours &&
                     moment(
-                      selectedTechnicianDetails.locationTracking.last8Hours[
-                        selectedTechnicianDetails.locationTracking.last8Hours
-                          .length - 1
-                      ]?.created_at
+                      selectedTechnicianDetails.locationTracking.last8Hours[0]
+                        ?.created_at
                     ).format("HH:mm:ss")}
                 </span>
                 <span className="text-white font-medium">
                   {selectedTechnicianDetails?.locationTracking?.last8Hours &&
                     moment(
                       selectedTechnicianDetails.locationTracking.last8Hours[
-                        selectedTechnicianDetails.locationTracking.last8Hours
-                          .length -
-                          1 -
-                          animationIndex
+                        animationIndex
                       ]?.created_at
                     ).format("HH:mm:ss")}
                 </span>
                 <span className="text-gray-400">
                   {selectedTechnicianDetails?.locationTracking?.last8Hours &&
                     moment(
-                      selectedTechnicianDetails.locationTracking.last8Hours[0]
-                        ?.created_at
+                      selectedTechnicianDetails.locationTracking.last8Hours[
+                        selectedTechnicianDetails.locationTracking.last8Hours
+                          .length - 1
+                      ]?.created_at
                     ).format("HH:mm:ss")}
                 </span>
               </div>
@@ -827,9 +1094,8 @@ export default function HomePage() {
                       className="w-16 h-16 rounded-full flex items-center justify-center"
                       style={{
                         backgroundColor:
-                          selectedTechnicianDetails.user?.availability === true
-                            ? "#10b981"
-                            : "#dc2626",
+                          drawerUi?.markerColor ??
+                          PRESENCE_UI.offline.markerColor,
                       }}
                     >
                       <User className="w-8 h-8 text-white" />
@@ -868,28 +1134,38 @@ export default function HomePage() {
                           </span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 ">
+                      <div className="flex items-center gap-2 mt-1">
                         <div
-                          className={`w-2 h-2 rounded-full ${
-                            selectedTechnicianDetails.user?.availability
-                              ? "bg-green-400"
-                              : "bg-red-400"
-                          }`}
+                          className={`w-2 h-2 rounded-full ${drawerUi?.dotClass ?? "bg-red-400"}`}
                         ></div>
                         <span
-                          className={`text-xs ${
-                            selectedTechnicianDetails.user?.availability
-                              ? "text-green-400"
-                              : "text-red-400"
-                          }`}
+                          className={`text-xs ${drawerUi?.textClass ?? "text-red-400"}`}
                         >
-                          {selectedTechnicianDetails.user?.availability
-                            ? "Available"
-                            : "Offline"}
+                          {drawerUi?.label ?? "Offline"}
                         </span>
                       </div>
                     </div>
                   </div>
+
+                  {drawerPresence === "busy" &&
+                    selectedTechnicianDetails.user.busy_comment && (
+                      <div className="rounded-xl border border-yellow-500/40 bg-yellow-500/10 p-4">
+                        <h4 className="text-yellow-400 text-sm font-semibold mb-2">
+                          Busy — workload note
+                        </h4>
+                        <p className="text-sm text-yellow-50/95 leading-relaxed">
+                          {selectedTechnicianDetails.user.busy_comment}
+                        </p>
+                        {selectedTechnicianDetails.user.busy_until && (
+                          <p className="text-xs text-yellow-200/70 mt-2">
+                            Until{" "}
+                            {moment(
+                              selectedTechnicianDetails.user.busy_until,
+                            ).format("DD MMM YYYY, HH:mm")}
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                   {/* Contact Info */}
                   <div className="space-y-3 bg-white/5 rounded-xl p-4">
@@ -1135,9 +1411,17 @@ export default function HomePage() {
                         .currentLocation ? (
                         <div className="space-y-2">
                           <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                            <span className="text-sm text-green-400">
-                              Currently active
+                            <div
+                              className={`w-2 h-2 rounded-full animate-pulse ${drawerUi?.dotClass ?? "bg-green-400"}`}
+                            ></div>
+                            <span
+                              className={`text-sm ${drawerUi?.textClass ?? "text-green-400"}`}
+                            >
+                              {drawerPresence === "busy"
+                                ? "On map — busy"
+                                : drawerPresence === "online"
+                                  ? "Available on map"
+                                  : "Location reported (offline)"}
                             </span>
                           </div>
                           <div className="text-xs text-gray-400">
@@ -1191,15 +1475,15 @@ export default function HomePage() {
                                 Path from{" "}
                                 {moment(
                                   selectedTechnicianDetails.locationTracking
-                                    .last8Hours[
-                                    selectedTechnicianDetails.locationTracking
-                                      .last8Hours.length - 1
-                                  ].created_at
+                                    .last8Hours[0].created_at
                                 ).format("HH:mm")}{" "}
                                 to{" "}
                                 {moment(
                                   selectedTechnicianDetails.locationTracking
-                                    .last8Hours[0].created_at
+                                    .last8Hours[
+                                    selectedTechnicianDetails.locationTracking
+                                      .last8Hours.length - 1
+                                  ].created_at
                                 ).format("HH:mm")}
                               </span>
                             </div>
@@ -1247,30 +1531,26 @@ export default function HomePage() {
                                     <span className="text-gray-400">
                                       {moment(
                                         selectedTechnicianDetails
-                                          .locationTracking.last8Hours[
-                                          selectedTechnicianDetails
-                                            .locationTracking.last8Hours
-                                            .length - 1
-                                        ]?.created_at
+                                          .locationTracking.last8Hours[0]
+                                          ?.created_at
                                       ).format("HH:mm:ss")}
                                     </span>
                                     <span className="text-white font-medium">
                                       {moment(
                                         selectedTechnicianDetails
                                           .locationTracking.last8Hours[
-                                          selectedTechnicianDetails
-                                            .locationTracking.last8Hours
-                                            .length -
-                                            1 -
-                                            animationIndex
+                                          animationIndex
                                         ]?.created_at
                                       ).format("HH:mm:ss")}
                                     </span>
                                     <span className="text-gray-400">
                                       {moment(
                                         selectedTechnicianDetails
-                                          .locationTracking.last8Hours[0]
-                                          ?.created_at
+                                          .locationTracking.last8Hours[
+                                          selectedTechnicianDetails
+                                            .locationTracking.last8Hours
+                                            .length - 1
+                                        ]?.created_at
                                       ).format("HH:mm:ss")}
                                     </span>
                                   </div>
@@ -1327,16 +1607,16 @@ export default function HomePage() {
                                         .duration(
                                           moment(
                                             selectedTechnicianDetails
-                                              .locationTracking.last8Hours[0]
-                                              ?.created_at
+                                              .locationTracking.last8Hours[
+                                              selectedTechnicianDetails
+                                                .locationTracking.last8Hours
+                                                .length - 1
+                                            ]?.created_at
                                           ).diff(
                                             moment(
                                               selectedTechnicianDetails
-                                                .locationTracking.last8Hours[
-                                                selectedTechnicianDetails
-                                                  .locationTracking.last8Hours
-                                                  .length - 1
-                                              ]?.created_at
+                                                .locationTracking.last8Hours[0]
+                                                ?.created_at
                                             )
                                           )
                                         )

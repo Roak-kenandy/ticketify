@@ -7,6 +7,12 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum TechnicianPresence {
+  ONLINE
+  BUSY
+  OFFLINE
+}
+
 model User {
   id                     String                 @id @default(cuid())
   crm_user_id            String                 @unique
@@ -16,6 +22,9 @@ model User {
   password               String
   user_location_tracking UserLocationTracking[]
   availability           Boolean                @default(false)
+  presence               TechnicianPresence     @default(OFFLINE)
+  busy_comment           String?
+  busy_until             DateTime?
   created_at             DateTime               @default(now())
   updated_at             DateTime               @updatedAt
   user_log               UserLog[]
@@ -106,4 +115,176 @@ model UserFeedback {
   ticket_id  String
   created_at DateTime @default(now())
   user       User     @relation(fields: [user_id], references: [id])
+}
+
+model NotificationTemplate {
+  id            String   @id @default(cuid())
+  trigger_key   String   @unique
+  body_template String
+  enabled       Boolean  @default(true)
+  version       Int      @default(1)
+  updated_at    DateTime @updatedAt
+
+  @@map("notification_templates")
+}
+
+model ChargeCatalogItem {
+  id             String   @id @default(cuid())
+  code           String   @unique
+  label          String
+  amount_mvr     Decimal  @db.Decimal(10, 2)
+  active         Boolean  @default(true)
+  effective_from DateTime @default(now())
+
+  @@map("charge_catalog_items")
+}
+
+model TicketSchedule {
+  id                 String   @id @default(cuid())
+  crm_ticket_id      String
+  scheduled_at       DateTime
+  technician_user_id String
+  sms_sent           Boolean  @default(false)
+  idempotency_key    String?  @unique
+  created_at         DateTime @default(now())
+
+  @@map("ticket_schedules")
+}
+
+model AssignmentPolicy {
+  id         String  @id @default(cuid())
+  department String
+  region     String?
+  queue_id   String?
+  mode       String
+  is_default Boolean @default(false)
+
+  @@map("assignment_policies")
+}
+
+model IntegrationAuditLog {
+  id              String   @id @default(cuid())
+  entity_type     String
+  entity_id       String
+  action          String
+  actor_user_id   String?
+  old_state       Json?
+  new_state       Json?
+  crm_sync_ok     Boolean?
+  error_message   String?
+  idempotency_key String?  @unique
+  created_at      DateTime @default(now())
+
+  @@map("integration_audit_logs")
+}
+
+model SystemConfig {
+  key   String @id
+  value Json
+
+  @@map("system_config")
+}
+
+enum TicketInvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  VOID
+}
+
+enum TicketPaymentStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+  CANCELLED
+}
+
+model TicketInvoice {
+  id                 String              @id @default(cuid())
+  invoice_number     String              @unique
+  crm_ticket_id      String
+  sr_number          String?
+  status             TicketInvoiceStatus @default(DRAFT)
+  subtotal_mvr       Decimal             @db.Decimal(10, 2)
+  tax_mvr            Decimal             @db.Decimal(10, 2)
+  total_mvr          Decimal             @db.Decimal(10, 2)
+  gst_rate           Decimal             @db.Decimal(5, 4)
+  line_items         Json
+  created_by_user_id String?
+  issued_at          DateTime?
+  paid_at            DateTime?
+  created_at         DateTime            @default(now())
+  updated_at         DateTime            @updatedAt
+  payments           TicketPayment[]
+  receipt            TicketReceipt?
+
+  @@index([crm_ticket_id])
+  @@map("ticket_invoices")
+}
+
+model TicketPayment {
+  id                 String              @id @default(cuid())
+  reference          String              @unique
+  crm_ticket_id      String
+  invoice_id         String?
+  amount_mvr         Decimal             @db.Decimal(10, 2)
+  subtotal_mvr       Decimal?            @db.Decimal(10, 2)
+  tax_mvr            Decimal?            @db.Decimal(10, 2)
+  currency           String              @default("MVR")
+  status             TicketPaymentStatus @default(PENDING)
+  bml_transaction_id String?
+  bml_state          String?
+  payment_url        String?
+  line_items         Json
+  created_by_user_id String?
+  confirmed_at       DateTime?
+  metadata           Json?
+  created_at         DateTime            @default(now())
+  updated_at         DateTime            @updatedAt
+  invoice            TicketInvoice?      @relation(fields: [invoice_id], references: [id])
+  receipt            TicketReceipt?
+
+  @@index([crm_ticket_id])
+  @@index([bml_transaction_id])
+  @@index([invoice_id])
+  @@map("ticket_payments")
+}
+
+enum TicketBillingDecision {
+  UNDECIDED
+  NOT_CHARGEABLE
+  CHARGEABLE
+}
+
+model TicketBillingState {
+  id                 String                @id @default(cuid())
+  crm_ticket_id      String                @unique
+  decision           TicketBillingDecision @default(UNDECIDED)
+  decided_by_user_id String?
+  decided_at         DateTime?
+  notes              String?
+  created_at         DateTime              @default(now())
+  updated_at         DateTime              @updatedAt
+
+  @@map("ticket_billing_states")
+}
+
+model TicketReceipt {
+  id              String        @id @default(cuid())
+  receipt_number  String        @unique
+  invoice_id      String        @unique
+  payment_id      String        @unique
+  crm_ticket_id   String
+  sr_number       String?
+  subtotal_mvr    Decimal       @db.Decimal(10, 2)
+  tax_mvr         Decimal       @db.Decimal(10, 2)
+  amount_paid_mvr Decimal       @db.Decimal(10, 2)
+  line_items      Json
+  issued_at       DateTime      @default(now())
+  snapshot        Json?
+  invoice         TicketInvoice @relation(fields: [invoice_id], references: [id])
+  payment         TicketPayment @relation(fields: [payment_id], references: [id])
+
+  @@index([crm_ticket_id])
+  @@map("ticket_receipts")
 }

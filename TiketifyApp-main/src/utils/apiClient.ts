@@ -1,4 +1,5 @@
 import {API_BASE_URL} from '../config/api';
+import {trackApiLoading} from './apiLoading';
 
 export function isTokenExpired(token: string): boolean {
   try {
@@ -54,12 +55,15 @@ export async function apiFetch(
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers,
-  });
-  const data = await parseJsonResponse(response);
-  return {data, response};
+  const run = async () => {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers,
+    });
+    const data = await parseJsonResponse(response);
+    return {data, response};
+  };
+  return trackApiLoading(run());
 }
 
 export function formatApiError(

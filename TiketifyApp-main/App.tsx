@@ -6,6 +6,7 @@ import {GestureHandlerRootView} from 'react-native-gesture-handler';
 import {Provider as StoreProvider} from 'react-redux';
 import store from './src/store/store';
 import BackgroundLocationManager from './src/components/BackgroundLocationManager';
+import GlobalApiLoadingOverlay from './src/components/GlobalApiLoadingOverlay';
 import RootNavigation from './src/screens/navigation/RootNavigation';
 
 function App(): JSX.Element {
@@ -29,6 +30,7 @@ function App(): JSX.Element {
       <GestureHandlerRootView style={{flex: 1}}>
         <NavigationContainer>
           <RootNavigation />
+          <GlobalApiLoadingOverlay />
           <BackgroundLocationManager />
         </NavigationContainer>
       </GestureHandlerRootView>

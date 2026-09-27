@@ -13,14 +13,19 @@ const initialState = {
 
 const authReducer = (state = initialState, action: any) => {
   switch (action.type) {
-    case LOGIN_SUCCESS:
+    case LOGIN_SUCCESS: {
+      const u = action.payload.user;
+      const presenceOnline =
+        u?.presence === 'ONLINE' ||
+        (u?.presence == null && normalizeAvailability(u?.availability));
       return {
         isLoggedIn: true,
-        isOnline: normalizeAvailability(action.payload.user?.availability),
-        user: action.payload.user,
+        isOnline: presenceOnline,
+        user: u,
         token: action.payload.token,
         availabilityLockUntil: 0,
       };
+    }
     case LOGOUT:
       return {...initialState};
     case 'USER_STATUS': {
@@ -32,6 +37,28 @@ const authReducer = (state = initialState, action: any) => {
         user: state.user
           ? {...state.user, availability: nextOnline}
           : state.user,
+      };
+    }
+    case 'USER_PRESENCE': {
+      const nextOnline = normalizeAvailability(action.payload.availability);
+      const nextUser = action.payload.user
+        ? action.payload.user
+        : state.user
+          ? {
+              ...state.user,
+              presence: action.payload.presence ?? state.user.presence,
+              availability: nextOnline,
+              busy_comment:
+                action.payload.busy_comment !== undefined
+                  ? action.payload.busy_comment
+                  : state.user.busy_comment,
+            }
+          : state.user;
+      return {
+        ...state,
+        isOnline: nextOnline,
+        availabilityLockUntil: Date.now() + AVAILABILITY_LOCK_MS,
+        user: nextUser,
       };
     }
     case 'USER_PROFILE': {

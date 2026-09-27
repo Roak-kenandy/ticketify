@@ -78,7 +78,7 @@ export class ReportsService {
           queue: '$queue.name',
           status: '$status.name',
           ageInSeconds: {
-            $subtract: [1742144704, '$created_date'],
+            $subtract: [Math.floor(Date.now() / 1000), '$created_date'],
           },
           created_date: 1,
         },
@@ -390,5 +390,58 @@ export class ReportsService {
     } finally {
       await client.close(); // Ensure we close the client connection after use
     }
+  }
+
+  formatAgingCsv(
+    row: Record<string, number>,
+    meta: { queue?: string; team?: string },
+  ): string {
+    const headers = [
+      'team_id',
+      'queue_id',
+      'totalTickets',
+      '0-1Days',
+      '1-3Days',
+      '3-7Days',
+      '7+Days',
+      '0-1DaysPercentage',
+      '1-3DaysPercentage',
+      '3-7DaysPercentage',
+      '7+DaysPercentage',
+    ];
+    const values = [
+      meta.team ?? '',
+      meta.queue ?? '',
+      row.totalTickets ?? 0,
+      row['0-1Days'] ?? 0,
+      row['1-3Days'] ?? 0,
+      row['3-7Days'] ?? 0,
+      row['7+Days'] ?? 0,
+      row['0-1DaysPercentage'] ?? 0,
+      row['1-3DaysPercentage'] ?? 0,
+      row['3-7DaysPercentage'] ?? 0,
+      row['7+DaysPercentage'] ?? 0,
+    ];
+    return `${headers.join(',')}\n${values.join(',')}\n`;
+  }
+
+  formatTeamReportCsv(rows: any[]): string {
+    const headers = [
+      'owner_team',
+      'queue_stage',
+      'total',
+      'closed_total',
+      'open_total',
+    ];
+    const lines = rows.map(r =>
+      [
+        r.owner_team ?? r._id?.owner_team ?? '',
+        r.queue_stage ?? r._id?.queue_stage ?? '',
+        r.total ?? 0,
+        r.closed_total ?? 0,
+        r.open_total ?? 0,
+      ].join(','),
+    );
+    return `${headers.join(',')}\n${lines.join('\n')}\n`;
   }
 }

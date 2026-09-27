@@ -18,6 +18,11 @@ import SMSService from 'src/shared/ooredoo-sms/sms.service';
 import NotificationService from 'src/shared/one-signal/notification/notification.service';
 import { CreateActivityDto } from './dto/create-activity';
 import { CrmApiClient } from 'src/infrastructure/crm/crm-api.client';
+import { NotificationTemplateService } from 'src/notifications/notification-template.service';
+import { IntegrationAuditService } from 'src/infrastructure/audit/integration-audit.service';
+import { WorkflowConfigService } from 'src/config/workflow-config.service';
+import { TicketBillingService } from 'src/finance/ticket-billing.service';
+import { LmHandoffDto } from './dto/lm-handoff.dto';
 
 @Injectable()
 export class TicketsService {
@@ -30,6 +35,10 @@ export class TicketsService {
     private sms: SMSService,
     private notification: NotificationService,
     private crmApi: CrmApiClient,
+    private templates: NotificationTemplateService,
+    private audit: IntegrationAuditService,
+    private workflowConfig: WorkflowConfigService,
+    private ticketBilling: TicketBillingService,
   ) {}
 
   async createNewTicket(dto: CreateTicketDto) {
@@ -584,80 +593,112 @@ export class TicketsService {
     return response;
   }
 
-  async toggleNoResponse(id: string) {
-    this.logger.log('Ticket Service', 'Updating service request tag');
-    let ticket = await this.crmFindServiceRequest(id);
+  async listNoResponseActivities(ticketId: string) {
+    const typeId = this.workflowConfig.getNoResponseActivityTypeId();
+    const res = await this.crmApi.listActivitiesByServiceRequest(ticketId);
+    if (!res.ok) {
+      throw new ForbiddenException('Could not load activities from CRM');
+    }
+    const activities = (res.data?.content ?? []) as {
+      id: string;
+      name: string;
+      state?: string;
+      states?: { state: string; date: number }[];
+      type?: { id: string; name: string };
+    }[];
+    return activities.filter(
+      (a) => a.type?.id === typeId || a.type?.name === 'No Response',
+    );
+  }
 
-    if (ticket.categories?.some((cat) => cat.name === 'No Response')) {
-      this.logger.log('Ticket Service', 'No Response tag already present');
-      // remove No Response tag
-      let crm_remove_service_request_tag = await fetch(
-        this.config.get('CRM_BACKOFFICE_API_URL') + '/service_requests/' + id,
-        {
-          method: 'PUT',
-          body: JSON.stringify({
-            categories: [],
-          }),
-          headers: {
-            api_key: this.config.get('CRM_API_KEY'),
-            accept: 'application/json',
-            'Content-Type': 'application/json',
-          },
-        },
+  private async assertNoPendingNoResponse(ticket_id: string) {
+    const activities = await this.listNoResponseActivities(ticket_id);
+    const open = activities.filter(
+      (a) => this.resolveCrmActivityState(a) === 'PENDING',
+    );
+    if (open.length > 0) {
+      throw new ForbiddenException(
+        'Complete or remove No Response before closing this ticket',
       );
+    }
+  }
 
-      if (!crm_remove_service_request_tag.ok) {
-        this.logger.error(
-          'Ticket Service',
-          'CRM Service request tag not removed',
+  async toggleNoResponse(id: string) {
+    this.logger.log('Ticket Service', 'Toggle No Response activity');
+    const ticket = await this.crmFindServiceRequest(id);
+    const pending = (await this.listNoResponseActivities(id)).filter(
+      (a) => this.resolveCrmActivityState(a) === 'PENDING',
+    );
+
+    if (pending.length > 0) {
+      const activityId = pending[0].id;
+      const updated = await this.crmApi.updateActivityState(
+        activityId,
+        'COMPLETED',
+      );
+      if (!updated.ok) {
+        throw new ForbiddenException(
+          'Could not complete No Response activity in CRM',
         );
-        return new ForbiddenException('CRM Service request tag not removed');
       }
 
-      this.logger.log('Ticket Service', 'CRM Service request tag removed');
+      await this.clearNoResponseTagIfPresent(id);
+
+      await this.crmAddNoteToTicket(
+        id,
+        'No Response cleared — customer contact resumed (Ticketify).',
+        false,
+      );
+
+      await this.audit.log({
+        entity_type: 'activity',
+        entity_id: activityId,
+        action: 'NO_RESPONSE_CLEARED',
+        new_state: { state: 'COMPLETED', ticket_id: id },
+        crm_sync_ok: true,
+      });
+
       return {
-        message: 'Service request tag removed successfully',
-        tags: await crm_remove_service_request_tag.json(),
+        message: 'No Response cleared',
+        activity_id: activityId,
+        state: 'COMPLETED',
       };
     }
 
-    const no_response_category_id = '802425fd-5a7e-4ce8-b8a5-3c81b13da247';
-
-    let crm_update_service_request_tag = await fetch(
-      this.config.get('CRM_BACKOFFICE_API_URL') + '/service_requests/' + id,
-      {
-        method: 'PUT',
-        body: JSON.stringify({
-          categories: [
-            {
-              id: no_response_category_id,
-            },
-          ],
-        }),
-        headers: {
-          api_key: this.config.get('CRM_API_KEY'),
-          accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-      },
-    );
-
-    if (!crm_update_service_request_tag.ok) {
+    const noResponseTypeId = this.workflowConfig.getNoResponseActivityTypeId();
+    const activityResult = await this.crmApi.createActivity({
+      name: 'No Response',
+      description:
+        'Customer could not be reached — No Response activity (Ticketify).',
+      type_id: noResponseTypeId,
+      date: Math.floor(Date.now() / 1000),
+      linked_to: [{ type: 'SERVICE_REQUEST', id }],
+    });
+    if (!activityResult.ok) {
       this.logger.error(
         'Ticket Service',
-        'CRM Service request tag not updated',
+        `No Response CRM activity failed: ${JSON.stringify(activityResult.data)}`,
       );
-      return new ForbiddenException('CRM Service request tag not updated');
+      throw new ForbiddenException('No Response activity could not be created');
     }
 
-    // create ticket note
+    const activityId =
+      (activityResult.data as { id?: string })?.id ??
+      (activityResult.data as { content?: { id?: string } })?.content?.id;
+
     await this.crmAddNoteToTicket(
       id,
-      'Technician marked No Response due to unsuccessful contact attempt. The customer has been notified to reschedule the appointment.',
+      'Technician marked No Response due to unsuccessful contact attempt.',
       false,
     );
 
-    this.logger.log('Ticket Service', 'CRM Service request tag updated');
+    await this.audit.log({
+      entity_type: 'service_request',
+      entity_id: id,
+      action: 'NO_RESPONSE_ACTIVITY',
+      new_state: { activity_type_id: noResponseTypeId, activity_id: activityId },
+      crm_sync_ok: true,
+    });
 
     await this.sms.publishSMS({
       phone: ticket.contact.phone.number,
@@ -669,12 +710,30 @@ Medianet Support Team
         `,
     });
 
-    let result = await crm_update_service_request_tag.json();
-
     return {
-      message: 'Service request tag updated successfully',
-      tags: result,
+      message: 'No Response activity created',
+      activity_id: activityId,
+      state: 'PENDING',
     };
+  }
+
+  private async clearNoResponseTagIfPresent(ticketId: string) {
+    const ticket = await this.crmFindServiceRequest(ticketId);
+    if (!ticket.categories?.some((cat: { name: string }) => cat.name === 'No Response')) {
+      return;
+    }
+    await fetch(
+      this.config.get('CRM_BACKOFFICE_API_URL') + '/service_requests/' + ticketId,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ categories: [] }),
+        headers: {
+          api_key: this.config.get('CRM_API_KEY'),
+          accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+      },
+    );
   }
 
   private async getServiceRequestTags(id: string) {
@@ -800,6 +859,43 @@ Medianet Support Team
     };
   }
 
+  async fetchUnassignedNewTeamTickets(team_id: string) {
+    const { new_tickets } = await this.fetchTeamServiceRequests(team_id);
+    return (new_tickets ?? []).filter(
+      (ticket: { assigned_to?: { user?: { id?: string } } }) =>
+        !ticket?.assigned_to?.user?.id,
+    );
+  }
+
+  async fetchTeamAssignmentSummary(team_id: string) {
+    const { new_tickets, in_progress_tickets } =
+      await this.fetchTeamServiceRequests(team_id);
+    const unassignedNew = (new_tickets ?? []).filter(
+      (t: { assigned_to?: { user?: { id?: string } } }) =>
+        !t?.assigned_to?.user?.id,
+    );
+    const assignedNew = (new_tickets ?? []).filter(
+      (t: { assigned_to?: { user?: { id?: string } } }) =>
+        Boolean(t?.assigned_to?.user?.id),
+    );
+    const assignedInProgress = in_progress_tickets ?? [];
+    return {
+      team_id,
+      unassigned_new: unassignedNew.length,
+      assigned_new: assignedNew.length,
+      in_progress: assignedInProgress.length,
+      assigned_in_progress: assignedInProgress.filter(
+        (t: { assigned_to?: { user?: { id?: string } } }) =>
+          Boolean(t?.assigned_to?.user?.id),
+      ).length,
+    };
+  }
+
+  async countInProgressTicketsForUser(crm_user_id: string): Promise<number> {
+    const all = await this.fetchUserTickets(crm_user_id);
+    return all?.in_progress_tickets?.length ?? 0;
+  }
+
   async fetchUserTickets(user_id: string) {
     let crm_service_requests = await fetch(
       this.config.get('CRM_BACKOFFICE_API_URL') +
@@ -921,6 +1017,8 @@ Medianet Support Team
   }
 
   async assignServiceRequestToUser(ticket_id: any, user_id: any) {
+    await this.assertNoPendingLastMile(ticket_id);
+
     let ticket = await this.crmFindServiceRequest(ticket_id);
 
     let contact_details = await this.fetchContactDetails(ticket.contact.id);
@@ -986,14 +1084,48 @@ Medianet Support Team
     return nextStage.id;
   }
 
+  private resolveCrmActivityState(activity: {
+    state?: string;
+    states?: { state: string; date: number }[];
+  }): string {
+    if (activity.state) {
+      return activity.state;
+    }
+    const states = activity.states;
+    if (!states?.length) {
+      return '';
+    }
+    return [...states].sort((a, b) => b.date - a.date)[0].state;
+  }
+
+  private async assertNoPendingLastMile(ticket_id: string) {
+    const lmActivities = await this.listLastMileActivities(ticket_id);
+    const open = lmActivities.filter(
+      (a) => this.resolveCrmActivityState(a) === 'PENDING',
+    );
+    if (open.length > 0) {
+      throw new ForbiddenException(
+        'Complete Last Mile cabling before starting or progressing this ticket',
+      );
+    }
+  }
+
   async startTicket(ticket_id: string, stage_id?: string) {
+    await this.assertNoPendingLastMile(ticket_id);
+
     const ticket = await this.crmFindServiceRequest(ticket_id);
 
     if (ticket?.state !== 'NEW') {
       throw new ForbiddenException('Ticket must be assigned before starting');
     }
 
-    const targetStageId = this.resolveNextStageId(ticket, stage_id);
+    const mappedStart = this.workflowConfig.getStartStageIdForQueue(
+      ticket?.queue_info?.id ?? ticket?.queue?.id,
+    );
+    const targetStageId =
+      stage_id?.trim() ||
+      mappedStart ||
+      this.resolveNextStageId(ticket, stage_id);
     const user = await this.user.crmGetUser(ticket.assigned_to?.user?.id);
 
     this.logger.log(
@@ -1051,10 +1183,24 @@ Medianet Support Team
     return updatedTicket;
   }
 
-  async completeTicket(ticket_id: string, comment: string, stage_id: string) {
+  async completeTicket(ticket_id: string, comment: string, stage_id?: string) {
+    await this.assertNoPendingNoResponse(ticket_id);
+    await this.assertNoPendingLastMile(ticket_id);
+    await this.ticketBilling.assertReadyToClose(ticket_id);
+
     let ticket = await this.crmFindServiceRequest(ticket_id);
+    const resolvedStageId =
+      stage_id?.trim() ||
+      this.workflowConfig.getCompleteStageIdForQueue(
+        ticket?.queue_info?.id ?? ticket?.queue?.id,
+      );
+    if (!resolvedStageId) {
+      throw new ForbiddenException(
+        'stage_id is required when queue complete stage is not mapped',
+      );
+    }
     let user = await this.user.crmGetUser(ticket.assigned_to?.user?.id);
-    console.log('Closing ticket' + ticket_id + 'to stage ' + stage_id);
+    console.log('Closing ticket' + ticket_id + 'to stage ' + resolvedStageId);
     let crm_start_service_request = await fetch(
       this.config.get('CRM_BACKOFFICE_API_URL') +
         '/service_requests/' +
@@ -1072,7 +1218,7 @@ Medianet Support Team
           closing_comment: comment ?? 'Closing ticket',
           achieved_date: new Date().toISOString(),
           is_resolved: true,
-          stage_id: stage_id,
+          stage_id: resolvedStageId,
         }),
       },
     );
@@ -1116,6 +1262,7 @@ Medianet Support Team
     comment: string,
     smsNotification: boolean,
   ) {
+    await this.assertNoPendingLastMile(ticket_id);
     console.log('smsNotification', smsNotification ? 'Enabled' : 'Disabled');
     let ticket = await this.crmFindServiceRequest(ticket_id);
 
@@ -1478,45 +1625,392 @@ Medianet Support Team
   // activtiies for LM
 
   async findTicketActivitiesContext(id: string) {
-    let crm_activity_types = await this.listActivityTypes();
+    const lmContext = await this.getLmHandoffContext(id);
+    let noResponseActivities: Awaited<
+      ReturnType<TicketsService['listNoResponseActivities']>
+    > = [];
+    try {
+      noResponseActivities = await this.listNoResponseActivities(id);
+    } catch {
+      noResponseActivities = [];
+    }
+    const pendingNoResponse = noResponseActivities.some(
+      (a) => this.resolveCrmActivityState(a) === 'PENDING',
+    );
+    return {
+      ...lmContext,
+      no_response_activities: noResponseActivities,
+      pending_no_response: pendingNoResponse,
+    };
+  }
 
-    if (!crm_activity_types) {
-      this.logger.error('Ticket Service', 'CRM Activity types not found');
-      return new ForbiddenException('CRM Activity types not found');
+  /** CRM all-day activity `date` is UTC midnight for the calendar day (see CRM web). */
+  private lmActivityDateUnix(activityDate?: string): number {
+    let year: number;
+    let month: number;
+    let day: number;
+
+    if (activityDate && /^\d{4}-\d{2}-\d{2}/.test(activityDate)) {
+      const [y, m, d] = activityDate.slice(0, 10).split('-').map(Number);
+      year = y;
+      month = m - 1;
+      day = d;
+    } else {
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Indian/Maldives',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).formatToParts(new Date());
+      year = Number(parts.find((p) => p.type === 'year')!.value);
+      month = Number(parts.find((p) => p.type === 'month')!.value) - 1;
+      day = Number(parts.find((p) => p.type === 'day')!.value);
     }
 
-    let ticket_activities = await this.fetchRequestActivities(id);
+    return Math.floor(Date.UTC(year, month, day) / 1000);
+  }
 
-    if (!ticket_activities) {
-      this.logger.error('Ticket Service', 'CRM Ticket activities not found');
-      return new ForbiddenException('CRM Ticket activities not found');
+  async getLmHandoffContext(ticketId: string) {
+    const lm = this.workflowConfig.getLmConfig();
+    const sr = await this.crmApi.getServiceRequest(ticketId);
+    if (!sr.ok) {
+      throw new ForbiddenException('Service request not found in CRM');
     }
 
-    // list category
-    let crm_service_request_categories =
-      await this.listServiceRequestCategories();
-
-    if (!crm_service_request_categories) {
-      this.logger.error(
-        'Ticket Service',
-        'CRM Service request categories not found',
-      );
-      return new ForbiddenException('CRM Service request categories not found');
+    const srData = sr.data as {
+      contact?: { id: string; name?: string };
+      number?: string;
+    };
+    const contactId = srData?.contact?.id;
+    if (!contactId) {
+      throw new ForbiddenException('Service request has no linked contact');
     }
 
-    const teams = await this.listTeams();
+    const [addressesRes, activitiesRes] = await Promise.all([
+      this.crmApi.listContactAddresses(contactId),
+      this.crmApi.listActivitiesByServiceRequest(ticketId),
+    ]);
 
-    const lmTeam = teams.content.find(
-      (team) => team.name === 'Transport Network',
+    const activities = (activitiesRes.data?.content ?? []) as {
+      id: string;
+      name: string;
+      state: string;
+      type?: { id: string; name: string };
+    }[];
+
+    const lmActivities = activities.filter(
+      (a) =>
+        a.type?.id === lm.activityTypeId ||
+        a.type?.name === lm.activityTypeName,
     );
 
     return {
-      activityTypes: crm_activity_types.content?.filter(
-        (type) => type.name == 'Last Mile Cabling',
+      ticket_id: ticketId,
+      ticket_number: srData.number,
+      contact: srData.contact,
+      lm_config: lm,
+      addresses: addressesRes.ok ? addressesRes.data?.content ?? [] : [],
+      lm_activities: lmActivities,
+      pending_lm: lmActivities.some(
+        (a) => this.resolveCrmActivityState(a) === 'PENDING',
       ),
-      teams: lmTeam,
-      categories: crm_service_request_categories?.content,
     };
+  }
+
+  async handoffToLastMile(
+    ticketId: string,
+    dto: LmHandoffDto,
+    actor: { id: string; name?: string },
+  ) {
+    const lm = this.workflowConfig.getLmConfig();
+    const sr = await this.crmApi.getServiceRequest(ticketId);
+    if (!sr.ok) {
+      throw new ForbiddenException('Service request not found in CRM');
+    }
+
+    const srData = sr.data as {
+      contact?: { id: string };
+      number?: string;
+      assigned_to?: { team?: { id?: string }; user?: { id?: string } };
+    };
+    const contactId = srData?.contact?.id;
+    if (!contactId) {
+      throw new ForbiddenException('Service request has no linked contact');
+    }
+
+    const idempotencyKey = `lm:${ticketId}:${dto.address_id}:${dto.name.trim()}`;
+    const payload = {
+      name: dto.name.trim(),
+      description: dto.description.trim(),
+      type_id: lm.activityTypeId,
+      date: this.lmActivityDateUnix(dto.activity_date),
+      from_time: null,
+      to_time: null,
+      address_id: dto.address_id,
+      notes: dto.notes?.trim() ?? '',
+      custom_fields: [] as unknown[],
+      assigned_to: {
+        user_id: null,
+        team_id: lm.transportTeamId,
+      },
+      linked_to: [
+        { type: 'CONTACT', id: contactId },
+        { type: 'SERVICE_REQUEST', id: ticketId },
+      ],
+    };
+
+    const created = await this.crmApi.createActivity(payload);
+    if (!created.ok) {
+      const err = created.data as { message?: string };
+      throw new ForbiddenException(
+        err?.message ??
+          `CRM could not create Last Mile activity (${created.status})`,
+      );
+    }
+
+    const activity = created.data as { id?: string };
+    const activityId = activity?.id;
+    if (!activityId) {
+      throw new ForbiddenException('CRM activity created without id');
+    }
+
+    if (dto.notes?.trim()) {
+      await this.crmApi.addActivityNote(activityId, dto.notes.trim());
+    }
+
+    const releaseTeamId =
+      srData.assigned_to?.team?.id ?? lm.transportTeamId;
+    const released = await this.crmApi.updateServiceRequest(ticketId, {
+      assigned_to: {
+        user_id: null,
+        team_id: releaseTeamId,
+      },
+    });
+    if (!released.ok) {
+      this.logger.error(
+        'Ticket Service',
+        `LM handoff: failed to release technician from SR ${ticketId}`,
+      );
+    }
+
+    const srNote = [
+      `Last Mile handoff: "${dto.name.trim()}" assigned to ${lm.transportTeamName} by ${actor.name ?? 'technician'}. Activity ${activityId}.`,
+      released.ok
+        ? 'Access technician released from this service request (team queue).'
+        : 'Warning: LM activity created but CRM release from technician may need manual fix.',
+    ].join(' ');
+    await this.crmAddNoteToTicket(ticketId, srNote, false);
+
+    await this.audit.log({
+      entity_type: 'ticket',
+      entity_id: ticketId,
+      action: 'LM_HANDOFF',
+      actor_user_id: actor.id,
+      new_state: {
+        activity_id: activityId,
+        state: 'PENDING',
+        released_from_technician: released.ok,
+      },
+      crm_sync_ok: released.ok,
+      idempotency_key: idempotencyKey,
+    });
+
+    this.invalidateLastMileOpsCache();
+
+    return {
+      activity_id: activityId,
+      activity: created.data,
+      ticket_number: srData.number,
+      state: 'PENDING',
+      released_from_technician: released.ok,
+    };
+  }
+
+  private lastMileOpsCache: { at: number; pending: number } | null = null;
+
+  invalidateLastMileOpsCache() {
+    this.lastMileOpsCache = null;
+  }
+
+  /** Pending Last Mile cabling activities (one CRM page + cache). */
+  async countPendingLastMileActivities(): Promise<number> {
+    const cacheMs = Number(this.config.get('LM_OPS_CACHE_MS') ?? 45_000);
+    if (
+      this.lastMileOpsCache &&
+      Date.now() - this.lastMileOpsCache.at < cacheMs
+    ) {
+      return this.lastMileOpsCache.pending;
+    }
+
+    const lm = this.workflowConfig.getLmConfig();
+    const activities = await this.fetchLastMileActivitiesBatch(lm);
+
+    let pending = 0;
+    for (const a of activities) {
+      if (
+        this.resolveCrmActivityState(
+          a as { state?: string; states?: { state: string; date: number }[] },
+        ) === 'PENDING'
+      ) {
+        pending += 1;
+      }
+    }
+
+    this.lastMileOpsCache = { at: Date.now(), pending };
+    return pending;
+  }
+
+  async fetchTransportLmRegionSummary() {
+    const lm = this.workflowConfig.getLmConfig();
+    const pending = await this.countPendingLastMileActivities();
+    return {
+      team_id: lm.transportTeamId,
+      unassigned_new: 0,
+      assigned_new: pending,
+      in_progress: pending,
+      assigned_in_progress: pending,
+    };
+  }
+
+  private isLastMileActivityRow(
+    activity: {
+      name?: string;
+      type?: { id?: string; name?: string };
+      type_id?: string;
+    },
+    lm: { activityTypeId: string; activityTypeName: string },
+  ): boolean {
+    if (
+      activity.type?.id === lm.activityTypeId ||
+      activity.type_id === lm.activityTypeId ||
+      activity.type?.name === lm.activityTypeName
+    ) {
+      return true;
+    }
+    const name = (activity.name ?? '').toLowerCase();
+    return name.includes('last mile') || name.includes('lm cabling');
+  }
+
+  private activityAssignedToTransportTeam(
+    activity: {
+      assigned_to?: { team?: { id?: string } };
+    },
+    transportTeamId: string,
+  ): boolean {
+    return activity.assigned_to?.team?.id === transportTeamId;
+  }
+
+  private async fetchLastMileActivitiesBatch(lm: {
+    activityTypeId: string;
+    activityTypeName: string;
+    transportTeamId: string;
+  }): Promise<unknown[]> {
+    const size = 100;
+    const attempts: Record<string, string | number>[] = [
+      { teams: lm.transportTeamId, size, page: 1 },
+      { type_id: lm.activityTypeId, size, page: 1 },
+      { activity_type_id: lm.activityTypeId, size, page: 1 },
+    ];
+
+    for (const query of attempts) {
+      const res = await this.crmApi.listActivitiesPage(query);
+      if (!res.ok || !Array.isArray(res.data?.content)) {
+        continue;
+      }
+      const content = res.data.content as {
+        name?: string;
+        type?: { id?: string; name?: string };
+        type_id?: string;
+        assigned_to?: { team?: { id?: string } };
+      }[];
+
+      const byType = content.filter((row) =>
+        this.isLastMileActivityRow(row, lm),
+      );
+      if (byType.length > 0) {
+        return byType;
+      }
+
+      if (query.teams) {
+        const onTransport = content.filter((row) =>
+          this.activityAssignedToTransportTeam(row, lm.transportTeamId),
+        );
+        const lmOnTransport = onTransport.filter((row) =>
+          this.isLastMileActivityRow(row, lm),
+        );
+        if (lmOnTransport.length > 0) {
+          return lmOnTransport;
+        }
+      }
+
+      if (query.type_id || query.activity_type_id) {
+        if (content.length > 0) {
+          return content;
+        }
+      }
+    }
+
+    return [];
+  }
+
+  async listLastMileActivities(ticketId: string) {
+    const lm = this.workflowConfig.getLmConfig();
+    const res = await this.crmApi.listActivitiesByServiceRequest(ticketId);
+    if (!res.ok) {
+      throw new ForbiddenException('Could not load activities from CRM');
+    }
+    const activities = (res.data?.content ?? []) as {
+      id: string;
+      name: string;
+      state: string;
+      type?: { id: string; name: string };
+      assigned_to?: unknown;
+    }[];
+    return activities.filter(
+      (a) =>
+        a.type?.id === lm.activityTypeId ||
+        a.type?.name === lm.activityTypeName,
+    );
+  }
+
+  async completeLastMileActivity(
+    activityId: string,
+    actor: { id: string; name?: string },
+  ) {
+    const before = await this.crmApi.getActivity(activityId);
+    if (!before.ok) {
+      throw new ForbiddenException('Activity not found in CRM');
+    }
+
+    const updated = await this.crmApi.updateActivityState(activityId, 'COMPLETED');
+    if (!updated.ok) {
+      throw new ForbiddenException(
+        `CRM could not complete activity (${updated.status})`,
+      );
+    }
+
+    const activity = before.data as {
+      service_request?: { id: string; number?: string };
+    };
+    const ticketId = activity?.service_request?.id;
+
+    if (ticketId) {
+      const note = `Last Mile activity ${activityId} marked COMPLETED by ${actor.name ?? 'user'}.`;
+      await this.crmAddNoteToTicket(ticketId, note, false);
+      await this.audit.log({
+        entity_type: 'activity',
+        entity_id: activityId,
+        action: 'LM_COMPLETE',
+        actor_user_id: actor.id,
+        new_state: { state: 'COMPLETED', ticket_id: ticketId },
+        crm_sync_ok: true,
+        idempotency_key: `lm-complete:${activityId}`,
+      });
+    }
+
+    this.invalidateLastMileOpsCache();
+
+    return updated.data;
   }
 
   async createActivity(
@@ -1624,5 +2118,96 @@ Medianet Support Team
     this.logger.log('Ticket Service', 'CRM Service request categories found');
 
     return crm_service_request_categories.json();
+  }
+
+  async scheduleVisit(
+    ticket_id: string,
+    reqUser: { id: string; name?: string; phone?: string },
+    dto: { scheduled_at: string; notify_customer?: boolean },
+  ) {
+    const scheduledAt = new Date(dto.scheduled_at);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      throw new ForbiddenException('Invalid schedule date');
+    }
+
+    const idempotencyKey = `schedule:${ticket_id}:${scheduledAt.toISOString()}`;
+    const existing = await this.prisma.ticketSchedule.findUnique({
+      where: { idempotency_key: idempotencyKey },
+    });
+    if (existing) {
+      return { scheduled: existing, duplicate: true };
+    }
+
+    const crmTicket = await this.crmApi.getServiceRequest(ticket_id);
+    if (!crmTicket.ok) {
+      throw new ForbiddenException('Ticket not found in CRM');
+    }
+
+    const ticketData = crmTicket.data as {
+      number?: string;
+      contact?: { phone?: { number?: string } };
+    };
+
+    const techName = reqUser.name ?? 'Technician';
+    const dateStr = scheduledAt.toLocaleDateString('en-GB');
+    const timeStr = scheduledAt.toLocaleTimeString('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    const comment = `Ticket scheduled for approximately ${timeStr} on ${dateStr} by ${techName}.`;
+    const noteResult = await this.crmAddNoteToTicket(ticket_id, comment, false);
+    if (noteResult instanceof ForbiddenException) {
+      throw noteResult;
+    }
+
+    const row = await this.prisma.ticketSchedule.create({
+      data: {
+        crm_ticket_id: ticket_id,
+        scheduled_at: scheduledAt,
+        technician_user_id: reqUser.id,
+        idempotency_key: idempotencyKey,
+      },
+    });
+
+    let smsSent = false;
+    if (dto.notify_customer !== false) {
+      const message = await this.templates.render('VISIT_SCHEDULED', {
+        SR_ID: ticketData?.number ?? ticket_id,
+        TIME: timeStr,
+        DATE: dateStr,
+        NAME: techName,
+        CONTACT: reqUser.phone ?? '',
+      });
+      const phone = ticketData?.contact?.phone?.number;
+      if (message && phone) {
+        try {
+          await this.sms.publishSMS({ phone, message });
+          smsSent = true;
+          await this.prisma.ticketSchedule.update({
+            where: { id: row.id },
+            data: { sms_sent: true },
+          });
+        } catch {
+          this.logger.error('Ticket Service', 'Schedule SMS failed');
+        }
+      }
+    }
+
+    await this.audit.log({
+      entity_type: 'ticket',
+      entity_id: ticket_id,
+      action: 'SCHEDULE_VISIT',
+      actor_user_id: reqUser.id,
+      new_state: { scheduled_at: scheduledAt.toISOString(), sms_sent: smsSent },
+      crm_sync_ok: true,
+      idempotency_key: idempotencyKey,
+    });
+
+    return {
+      scheduled: row,
+      ticket_number: ticketData?.number,
+      sms_sent: smsSent,
+    };
   }
 }

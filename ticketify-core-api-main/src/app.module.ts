@@ -10,7 +10,15 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { FeedbackModule } from './feedback/feedback.module';
 import { ReportsModule } from './reports/reports.module';
 import { CrmApiModule } from './infrastructure/crm/crm-api.module';
+import { IntegrationAuditModule } from './infrastructure/audit/integration-audit.module';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ChargesModule } from './charges/charges.module';
+import { WorkflowConfigModule } from './config/workflow-config.module';
+import { AssignmentModule } from './assignment/assignment.module';
+import { PaymentsModule } from './payments/payments.module';
+import { FinanceModule } from './finance/finance.module';
+import { DispatchModule } from './dispatch/dispatch.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -21,6 +29,14 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
       throttlers: [{ name: 'default', ttl: 60000, limit: 200 }],
     }),
     CrmApiModule,
+    IntegrationAuditModule,
+    ChargesModule,
+    WorkflowConfigModule,
+    AssignmentModule,
+    PaymentsModule,
+    FinanceModule,
+    DispatchModule,
+    DashboardModule,
     AuthModule,
     ActivitiesModule,
     TicketsModule,

@@ -32,6 +32,9 @@ const BackgroundLocationManager: React.FC = () => {
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
       if (nextAppState === 'active') {
         BackgroundLocationService.syncOfflineLocations();
+        if (isOnline && token) {
+          BackgroundLocationService.triggerLocationUpdate().catch(() => {});
+        }
       }
     };
 
@@ -43,7 +46,7 @@ const BackgroundLocationManager: React.FC = () => {
     return () => {
       appStateSubscription?.remove();
     };
-  }, []);
+  }, [isOnline, token]);
 
   useEffect(() => {
     const checkServiceStatus = async () => {

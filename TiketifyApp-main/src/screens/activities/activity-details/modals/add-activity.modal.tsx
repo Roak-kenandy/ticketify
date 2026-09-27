@@ -64,7 +64,7 @@ const AddActivityModal = (props: Props) => {
     const activityData = {
       name: activityName, // Ensure no leading/trailing spaces
       description: activityDescription.trim(),
-      type_id: props.context?.activityTypes[0]?.id,
+      type_id: props.context?.activityTypes?.[0]?.id,
       date: Math.floor(Date.now() / 1000), // Convert to Unix timestamp
       notes: activityNote.trim(),
       custom_fields: [],
@@ -217,7 +217,7 @@ const AddActivityModal = (props: Props) => {
                     borderRadius: 100,
                   }}>
                   <Text style={{fontSize: 12, color: colors.black}}>
-                    {props.context?.activityTypes[0]?.name ||
+                    {props.context?.activityTypes?.[0]?.name ||
                       'Select Activity Type'}
                   </Text>
                 </View>

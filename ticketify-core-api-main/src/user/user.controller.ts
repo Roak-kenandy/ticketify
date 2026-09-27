@@ -15,6 +15,7 @@ import { UserService } from './user.service';
 import { IsNotEmpty } from 'class-validator';
 import { Roles } from 'src/infrastructure/decorators/roles.decorator';
 import { RolesGuard } from 'src/auth/guard/roles.guard';
+import { UpdatePresenceDto } from 'src/config/dto/update-presence.dto';
 
 @Controller('users')
 export class UserController {
@@ -97,6 +98,13 @@ export class UserController {
   }
 
   @UseGuards(JwtGuard)
+  @Roles(['TECHNICIAN'])
+  @Patch('presence')
+  updatePresence(@Body() body: UpdatePresenceDto, @Req() req: { user: any }) {
+    return this.userService.updatePresence(body, req.user);
+  }
+
+  @UseGuards(JwtGuard)
   @Post('location')
   addLocationTracking(
     @Body()
@@ -106,9 +114,9 @@ export class UserController {
     return this.userService.addLocationTracking(location, req.user);
   }
 
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, RolesGuard)
   @Get('technician/:id/details')
-  @Roles(['Admin', 'SUPERVISOR'])
+  @Roles(['Admin', 'Supervisor', 'Administrator', 'CEO'])
   getTechnicianDetails(@Param('id') id: string) {
     if (!id) {
       throw new Error('Technician ID is required');

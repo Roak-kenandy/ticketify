@@ -39,7 +39,7 @@ export default function Login() {
       });
 
       const roleName = response.data?.user?.role?.name ?? "";
-      const allowedRoles = ["Admin", "Administrator", "Supervisor"];
+      const allowedRoles = ["Admin", "Administrator", "Supervisor", "CEO"];
 
       if (!allowedRoles.includes(roleName)) {
         AdminAuth.clearSession();

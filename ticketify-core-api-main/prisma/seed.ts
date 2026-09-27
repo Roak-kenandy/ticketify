@@ -25,6 +25,13 @@ let roles: Role[] = [
     updated_at: new Date(),
     deleted_at: null,
   },
+  {
+    name: 'CEO',
+    id: '4',
+    created_at: new Date(),
+    updated_at: new Date(),
+    deleted_at: null,
+  },
 ];
 
 async function main() {

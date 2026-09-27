@@ -1,0 +1,38 @@
+{
+  "_comment": "Copy to workflow-mapping.json. queue_id + complete_stage_id from CRM create/close captures. start_stage_id = stage after START_PROGRESS (capture from CRM or queue stages API).",
+  "departments": {
+    "ACCESS": {
+      "queues": [],
+      "lm_handoff_team_id": "aac0b9c0-fc77-45c3-8cac-b458eedc613a",
+      "workflows": {
+        "FAULT": {
+          "queue_id": "2682807b-9d1c-40f8-8fdd-f7e09935ccd4",
+          "start_stage_id": "51f0f22b-8314-4971-8c0c-73458a46bd65",
+          "complete_stage_id": "227899b0-89ae-4158-99d5-bef83041d663"
+        },
+        "NEW_CONNECTION": {
+          "queue_id": "fbd07350-7bc2-4ca8-a74a-12dd66bcf676",
+          "start_stage_id": "1c9c14b2-ad20-4376-b595-e8082d469665",
+          "complete_stage_id": "daa8cf07-5ee0-4a92-b307-999ea613776d"
+        },
+        "RELOCATION": {
+          "queue_id": "43044703-c357-4069-9590-bd258aceff14",
+          "start_stage_id": "679be4a2-f6a2-4548-b396-72e6541f2444",
+          "complete_stage_id": "88f67390-f455-444e-9b83-5969f1b7f63b"
+        }
+      }
+    },
+    "TRANSPORT_LM": {
+      "_comment": "LM pending/COMPLETED is activity state only (PUT /activities/:id { state }). SR stays on Access team; no stage/team return IDs.",
+      "queues": [],
+      "activity_type_id": "57fe0cf0-5b86-4561-8ccb-ceeb3fbef462",
+      "transport_team_id": "aac0b9c0-fc77-45c3-8cac-b458eedc613a"
+    }
+  },
+  "ticketify_state_to_crm": {
+    "SCHEDULED": { "comment_only": true },
+    "AWAITING_PAYMENT": { "tag_or_activity": "TBD" },
+    "PENDING_LM": { "activity_type": "Last Mile Cabling", "team": "Transport Network" },
+    "NO_RESPONSE": { "activity_type_id": "e398310c-59f6-4dab-b5da-bb21ce401e7f" }
+  }
+}

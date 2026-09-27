@@ -11,6 +11,8 @@ import { CreateLocationTrackDto } from './dto/create-location-track';
 import { ConfigService } from '@nestjs/config';
 import { LoggerService } from 'src/infrastructure/logger/logger.service';
 import { TechnicianDetailsDto, TechnicianLocationTracking } from './dto/technician-details.dto';
+import { UpdatePresenceDto } from 'src/config/dto/update-presence.dto';
+import { TechnicianPresence } from '@prisma/client';
 
 @Injectable()
 export class UserService {
@@ -106,6 +108,44 @@ export class UserService {
     };
   }
 
+  async updatePresence(dto: UpdatePresenceDto, user: { id: string }) {
+    if (dto.presence === TechnicianPresence.BUSY && !dto.busy_comment?.trim()) {
+      throw new ForbiddenException('Workload comment required when busy');
+    }
+
+    const update_user = await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        presence: dto.presence,
+        availability: dto.presence === TechnicianPresence.ONLINE,
+        busy_comment:
+          dto.presence === TechnicianPresence.BUSY ? dto.busy_comment?.trim() : null,
+        busy_until:
+          dto.presence === TechnicianPresence.BUSY && dto.busy_until
+            ? new Date(dto.busy_until)
+            : null,
+      },
+    });
+
+    if (!update_user) {
+      throw new ForbiddenException('Presence not updated');
+    }
+
+    const label =
+      dto.presence === TechnicianPresence.ONLINE
+        ? 'online (green)'
+        : dto.presence === TechnicianPresence.BUSY
+          ? 'busy (yellow)'
+          : 'offline (red)';
+
+    void this.activity
+      .createUserLog(`Technician set status to ${label}`, user)
+      .catch(() => {});
+
+    const { password: _pw, ...safeUser } = update_user;
+    return safeUser;
+  }
+
   async getTechnicians() {
     const technicians = await this.prisma.user.findMany({
       where: {
@@ -178,17 +218,75 @@ export class UserService {
   }
 
   async getOnlineTechnicians() {
+    return this.getAutoAssignEligibleTechnicians();
+  }
+
+  private autoAssignExcludedCrmIds(): Set<string> {
+    const raw = this.config.get<string>('AUTO_ASSIGN_EXCLUDE_CRM_USER_IDS') ?? '';
+    return new Set(
+      raw
+        .split(',')
+        .map(id => id.trim())
+        .filter(Boolean),
+    );
+  }
+
+  /** Auto-assign pool: ONLINE + OFFLINE; BUSY is excluded. */
+  async getAutoAssignEligibleTechnicians(teamCrmUserIds?: string[]) {
+    const excluded = this.autoAssignExcludedCrmIds();
+    const where: {
+      role_id: string;
+      presence: { in: ('ONLINE' | 'OFFLINE')[] };
+      crm_user_id?: { in: string[] };
+    } = {
+      role_id: '2',
+      presence: { in: ['ONLINE', 'OFFLINE'] },
+    };
+
+    if (teamCrmUserIds?.length) {
+      where.crm_user_id = { in: teamCrmUserIds };
+    }
+
     const technicians = await this.prisma.user.findMany({
-      where: {
-        role_id: '2',
-        availability: true,
+      where,
+      include: {
+        user_location_tracking: {
+          orderBy: { created_at: 'desc' },
+          take: 1,
+        },
       },
     });
 
-    return technicians.map((technician) => {
-      delete technician.password;
-      return technician;
-    });
+    return technicians
+      .filter(t => !excluded.has(t.crm_user_id))
+      .map((technician) => {
+        delete technician.password;
+        return technician;
+      });
+  }
+
+  async fetchCrmTeamMemberIds(team_id: string): Promise<string[]> {
+    const base = this.config.get<string>('CRM_BACKOFFICE_API_URL') ?? '';
+    const crm_users = await fetch(
+      `${base.replace(/\/$/, '')}/users?teams=${team_id}&size=100`,
+      {
+        headers: {
+          content_type: 'application/json',
+          api_key: this.config.get('CRM_API_KEY'),
+        },
+      },
+    );
+
+    if (!crm_users.ok) {
+      this.logger.error('User Service', 'CRM team users not found');
+      return [];
+    }
+
+    const crm_users_data = await crm_users.json();
+    const content = crm_users_data?.content ?? [];
+    return content
+      .map((u: { id?: string }) => u.id)
+      .filter((id: string | undefined): id is string => Boolean(id));
   }
 
   async getTechniciansByAvailability(
@@ -227,6 +325,14 @@ export class UserService {
     return crm_get_user.json();
   }
 
+  private parseLocationRecordedAt(raw?: string): Date {
+    if (!raw?.trim()) {
+      return new Date();
+    }
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  }
+
   async addLocationTracking(location: CreateLocationTrackDto, user: any) {
     try {
       this.logger.log(
@@ -234,11 +340,27 @@ export class UserService {
         `User ${user.name} is adding location tracking`,
       );
 
+      const recordedAt = this.parseLocationRecordedAt(location.timestamp);
+      const ageMs = Date.now() - recordedAt.getTime();
+      const maxAgeMs = 8 * 60 * 60 * 1000;
+      if (ageMs > maxAgeMs) {
+        this.logger.warn(
+          'User Service',
+          `Skipping stale location (${Math.round(ageMs / 60000)}m old) for user ${user.id}`,
+        );
+        const latest = await this.prisma.userLocationTracking.findFirst({
+          where: { user_id: user.id },
+          orderBy: { created_at: 'desc' },
+        });
+        return latest ?? { skipped: true };
+      }
+
       const add_location = await this.prisma.userLocationTracking.create({
         data: {
           user_id: user.id,
           latitude: location.latitude,
           longitude: location.longitude,
+          created_at: recordedAt,
         },
       });
 
@@ -537,13 +659,19 @@ export class UserService {
         },
       });
 
-      // Filter locations from the last 8 hours
-      const last8HoursLocations = allLocations.filter(
-        (location) => new Date(location.created_at) >= eightHoursAgo,
-      );
+      // Filter locations from the last 8 hours (chronological for path UI)
+      const last8HoursLocations = allLocations
+        .filter(
+          (location) => new Date(location.created_at) >= eightHoursAgo,
+        )
+        .sort(
+          (a, b) =>
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+        );
 
-      // Get current location (most recent)
-      const currentLocation = allLocations.length > 0 ? allLocations[0] : undefined;
+      // Get current location (most recent by GPS time)
+      const currentLocation =
+        allLocations.length > 0 ? allLocations[0] : undefined;
 
       this.logger.log(
         'User Service',

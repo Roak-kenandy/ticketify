@@ -32,6 +32,9 @@ export interface TechnicianDetailsDto {
     email: string;
     phone: string;
     availability: boolean;
+    presence?: "ONLINE" | "BUSY" | "OFFLINE";
+    busy_comment?: string | null;
+    busy_until?: Date | string | null;
     created_at: Date;
     role: {
       name: string;

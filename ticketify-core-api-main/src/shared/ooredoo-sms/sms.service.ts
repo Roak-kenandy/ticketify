@@ -33,9 +33,12 @@ export default class SMSService {
         'Content-Type': 'application/json',
       };
       if (authBearer) {
-        headers.Authorization = authBearer.startsWith('Bearer ')
-          ? authBearer
-          : `Bearer ${authBearer}`;
+        let authorization = authBearer.trim();
+        authorization = authorization.replace(/^Bearer\s+Bearer\s+/i, 'Bearer ');
+        if (!/^Bearer\s+/i.test(authorization)) {
+          authorization = `Bearer ${authorization}`;
+        }
+        headers.Authorization = authorization;
       }
 
       const new_notification = await fetch(apiUrl, {
@@ -53,6 +56,21 @@ export default class SMSService {
         'Notification Service',
         `SMS dispatch status ${new_notification.status}`,
       );
+
+      if (!new_notification.ok) {
+        const body = await new_notification.text().catch(() => '');
+        this.logger.error(
+          'Notification Service',
+          `SMS API error ${new_notification.status}: ${body.slice(0, 200)}`,
+        );
+        throw new HttpException(
+          {
+            status: new_notification.status,
+            error: 'SMS provider rejected the message',
+          },
+          502,
+        );
+      }
 
       return new_notification;
     } catch (error) {

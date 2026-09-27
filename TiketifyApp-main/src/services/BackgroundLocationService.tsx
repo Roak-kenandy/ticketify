@@ -17,7 +17,7 @@ class EnhancedLocationService {
   private backgroundTimerRunning = false;
   private backgroundIntervalId: number | null = null;
   private lastLocationTime = 0;
-  private locationUpdateFrequency = 60000; // 60 seconds
+  private locationUpdateFrequency = 30000; // 30 seconds
   private consecutiveFailures = 0;
   private maxConsecutiveFailures = 5;
   private backgroundStats = {
@@ -122,7 +122,7 @@ class EnhancedLocationService {
     const now = Date.now();
 
     // Throttle requests to avoid too frequent calls
-    if (now - this.lastLocationTime < 55000) {
+    if (now - this.lastLocationTime < this.locationUpdateFrequency - 2000) {
       return;
     }
 
@@ -156,8 +156,8 @@ class EnhancedLocationService {
       },
       {
         enableHighAccuracy: true,
-        timeout: 25000, // Extended timeout for background
-        maximumAge: 60000, // Accept older cached locations
+        timeout: 30000,
+        maximumAge: 0,
       }
     );
   }
@@ -176,9 +176,9 @@ class EnhancedLocationService {
         this.getLocationNetworkBased();
       },
       {
-        enableHighAccuracy: false, // Use network/WiFi location
+        enableHighAccuracy: false,
         timeout: 20000,
-        maximumAge: 120000, // Accept much older cached locations
+        maximumAge: 15000,
       }
     );
   }
@@ -205,7 +205,7 @@ class EnhancedLocationService {
       {
         enableHighAccuracy: false,
         timeout: 15000,
-        maximumAge: 300000, // Accept very old cached locations (5 minutes)
+        maximumAge: 30000,
       }
     );
   }
@@ -392,13 +392,21 @@ class EnhancedLocationService {
         `[EnhancedLocationService] 🔄 Syncing ${offlineLocations.length} offline locations`,
       );
 
-      const syncPromises = offlineLocations.map(location =>
-        this.sendLocationToServer(location),
+      const sorted = [...offlineLocations].sort(
+        (a, b) =>
+          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
       );
 
-      const results = await Promise.allSettled(syncPromises);
-      const successful = results.filter(r => r.status === 'fulfilled').length;
-      const failed = results.filter(r => r.status === 'rejected').length;
+      let successful = 0;
+      let failed = 0;
+      for (const location of sorted) {
+        try {
+          await this.sendLocationToServer(location);
+          successful += 1;
+        } catch {
+          failed += 1;
+        }
+      }
 
       if (successful > 0) {
         await AsyncStorage.removeItem('offline_locations');

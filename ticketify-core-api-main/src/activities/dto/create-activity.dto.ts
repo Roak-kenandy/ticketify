@@ -22,6 +22,10 @@ export class CreateActivityDto {
   notes?: string;
 
   @IsOptional()
+  @IsString()
+  address_id?: string;
+
+  @IsOptional()
   @IsArray()
   custom_fields?: any[];
 
