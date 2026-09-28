@@ -56,7 +56,9 @@ export class AdminAPI {
     return response.data;
   }
 
-  static async createUser(userData: CreateUserData): Promise<User> {
+  static async createUser(
+    userData: CreateUserData,
+  ): Promise<{ message: string; user: User }> {
     const response = await axiosInterceptorInstance.post(
       '/auth/sign-up',
       userData,
