@@ -16,7 +16,7 @@ const client = new MongoClient(uri, {
 
 @Injectable()
 export class ReportsService {
-  constructor(private config: ConfigService) {}
+  constructor(private config: ConfigService) { }
 
   async getTicketQueues() {
     let crm_service_request_stages = await fetch(
@@ -30,8 +30,8 @@ export class ReportsService {
     );
     console.log(
       'Fetching data from CRM API' +
-        this.config.get('CRM_BACKOFFICE_API_URL') +
-        '/service_requests/queues',
+      this.config.get('CRM_BACKOFFICE_API_URL') +
+      '/service_requests/queues',
     );
 
     console.log(crm_service_request_stages);
@@ -206,7 +206,10 @@ export class ReportsService {
 
       return result;
     } catch (error) {
-      console.error('Error connecting to the database:', error.message);
+      console.error(
+        'Error connecting to the database:',
+        error instanceof Error ? error.message : error,
+      );
       console.error(error);
     } finally {
       await client.close(); // Ensure we close the client connection after use
@@ -289,7 +292,10 @@ export class ReportsService {
 
       return result;
     } catch (error) {
-      console.error('Error connecting to the database:', error.message);
+      console.error(
+        'Error connecting to the database:',
+        error instanceof Error ? error.message : error,
+      );
       console.error(error);
     } finally {
       await client.close(); // Ensure we close the client connection after use
@@ -385,7 +391,10 @@ export class ReportsService {
       const result = await cursor.toArray();
       return result;
     } catch (error) {
-      console.error('Error connecting to the database:', error.message);
+      console.error(
+        'Error connecting to the database:',
+        error instanceof Error ? error.message : error,
+      );
       console.error(error);
     } finally {
       await client.close(); // Ensure we close the client connection after use

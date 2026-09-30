@@ -19,7 +19,7 @@ export default function Login() {
   useEffect(() => {
     const token = AdminAuth.getToken();
     if (token && AdminAuth.isTokenValid(token)) {
-      router.replace("/");
+      router.replace(AdminAuth.isFinance() ? "/finance" : "/");
     }
   }, [router]);
 
@@ -39,7 +39,13 @@ export default function Login() {
       });
 
       const roleName = response.data?.user?.role?.name ?? "";
-      const allowedRoles = ["Admin", "Administrator", "Supervisor", "CEO"];
+      const allowedRoles = [
+        "Admin",
+        "Administrator",
+        "Supervisor",
+        "CEO",
+        "Finance",
+      ];
 
       if (!allowedRoles.includes(roleName)) {
         AdminAuth.clearSession();

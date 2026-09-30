@@ -29,7 +29,9 @@ export function middleware(request: NextRequest) {
 
         // Check if user has admin role in the Roles array
         const hasAdminRole = decoded.Roles && decoded.Roles.some(role => 
-          role.toLowerCase() === 'admin' || role === 'Administrator'
+          role.toLowerCase() === 'admin' ||
+          role === 'Administrator' ||
+          role === 'Supervisor'
         );
         
         if (!hasAdminRole) {

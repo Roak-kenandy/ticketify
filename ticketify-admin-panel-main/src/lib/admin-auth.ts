@@ -13,6 +13,12 @@ interface DecodedToken {
 const PANEL_ROLES = ['Admin', 'Administrator', 'Supervisor', 'CEO'];
 const DISPATCH_ROLES = ['Admin', 'Administrator', 'Supervisor'];
 const REPORT_ROLES = ['Admin', 'Administrator', 'Supervisor'];
+const FINANCE_REPORT_ROLES = [
+  'Finance',
+  'Admin',
+  'Administrator',
+  'Supervisor',
+];
 
 function storedRoleName(): string {
   if (typeof window === 'undefined') {
@@ -55,6 +61,14 @@ export class AdminAuth {
 
   static isCeo(): boolean {
     return storedRoleName() === 'CEO';
+  }
+
+  static isFinance(): boolean {
+    return storedRoleName() === 'Finance';
+  }
+
+  static canAccessFinanceReports(): boolean {
+    return FINANCE_REPORT_ROLES.includes(storedRoleName());
   }
 
   static canViewOpsMap(): boolean {

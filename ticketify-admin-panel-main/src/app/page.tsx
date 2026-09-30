@@ -425,6 +425,10 @@ export default function HomePage() {
   };
 
   React.useEffect(() => {
+    if (AdminAuth.isFinance()) {
+      route.replace("/finance");
+      return;
+    }
     const canDispatch = AdminAuth.canManageDispatch();
     setCanManageDispatch(canDispatch);
     setShowAdminPanelLink(AdminAuth.canAccessAdminPanel());
@@ -439,6 +443,9 @@ export default function HomePage() {
   }, [fetchAutoAssignSettings, fetchOperationsSnapshot]);
 
   React.useEffect(() => {
+    if (AdminAuth.isFinance()) {
+      return;
+    }
     fetchTechnicians();
 
     const interval = setInterval(() => {

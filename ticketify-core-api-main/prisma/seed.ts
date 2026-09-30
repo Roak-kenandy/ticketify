@@ -32,6 +32,13 @@ let roles: Role[] = [
     updated_at: new Date(),
     deleted_at: null,
   },
+  {
+    name: 'Finance',
+    id: '5',
+    created_at: new Date(),
+    updated_at: new Date(),
+    deleted_at: null,
+  },
 ];
 
 async function main() {
@@ -70,7 +77,17 @@ async function main() {
     },
   });
 
-  // create a technician user
+  await prisma.user.create({
+    data: {
+      role: { connect: { id: '5' } },
+      name: 'Finance',
+      email: 'finance@medianet.mv',
+      password: await argon.hash('Medianet@123'),
+      crm_user_id: 'finance-seed-user-id',
+      created_at: new Date(),
+      updated_at: new Date(),
+    },
+  });
 }
 
 main()

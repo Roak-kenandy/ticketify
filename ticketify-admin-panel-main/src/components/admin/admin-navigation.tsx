@@ -13,6 +13,7 @@ import {
   X,
   Shield,
   Ticket,
+  FileSpreadsheet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AdminAuth } from "@/lib/admin-auth";
@@ -20,6 +21,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 
 const navigation = [
   { name: "Dashboard", href: "/admin", icon: LayoutDashboard },
+  { name: "Master reports", href: "/admin/reports", icon: FileSpreadsheet },
   { name: "User Management", href: "/admin/users", icon: Users },
   { name: "Create User", href: "/admin/users/create", icon: UserPlus },
   { name: "Settings", href: "/settings", icon: Settings },
