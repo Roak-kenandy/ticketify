@@ -533,11 +533,9 @@ export default function HomePage() {
             </div>
 
             {AdminAuth.canViewOpsMap() && operationsSnapshot && (
-              <div className="mt-3 p-3 rounded-xl bg-white/10 border border-white/20 space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-white">
-                    Operations
-                  </p>
+              <div className="mt-3 rounded-xl border border-white/20 bg-white/10 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-sm font-medium text-white">Operations</p>
                   <Link
                     href="/dispatch"
                     className="text-xs text-blue-300 underline"
@@ -545,87 +543,48 @@ export default function HomePage() {
                     {isCeoUser ? "Full screen" : "Dispatch"}
                   </Link>
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="rounded-lg bg-black/20 p-2 col-span-2">
-                    <p className="text-gray-400 font-medium">Malé Access</p>
-                    <p className="text-[11px] text-gray-500 mt-1">
-                      Unassigned NEW:{" "}
-                      <span className="text-white font-semibold">
-                        {operationsSnapshot.regions?.male?.unassigned_new ?? 0}
-                      </span>
-                      {" · "}
-                      Assigned NEW:{" "}
-                      {operationsSnapshot.regions?.male?.assigned_new ?? 0}
-                      {" · "}
-                      In progress:{" "}
-                      {operationsSnapshot.regions?.male?.in_progress ?? 0}
-                    </p>
-                  </div>
-                  <div className="rounded-lg bg-black/20 p-2 col-span-2">
-                    <p className="text-gray-400 font-medium">Hulhumalé Access</p>
-                    <p className="text-[11px] text-gray-500 mt-1">
-                      Unassigned NEW:{" "}
-                      <span className="text-white font-semibold">
-                        {operationsSnapshot.regions?.hulhumale?.unassigned_new ??
-                          0}
-                      </span>
-                      {" · "}
-                      Assigned NEW:{" "}
-                      {operationsSnapshot.regions?.hulhumale?.assigned_new ?? 0}
-                      {" · "}
-                      In progress:{" "}
-                      {operationsSnapshot.regions?.hulhumale?.in_progress ?? 0}
-                    </p>
-                  </div>
-                  {operationsSnapshot.regions?.transport_lm && (
-                    <div className="rounded-lg bg-black/20 p-2 col-span-2">
-                      <p className="text-gray-400 font-medium">
-                        {operationsSnapshot.regions.transport_lm.label ??
-                          "Transport · Last Mile"}
-                      </p>
-                      <p className="text-[11px] text-gray-500 mt-1">
-                        Unassigned NEW:{" "}
-                        <span className="text-white font-semibold">
-                          {operationsSnapshot.regions.transport_lm
-                            .unassigned_new ?? 0}
-                        </span>
-                        {" · "}
-                        Assigned NEW:{" "}
-                        {operationsSnapshot.regions.transport_lm.assigned_new ??
-                          0}
-                        {" · "}
-                        In progress:{" "}
-                        {operationsSnapshot.regions.transport_lm.in_progress ??
-                          0}
-                      </p>
-                    </div>
-                  )}
-                  <div className="rounded-lg bg-black/20 p-2">
-                    <p className="text-gray-400">Online</p>
-                    <p className="text-lg font-semibold text-emerald-400">
-                      {operationsSnapshot.technicians?.online ?? 0}
-                    </p>
-                  </div>
-                  <div className="rounded-lg bg-black/20 p-2">
-                    <p className="text-gray-400">Offline</p>
-                    <p className="text-lg font-semibold text-red-300">
-                      {operationsSnapshot.technicians?.offline ?? 0}
-                    </p>
-                  </div>
-                  <div className="rounded-lg bg-black/20 p-2">
-                    <p className="text-gray-400">Busy</p>
-                    <p className="text-lg font-semibold text-yellow-300">
-                      {operationsSnapshot.technicians?.busy ?? 0}
-                    </p>
-                  </div>
-                  <div className="rounded-lg bg-black/20 p-2">
-                    <p className="text-gray-400">Auto-assign pool</p>
-                    <p className="text-lg font-semibold text-white">
-                      {operationsSnapshot.technicians?.auto_assign_eligible ??
-                        0}
-                    </p>
-                    <p className="text-[10px] text-gray-500">ONLINE+OFFLINE</p>
-                  </div>
+                <div className="space-y-2">
+                  {[
+                    {
+                      key: "male",
+                      label: "Malé Access",
+                      region: operationsSnapshot.regions?.male,
+                    },
+                    {
+                      key: "hulhumale",
+                      label: "Hulhumalé Access",
+                      region: operationsSnapshot.regions?.hulhumale,
+                    },
+                    operationsSnapshot.regions?.transport_lm
+                      ? {
+                          key: "transport",
+                          label: "Transport",
+                          region: operationsSnapshot.regions.transport_lm,
+                        }
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .map((item: any) => (
+                      <div key={item.key} className="text-[11px]">
+                        <p className="text-gray-300">{item.label}</p>
+                        <p className="mt-0.5 text-gray-400">
+                          Unassigned{" "}
+                          <span className="font-semibold text-white">
+                            {item.region?.unassigned_new ?? 0}
+                          </span>
+                          {" · "}
+                          Assigned{" "}
+                          <span className="font-semibold text-white">
+                            {item.region?.assigned_new ?? 0}
+                          </span>
+                          {" · "}
+                          In progress{" "}
+                          <span className="font-semibold text-white">
+                            {item.region?.in_progress ?? 0}
+                          </span>
+                        </p>
+                      </div>
+                    ))}
                 </div>
               </div>
             )}

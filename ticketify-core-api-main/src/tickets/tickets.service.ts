@@ -888,7 +888,43 @@ Medianet Support Team
         (t: { assigned_to?: { user?: { id?: string } } }) =>
           Boolean(t?.assigned_to?.user?.id),
       ).length,
+      breakdown: {
+        unassigned: this.groupTicketsByWorkKind(unassignedNew),
+        assigned: this.groupTicketsByWorkKind(assignedNew),
+        in_progress: this.groupTicketsByWorkKind(assignedInProgress),
+      },
     };
+  }
+
+  private ticketWorkKind(ticket: {
+    queue?: { name?: string };
+    stage?: { name?: string };
+    categories?: { name?: string }[];
+  }): string {
+    const queueName = ticket?.queue?.name?.trim();
+    if (queueName) return queueName;
+    const category = ticket?.categories?.find(item => item?.name?.trim())?.name?.trim();
+    if (category) return category;
+    const stage = ticket?.stage?.name?.trim();
+    if (stage) return stage;
+    return 'Other';
+  }
+
+  private groupTicketsByWorkKind(
+    tickets: {
+      queue?: { name?: string };
+      stage?: { name?: string };
+      categories?: { name?: string }[];
+    }[],
+  ): { label: string; count: number }[] {
+    const counts = new Map<string, number>();
+    for (const ticket of tickets) {
+      const label = this.ticketWorkKind(ticket);
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
   }
 
   async countInProgressTicketsForUser(crm_user_id: string): Promise<number> {
@@ -1126,7 +1162,6 @@ Medianet Support Team
       stage_id?.trim() ||
       mappedStart ||
       this.resolveNextStageId(ticket, stage_id);
-    const user = await this.user.crmGetUser(ticket.assigned_to?.user?.id);
 
     this.logger.log(
       'Ticket Service',
@@ -1145,27 +1180,6 @@ Medianet Support Team
     if (!crmResult.ok) {
       throw new ForbiddenException(
         response?.message ?? 'Service request could not be started in CRM',
-      );
-    }
-
-    try {
-      await this.sms.publishSMS({
-        phone: ticket?.contact?.phone?.number,
-        message: `
-Dear ${ticket?.contact?.person_name?.full_name},
-
-Your ticket: ${ticket?.number} has been assigned to ${user?.first_name} ${user?.last_name} and  the technician will be visiting you shortly.
-Please make sure to be available at the location. Our team will be in touch with you shortly.
-
-Thank you for your patience.
-Medianet Support Team
-        `,
-      });
-      this.logger.log('Ticket Service', 'SMS sent');
-    } catch {
-      this.logger.error(
-        'Ticket Service',
-        'SMS not sent after ticket start (CRM update succeeded)',
       );
     }
 
@@ -1830,6 +1844,7 @@ Medianet Support Team
 
   invalidateLastMileOpsCache() {
     this.lastMileOpsCache = null;
+    this.transportLmSummaryCache = null;
   }
 
   /** Pending Last Mile cabling activities (one CRM page + cache). */
@@ -1860,15 +1875,108 @@ Medianet Support Team
     return pending;
   }
 
+  private transportLmSummaryCache: {
+    at: number;
+    data: {
+      team_id: string;
+      unassigned_new: number;
+      assigned_new: number;
+      in_progress: number;
+      assigned_in_progress: number;
+      breakdown: {
+        unassigned: { label: string; count: number }[];
+        assigned: { label: string; count: number }[];
+        in_progress: { label: string; count: number }[];
+      };
+    };
+  } | null = null;
+
   async fetchTransportLmRegionSummary() {
+    const cacheMs = Number(this.config.get('LM_OPS_CACHE_MS') ?? 45_000);
+    if (
+      this.transportLmSummaryCache &&
+      Date.now() - this.transportLmSummaryCache.at < cacheMs
+    ) {
+      return this.transportLmSummaryCache.data;
+    }
+    const data = await this.buildTransportLmRegionSummary();
+    this.transportLmSummaryCache = { at: Date.now(), data };
+    return data;
+  }
+
+  private async buildTransportLmRegionSummary() {
     const lm = this.workflowConfig.getLmConfig();
-    const pending = await this.countPendingLastMileActivities();
+    const activities = (await this.fetchLastMileActivitiesBatch(lm)) as {
+      name?: string;
+      type?: { name?: string };
+      state?: string;
+      states?: { state: string; date: number }[];
+      assigned_to?: { user?: { id?: string } };
+      service_request?: { id?: string; number?: string };
+    }[];
+
+    const unassigned = [];
+    const assigned = [];
+    const inProgress = [];
+    for (const activity of activities) {
+      const state = this.resolveCrmActivityState(activity);
+      if (state === 'IN_PROGRESS') {
+        inProgress.push(activity);
+      } else if (state === 'PENDING' || state === 'NEW') {
+        if (activity.assigned_to?.user?.id) {
+          assigned.push(activity);
+        } else {
+          unassigned.push(activity);
+        }
+      }
+    }
+
+    const kindByRequest = new Map<string, string>();
+    const requestIds = [
+      ...new Set(
+        [...unassigned, ...assigned, ...inProgress]
+          .map(activity => activity.service_request?.id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    await Promise.all(
+      requestIds.map(async id => {
+        const serviceRequest = await this.FetchRequestDetails(id);
+        if (!serviceRequest || serviceRequest instanceof ForbiddenException) {
+          return;
+        }
+        kindByRequest.set(id, this.ticketWorkKind(serviceRequest));
+      }),
+    );
+
+    const group = (rows: (typeof activities)[number][]) => {
+      const counts = new Map<string, number>();
+      for (const row of rows) {
+        const fromRequest = row.service_request?.id
+          ? kindByRequest.get(row.service_request.id)
+          : undefined;
+        const label =
+          fromRequest && fromRequest !== 'Other'
+            ? fromRequest
+            : row.type?.name?.trim() || 'Last Mile';
+        counts.set(label, (counts.get(label) ?? 0) + 1);
+      }
+      return [...counts.entries()]
+        .map(([label, count]) => ({ label, count }))
+        .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+    };
+
     return {
       team_id: lm.transportTeamId,
-      unassigned_new: 0,
-      assigned_new: pending,
-      in_progress: pending,
-      assigned_in_progress: pending,
+      unassigned_new: unassigned.length,
+      assigned_new: assigned.length,
+      in_progress: inProgress.length,
+      assigned_in_progress: inProgress.length,
+      breakdown: {
+        unassigned: group(unassigned),
+        assigned: group(assigned),
+        in_progress: group(inProgress),
+      },
     };
   }
 
