@@ -1,9 +1,8 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import moment from "moment";
-import { ArrowUpRight, MapPinOff, Search, Users, X, Zap } from "lucide-react";
+import { MapPinOff, Search, Users, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/access";
 import {
@@ -12,26 +11,12 @@ import {
   type TechnicianPresenceState,
 } from "@/lib/technician-presence";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/app/empty-state";
 import { Button } from "@/components/ui/button";
-import {
-  technicianCoords,
-  type OperationsSnapshot,
-  type RegionSummary,
-  type Technician,
-} from "./types";
+import { technicianCoords, type Technician } from "./types";
 
 export type PresenceFilter = "all" | TechnicianPresenceState;
-
-type AutoAssignState = {
-  visible: boolean;
-  enabled: boolean;
-  loading: boolean;
-  saving: boolean;
-  onToggle: (next: boolean) => void;
-};
 
 type TechnicianPanelProps = {
   technicians: Technician[];
@@ -45,8 +30,6 @@ type TechnicianPanelProps = {
   selectedId: string | null;
   onSelect: (technician: Technician) => void;
   onHover?: (id: string | null) => void;
-  snapshot: OperationsSnapshot | null;
-  autoAssign: AutoAssignState;
 };
 
 const FILTERS: { value: PresenceFilter; label: string }[] = [
@@ -68,8 +51,6 @@ export function TechnicianPanel({
   selectedId,
   onSelect,
   onHover,
-  snapshot,
-  autoAssign,
 }: TechnicianPanelProps) {
   const counts = React.useMemo(() => {
     const result: Record<PresenceFilter, number> = {
@@ -172,45 +153,6 @@ export function TechnicianPanel({
           })}
         </div>
       </div>
-
-      {(autoAssign.visible || snapshot?.regions) && (
-        <div className="space-y-3 border-b p-4">
-          {autoAssign.visible && (
-            <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/40 px-3 py-2.5">
-              <div className="flex min-w-0 items-center gap-2.5">
-                <span
-                  className={cn(
-                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
-                    autoAssign.enabled ? "bg-success/15 text-success" : "bg-muted text-muted-foreground",
-                  )}
-                >
-                  <Zap className="h-4 w-4" />
-                </span>
-                <div className="min-w-0">
-                  <p id="auto-assign-label" className="text-sm font-medium">
-                    Auto-assign
-                  </p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {autoAssign.loading
-                      ? "Checking…"
-                      : autoAssign.enabled
-                        ? "New tickets are assigned automatically"
-                        : "Tickets wait for manual dispatch"}
-                  </p>
-                </div>
-              </div>
-              <Switch
-                checked={autoAssign.enabled}
-                onCheckedChange={autoAssign.onToggle}
-                disabled={autoAssign.loading || autoAssign.saving}
-                aria-labelledby="auto-assign-label"
-              />
-            </div>
-          )}
-
-          {snapshot?.regions && <RegionSummaryList snapshot={snapshot} />}
-        </div>
-      )}
 
       <div
         className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-2"
@@ -361,74 +303,5 @@ function TechnicianRow({
         )}
       </span>
     </button>
-  );
-}
-
-function RegionSummaryList({ snapshot }: { snapshot: OperationsSnapshot }) {
-  const regions: { key: string; label: string; region?: RegionSummary }[] = [
-    { key: "male", label: "Malé", region: snapshot.regions?.male },
-    { key: "hulhumale", label: "Hulhumalé", region: snapshot.regions?.hulhumale },
-  ];
-  if (snapshot.regions?.transport_lm) {
-    regions.push({ key: "transport", label: "Transport", region: snapshot.regions.transport_lm });
-  }
-
-  return (
-    <div>
-      <div className="mb-2 flex items-center justify-between">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Ticket queue
-        </p>
-        <Link
-          href="/dispatch"
-          className="inline-flex items-center gap-0.5 text-xs font-medium text-primary hover:underline"
-        >
-          Operations board
-          <ArrowUpRight className="h-3 w-3" />
-        </Link>
-      </div>
-      <div className="overflow-hidden rounded-lg border">
-        <table className="w-full text-xs">
-          <thead className="bg-muted/50 text-muted-foreground">
-            <tr>
-              <th scope="col" className="px-2.5 py-1.5 text-left font-medium">
-                Region
-              </th>
-              <th scope="col" className="px-2 py-1.5 text-right font-medium" title="New, not yet assigned">
-                Unassigned
-              </th>
-              <th scope="col" className="px-2 py-1.5 text-right font-medium">
-                Assigned
-              </th>
-              <th scope="col" className="px-2.5 py-1.5 text-right font-medium">
-                Active
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {regions.map(({ key, label, region }) => {
-              const unassigned = region?.unassigned_new ?? 0;
-              return (
-                <tr key={key}>
-                  <th scope="row" className="px-2.5 py-1.5 text-left font-medium">
-                    {label}
-                  </th>
-                  <td
-                    className={cn(
-                      "px-2 py-1.5 text-right tabular-nums",
-                      unassigned > 0 && "font-semibold text-warning",
-                    )}
-                  >
-                    {unassigned}
-                  </td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{region?.assigned_new ?? 0}</td>
-                  <td className="px-2.5 py-1.5 text-right tabular-nums">{region?.in_progress ?? 0}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
   );
 }

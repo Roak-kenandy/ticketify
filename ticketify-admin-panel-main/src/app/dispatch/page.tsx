@@ -5,6 +5,7 @@ import Link from "next/link";
 import moment from "moment";
 import {
   AlertTriangle,
+  ChevronRight,
   ClipboardList,
   Inbox,
   Maximize2,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import axiosInterceptorInstance, { apiErrorMessage } from "@/lib/axios-interceptor";
 import { cn } from "@/lib/utils";
+import { hasAccess } from "@/lib/access";
 import { PageHeader } from "@/components/app/page-header";
 import { StatCard } from "@/components/app/stat-card";
 import { EmptyState } from "@/components/app/empty-state";
@@ -430,8 +432,11 @@ function TeamCard({
 }
 
 function AutoAssignCard({ loading, enabled }: { loading: boolean; enabled?: boolean }) {
-  return (
-    <Card className="p-5">
+  const [canManage, setCanManage] = React.useState(false);
+  React.useEffect(() => setCanManage(hasAccess("dispatch-manage")), []);
+
+  const body = (
+    <Card className={cn("p-5", canManage && "transition-colors hover:bg-accent/50")}>
       <div className="flex items-center gap-3">
         <span
           className={cn(
@@ -441,18 +446,27 @@ function AutoAssignCard({ loading, enabled }: { loading: boolean; enabled?: bool
         >
           <Zap className="h-5 w-5" />
         </span>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold">Auto-assign</p>
           {loading ? (
             <Skeleton className="mt-1 h-3.5 w-24" />
           ) : (
             <p className="text-xs text-muted-foreground">
-              {enabled ? "On: new tickets are assigned automatically" : "Off: tickets wait for manual dispatch"}
+              {enabled ? "On for selected categories" : "Off: tickets wait for manual dispatch"}
             </p>
           )}
         </div>
+        {canManage && <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
       </div>
     </Card>
+  );
+
+  return canManage ? (
+    <Link href="/auto-assign" className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      {body}
+    </Link>
+  ) : (
+    body
   );
 }
 

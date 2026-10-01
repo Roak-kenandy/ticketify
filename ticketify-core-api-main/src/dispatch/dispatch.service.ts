@@ -1,9 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
+import { IntegrationAuditService } from 'src/infrastructure/audit/integration-audit.service';
 import { TicketsService } from 'src/tickets/tickets.service';
 import { UserService } from 'src/user/user.service';
-import { AssignmentSettingsService } from 'src/assignment/assignment-settings.service';
+import {
+  AssignmentSettingsService,
+  CATEGORY_LABELS,
+  ticketCategory,
+} from 'src/assignment/assignment-settings.service';
+import { AssignmentNotifierService } from 'src/assignment/assignment-notifier.service';
 import { TtlCache } from 'src/infrastructure/common/helpers/ttl-cache';
 
 type TeamSummary = Awaited<ReturnType<TicketsService['fetchTeamAssignmentSummary']>>;
@@ -20,6 +26,8 @@ export class DispatchService {
     private tickets: TicketsService,
     private user: UserService,
     private assignSettings: AssignmentSettingsService,
+    private audit: IntegrationAuditService,
+    private notifier: AssignmentNotifierService,
   ) {}
 
   teamIds(): string[] {
@@ -58,13 +66,16 @@ export class DispatchService {
   }
 
   async technicianCounts() {
+    const settings = await this.assignSettings.getSettings();
     const [presence, eligible] = await Promise.all([
       this.prisma.user.groupBy({
         by: ['presence'],
         where: { role_id: '2' },
         _count: true,
       }),
-      this.user.getAutoAssignEligibleTechnicians(),
+      this.user.getAutoAssignEligibleTechnicians(undefined, {
+        includeBusy: settings.include_busy,
+      }),
     ]);
     const count = (state: string) => presence.find(p => p.presence === state)?._count ?? 0;
     return {
@@ -107,6 +118,38 @@ export class DispatchService {
       crmUserId,
     );
     this.invalidateTeamSummaries();
+    if (result instanceof ForbiddenException) {
+      throw result;
+    }
+
+    const [technician, ticket] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { crm_user_id: crmUserId },
+        select: { id: true, name: true },
+      }),
+      this.tickets.crmFindServiceRequest(ticketId).catch(() => null),
+    ]);
+    const category = ticket ? ticketCategory(ticket) : null;
+    await this.audit.log({
+      entity_type: 'service_request',
+      entity_id: ticketId,
+      action: 'MANUAL_ASSIGN',
+      actor_user_id: actorUserId,
+      new_state: {
+        number: ticket?.number ?? null,
+        category,
+        crm_user_id: crmUserId,
+        technician_user_id: technician?.id ?? null,
+        technician_name: technician?.name ?? null,
+      },
+      crm_sync_ok: true,
+    });
+    if (technician) {
+      await this.notifier.technicianAssigned(technician.id, {
+        number: ticket?.number,
+        categoryLabel: category ? CATEGORY_LABELS[category] : null,
+      });
+    }
     return { result, actor_user_id: actorUserId };
   }
 }

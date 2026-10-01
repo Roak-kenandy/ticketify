@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AssignmentEngineService } from './assignment-engine.service';
 import { AssignmentSettingsService } from './assignment-settings.service';
 import { AssignmentSchedulerService } from './assignment-scheduler.service';
+import { AssignmentNotifierService } from './assignment-notifier.service';
 import { AssignmentController } from './assignment.controller';
 import { TicketsModule } from 'src/tickets/tickets.module';
 import { UserModule } from 'src/user/user.module';
@@ -15,7 +16,8 @@ import { AuthModule } from 'src/auth/auth.module';
     AssignmentEngineService,
     AssignmentSettingsService,
     AssignmentSchedulerService,
+    AssignmentNotifierService,
   ],
-  exports: [AssignmentEngineService, AssignmentSettingsService],
+  exports: [AssignmentEngineService, AssignmentSettingsService, AssignmentNotifierService],
 })
 export class AssignmentModule {}

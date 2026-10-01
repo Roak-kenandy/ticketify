@@ -260,16 +260,22 @@ export class UserService {
     );
   }
 
-  /** Auto-assign pool: ONLINE + OFFLINE; BUSY is excluded. */
-  async getAutoAssignEligibleTechnicians(teamCrmUserIds?: string[]) {
+  /**
+   * Auto-assign pool: technicians who are ONLINE (green). BUSY (yellow) only when the
+   * dispatch setting allows it; OFFLINE (red) never. Excluded CRM ids are not permitted.
+   */
+  async getAutoAssignEligibleTechnicians(
+    teamCrmUserIds?: string[],
+    options?: { includeBusy?: boolean },
+  ) {
     const excluded = this.autoAssignExcludedCrmIds();
     const where: {
       role_id: string;
-      presence: { in: ('ONLINE' | 'OFFLINE')[] };
+      presence: { in: ('ONLINE' | 'BUSY')[] };
       crm_user_id?: { in: string[] };
     } = {
       role_id: '2',
-      presence: { in: ['ONLINE', 'OFFLINE'] },
+      presence: { in: options?.includeBusy ? ['ONLINE', 'BUSY'] : ['ONLINE'] },
     };
 
     if (teamCrmUserIds?.length) {

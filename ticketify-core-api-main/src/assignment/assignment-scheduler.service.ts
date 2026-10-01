@@ -5,7 +5,10 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AssignmentEngineService } from './assignment-engine.service';
+import {
+  AssignmentEngineService,
+  type AutoAssignResult,
+} from './assignment-engine.service';
 import { AssignmentSettingsService } from './assignment-settings.service';
 
 @Injectable()
@@ -40,21 +43,15 @@ export class AssignmentSchedulerService
     }
   }
 
-  async tick() {
-    if (this.running) {
-      return;
-    }
+  /** Kick off a run without making the caller wait on CRM round-trips. */
+  runSoon(actorUserId?: string) {
+    void this.tick(actorUserId);
+  }
 
-    const enabled = await this.settings.isAutoAssignEnabled();
-    if (!enabled) {
-      return;
-    }
-
-    this.running = true;
+  async tick(actorUserId?: string) {
     try {
-      const results = await this.engine.runAutoAssign({});
-      await this.settings.recordLastRun(results);
-      const assignedCount = results.reduce(
+      const results = await this.runExclusive({ actor_user_id: actorUserId });
+      const assignedCount = (results ?? []).reduce(
         (n, r) => n + r.assigned.length,
         0,
       );
@@ -63,6 +60,25 @@ export class AssignmentSchedulerService
       }
     } catch (err) {
       this.logger.warn(`Auto-assign tick failed: ${String(err)}`);
+    }
+  }
+
+  /**
+   * One run at a time, so overlapping runs can't hand the same ticket to two technicians.
+   * Resolves to null when a run is already in progress or auto-assign is off.
+   */
+  async runExclusive(
+    options: Parameters<AssignmentEngineService['runAutoAssign']>[0],
+  ): Promise<AutoAssignResult[] | null> {
+    if (this.running) {
+      return null;
+    }
+    this.running = true;
+    try {
+      if (!(await this.settings.isAutoAssignEnabled())) {
+        return null;
+      }
+      return await this.engine.runAutoAssign(options);
     } finally {
       this.running = false;
     }

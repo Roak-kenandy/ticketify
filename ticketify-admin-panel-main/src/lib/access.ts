@@ -4,6 +4,7 @@ export type AccessKey =
   | "any"
   | "ops"
   | "dispatch"
+  | "dispatch-manage"
   | "reports"
   | "finance"
   | "admin";
@@ -14,6 +15,8 @@ export function hasAccess(key: AccessKey): boolean {
       return AdminAuth.canViewOpsMap();
     case "dispatch":
       return AdminAuth.canViewDispatchBoard();
+    case "dispatch-manage":
+      return AdminAuth.canManageDispatch();
     case "reports":
       return AdminAuth.canAccessReports();
     case "finance":

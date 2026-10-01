@@ -15,7 +15,7 @@ export class IntegrationAuditService {
     crm_sync_ok?: boolean;
     error_message?: string;
     idempotency_key?: string;
-  }) {
+  }): Promise<boolean> {
     try {
       await this.prisma.integrationAuditLog.create({
         data: {
@@ -30,8 +30,10 @@ export class IntegrationAuditService {
           idempotency_key: entry.idempotency_key,
         },
       });
+      return true;
     } catch {
       // Duplicate idempotency_key — treat as already logged
+      return false;
     }
   }
 }

@@ -7,6 +7,7 @@ import {
   Receipt,
   Users,
   Wallet,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 import type { AccessKey } from "@/lib/access";
@@ -34,6 +35,12 @@ export const NAV_GROUPS: NavGroup[] = [
         href: "/dispatch",
         icon: MonitorPlay,
         access: "dispatch",
+      },
+      {
+        label: "Auto-assign",
+        href: "/auto-assign",
+        icon: Zap,
+        access: "dispatch-manage",
       },
     ],
   },

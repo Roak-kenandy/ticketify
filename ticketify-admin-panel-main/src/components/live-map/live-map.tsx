@@ -5,10 +5,8 @@ import GoogleMap from "google-maps-react-markers";
 import moment from "moment";
 import { useTheme } from "next-themes";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { toast } from "sonner";
 import { Crosshair, Info, Loader2, MapPinOff, Users, X } from "lucide-react";
 import axios from "@/lib/axios-interceptor";
-import { AdminAuth } from "@/lib/admin-auth";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { DARK_MAP_STYLES, LIGHT_MAP_STYLES } from "./map-styles";
@@ -20,7 +18,6 @@ import {
   technicianCoords,
   toLatLng,
   type LatLng,
-  type OperationsSnapshot,
   type Technician,
   type TechnicianDetails,
 } from "./types";
@@ -43,11 +40,9 @@ const MAP_OPTIONS = {
 export function LiveMap() {
   const { resolvedTheme } = useTheme();
 
-  const [canDispatch, setCanDispatch] = React.useState(false);
   const [technicians, setTechnicians] = React.useState<Technician[]>([]);
   const [techLoading, setTechLoading] = React.useState(true);
   const [techError, setTechError] = React.useState(false);
-  const [snapshot, setSnapshot] = React.useState<OperationsSnapshot | null>(null);
 
   const [query, setQuery] = React.useState("");
   const [filter, setFilter] = React.useState<PresenceFilter>("all");
@@ -59,12 +54,6 @@ export function LiveMap() {
   const [detailsLoading, setDetailsLoading] = React.useState(false);
   const [detailsError, setDetailsError] = React.useState(false);
   const [drawerHidden, setDrawerHidden] = React.useState(false);
-
-  const [autoAssign, setAutoAssign] = React.useState({
-    enabled: false,
-    loading: false,
-    saving: false,
-  });
 
   const mapRef = React.useRef<any>(null);
   const mapsRef = React.useRef<any>(null);
@@ -83,58 +72,13 @@ export function LiveMap() {
     }
   }, []);
 
-  const fetchSnapshot = React.useCallback(async () => {
-    try {
-      const response = await axios.get<OperationsSnapshot>("/dashboard/operations");
-      setSnapshot(response.data);
-    } catch {
-      // The queue summary is supplementary; the map stays usable without it.
-    }
-  }, []);
-
   React.useEffect(() => {
-    const dispatch = AdminAuth.canManageDispatch();
-    setCanDispatch(dispatch);
-    if (dispatch) {
-      setAutoAssign((state) => ({ ...state, loading: true }));
-      axios
-        .get("/assignments/settings")
-        .then((response) =>
-          setAutoAssign((state) => ({ ...state, enabled: Boolean(response.data?.enabled) })),
-        )
-        .catch(() => undefined)
-        .finally(() => setAutoAssign((state) => ({ ...state, loading: false })));
-    }
-
     fetchTechnicians();
-    fetchSnapshot();
     const timer = setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      fetchTechnicians();
-      fetchSnapshot();
+      if (document.visibilityState === "visible") fetchTechnicians();
     }, TECHNICIAN_POLL_MS);
     return () => clearInterval(timer);
-  }, [fetchTechnicians, fetchSnapshot]);
-
-  const toggleAutoAssign = React.useCallback(
-    async (next: boolean) => {
-      if (!canDispatch) return;
-      setAutoAssign((state) => ({ ...state, saving: true, enabled: next }));
-      try {
-        const response = await axios.patch("/assignments/settings", { enabled: next });
-        const enabled = Boolean(response.data?.enabled);
-        setAutoAssign((state) => ({ ...state, enabled }));
-        toast.success(enabled ? "Auto-assign turned on" : "Auto-assign turned off");
-        fetchSnapshot();
-      } catch {
-        setAutoAssign((state) => ({ ...state, enabled: !next }));
-        toast.error("Couldn't update auto-assign. Try again.");
-      } finally {
-        setAutoAssign((state) => ({ ...state, saving: false }));
-      }
-    },
-    [canDispatch, fetchSnapshot],
-  );
+  }, [fetchTechnicians]);
 
   const detailsRequest = React.useRef(0);
   const loadDetails = React.useCallback(async (id: string, silent = false) => {
@@ -293,12 +237,6 @@ export function LiveMap() {
     selectedId,
     onSelect: selectTechnician,
     onHover: setHoveredId,
-    snapshot,
-    autoAssign: {
-      visible: canDispatch,
-      ...autoAssign,
-      onToggle: toggleAutoAssign,
-    },
   };
 
   return (
