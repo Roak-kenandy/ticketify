@@ -2,6 +2,7 @@ import {
   ForbiddenException,
   Injectable,
   Req,
+  ServiceUnavailableException,
   StreamableFile,
   UseGuards,
 } from '@nestjs/common';
@@ -859,8 +860,57 @@ Medianet Support Team
     };
   }
 
+  /**
+   * All NEW / IN_PROGRESS tickets for a team, across every CRM page.
+   * Filtering by state server-side matters: an unfiltered first page is mostly
+   * CLOSED tickets, which silently drops open work from counts and auto-assign.
+   */
+  async fetchOpenTeamServiceRequests(team_id: string) {
+    const [new_tickets, in_progress_tickets] = await Promise.all([
+      this.fetchAllTeamTicketsInState(team_id, 'NEW'),
+      this.fetchAllTeamTicketsInState(team_id, 'IN_PROGRESS'),
+    ]);
+    return { new_tickets, in_progress_tickets };
+  }
+
+  private async fetchAllTeamTicketsInState(team_id: string, state: string) {
+    const size = 100;
+    const maxPages = Number(this.config.get('CRM_MAX_PAGES') ?? 20);
+    const timeoutMs = Number(this.config.get('CRM_REQUEST_TIMEOUT_MS') ?? 15_000);
+    const base = String(this.config.get('CRM_BACKOFFICE_API_URL') ?? '').replace(/\/$/, '');
+    const rows: any[] = [];
+
+    for (let page = 1; page <= maxPages; page++) {
+      const url =
+        `${base}/service_requests?assigned_to_team_id=${encodeURIComponent(team_id)}` +
+        `&states=${state}&size=${size}&page=${page}`;
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          headers: { accept: 'application/json', api_key: this.config.get('CRM_API_KEY') },
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (error) {
+        this.logger.error('Ticket Service', `CRM ${state} tickets for team ${team_id} failed: ${error}`);
+        throw new ServiceUnavailableException('CRM did not respond in time. Try again shortly.');
+      }
+      if (!response.ok) {
+        this.logger.error('Ticket Service', `CRM ${state} tickets for team ${team_id}: HTTP ${response.status}`);
+        throw new ServiceUnavailableException('CRM returned an error while loading tickets.');
+      }
+      const body = (await response.json()) as {
+        content?: { state?: string }[];
+        paging?: { has_more?: boolean };
+      };
+      const content = Array.isArray(body?.content) ? body.content : [];
+      rows.push(...content.filter(ticket => ticket?.state === state));
+      if (!body?.paging?.has_more || content.length === 0) break;
+    }
+    return rows;
+  }
+
   async fetchUnassignedNewTeamTickets(team_id: string) {
-    const { new_tickets } = await this.fetchTeamServiceRequests(team_id);
+    const { new_tickets } = await this.fetchOpenTeamServiceRequests(team_id);
     return (new_tickets ?? []).filter(
       (ticket: { assigned_to?: { user?: { id?: string } } }) =>
         !ticket?.assigned_to?.user?.id,
@@ -869,7 +919,7 @@ Medianet Support Team
 
   async fetchTeamAssignmentSummary(team_id: string) {
     const { new_tickets, in_progress_tickets } =
-      await this.fetchTeamServiceRequests(team_id);
+      await this.fetchOpenTeamServiceRequests(team_id);
     const unassignedNew = (new_tickets ?? []).filter(
       (t: { assigned_to?: { user?: { id?: string } } }) =>
         !t?.assigned_to?.user?.id,

@@ -16,6 +16,7 @@ import { IsNotEmpty } from 'class-validator';
 import { Roles } from 'src/infrastructure/decorators/roles.decorator';
 import { RolesGuard } from 'src/auth/guard/roles.guard';
 import { UpdatePresenceDto } from 'src/config/dto/update-presence.dto';
+import { UpdatePreferencesDto } from './dto/update-preferences.dto';
 
 @Controller('users')
 export class UserController {
@@ -32,6 +33,21 @@ export class UserController {
   @Get('me')
   me(@Req() req: { user: any }) {
     return this.userService.getMe(req.user);
+  }
+
+  @UseGuards(JwtGuard)
+  @Get('me/preferences')
+  myPreferences(@Req() req: { user: { id: string } }) {
+    return this.userService.getPreferences(req.user.id);
+  }
+
+  @UseGuards(JwtGuard)
+  @Patch('me/preferences')
+  updateMyPreferences(
+    @Req() req: { user: { id: string } },
+    @Body() body: UpdatePreferencesDto,
+  ) {
+    return this.userService.updatePreferences(req.user.id, body);
   }
 
   @UseGuards(JwtGuard)

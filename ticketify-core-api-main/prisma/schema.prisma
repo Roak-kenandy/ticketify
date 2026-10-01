@@ -25,6 +25,8 @@ model User {
   presence               TechnicianPresence     @default(OFFLINE)
   busy_comment           String?
   busy_until             DateTime?
+  /// Per-user UI preferences for the admin panel (theme, density, start page…).
+  preferences            Json?
   created_at             DateTime               @default(now())
   updated_at             DateTime               @updatedAt
   user_log               UserLog[]

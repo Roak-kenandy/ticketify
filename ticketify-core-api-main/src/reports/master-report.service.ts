@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { MongoClient, ServerApiVersion } from 'mongodb';
+import { CrmMongoService } from './crm-mongo.service';
 
 export type MasterTicketRow = {
   open_aging: string;
@@ -48,28 +48,10 @@ type MongoReport = {
 
 @Injectable()
 export class MasterReportService {
-  private client: MongoClient | null = null;
-
-  constructor(private config: ConfigService) { }
-
-  private async database() {
-    const uri = this.config.get<string>('MONGO_URI')?.trim();
-    if (!uri) {
-      throw new BadRequestException('MONGO_URI is not configured');
-    }
-    if (!this.client) {
-      // allowMongoSrvLookup();
-      this.client = new MongoClient(uri, {
-        serverApi: {
-          version: ServerApiVersion.v1,
-          strict: true,
-          deprecationErrors: true,
-        },
-      });
-    }
-    await this.client.connect();
-    return this.client.db('CRM');
-  }
+  constructor(
+    private config: ConfigService,
+    private mongo: CrmMongoService,
+  ) { }
 
   async list(query: {
     startDate?: string;
@@ -79,14 +61,16 @@ export class MasterReportService {
     ticketNo?: string;
   }): Promise<MasterTicketRow[]> {
     const dateFilter = this.dateFilter(query.startDate, query.endDate);
-    const db = await this.database();
-    const results = await db
-      .collection('ServiceRequests')
-      .aggregate<MongoReport>(this.pipeline(dateFilter), {
-        maxTimeMS: 600000,
-        allowDiskUse: true,
-      })
-      .toArray();
+    const maxTimeMS = Number(this.config.get('REPORT_QUERY_TIMEOUT_MS') ?? 600_000);
+    const results = await this.mongo.run(db =>
+      db
+        .collection('ServiceRequests')
+        .aggregate<MongoReport>(this.pipeline(dateFilter), {
+          maxTimeMS,
+          allowDiskUse: true,
+        })
+        .toArray(),
+    );
 
     return results.map(row => this.toRow(row)).filter(row => this.matches(row, query));
   }

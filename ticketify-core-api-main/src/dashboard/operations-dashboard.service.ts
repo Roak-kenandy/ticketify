@@ -3,19 +3,44 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { DispatchService } from 'src/dispatch/dispatch.service';
 import { TicketsService } from 'src/tickets/tickets.service';
+import { AssignmentSettingsService } from 'src/assignment/assignment-settings.service';
+import { TtlCache } from 'src/infrastructure/common/helpers/ttl-cache';
 
 /** AC-17-style operational snapshot (Ticketify + CRM pool counts). */
 @Injectable()
 export class OperationsDashboardService {
+  private readonly cache = new TtlCache<Awaited<ReturnType<OperationsDashboardService['build']>>>(
+    () => Number(this.config.get('OPS_SNAPSHOT_CACHE_MS') ?? 10_000),
+  );
+
   constructor(
     private config: ConfigService,
     private prisma: PrismaService,
     private dispatch: DispatchService,
     private tickets: TicketsService,
+    private assignSettings: AssignmentSettingsService,
   ) {}
 
-  async getSnapshot() {
-    const overview = await this.dispatch.overview();
+  getSnapshot() {
+    return this.cache.get(() => this.build());
+  }
+
+  /** Midnight in the business timezone (Maldives, UTC+5 by default), as a UTC Date. */
+  private startOfBusinessDay(): Date {
+    const offsetMin = Number(this.config.get('BUSINESS_UTC_OFFSET_MINUTES') ?? 300);
+    const shifted = new Date(Date.now() + offsetMin * 60_000);
+    shifted.setUTCHours(0, 0, 0, 0);
+    return new Date(shifted.getTime() - offsetMin * 60_000);
+  }
+
+  private async regionSummary(teamId: string, summaries: { team_id: string }[]) {
+    return (
+      summaries.find(summary => summary.team_id === teamId) ??
+      (await this.tickets.fetchTeamAssignmentSummary(teamId))
+    );
+  }
+
+  private async build() {
     const maleTeam =
       this.config.get<string>('REGION_MALE_TEAM_ID') ??
       'f9006884-5b7e-4513-89ef-86e14acf0b25';
@@ -23,50 +48,46 @@ export class OperationsDashboardService {
       this.config.get<string>('REGION_HULHUMALE_TEAM_ID') ??
       '1b71e6bd-116b-4b54-854f-03e1d2d9fba6';
 
-    const maleSummary =
-      overview.team_assignment?.find((t: { team_id: string }) => t.team_id === maleTeam) ??
-      (await this.tickets.fetchTeamAssignmentSummary(maleTeam));
-    const hulhSummary =
-      overview.team_assignment?.find(
-        (t: { team_id: string }) => t.team_id === hulhumaleTeam,
-      ) ?? (await this.tickets.fetchTeamAssignmentSummary(hulhumaleTeam));
+    const [settings, summaries, technicians, transportLm, paymentsToday, invoicesOpen] =
+      await Promise.all([
+        this.assignSettings.getSettings(),
+        this.dispatch.teamSummaries(),
+        this.dispatch.technicianCounts(),
+        this.tickets.fetchTransportLmRegionSummary(),
+        this.prisma.ticketPayment.count({
+          where: { status: 'CONFIRMED', confirmed_at: { gte: this.startOfBusinessDay() } },
+        }),
+        this.prisma.ticketInvoice.count({
+          where: { status: { in: ['DRAFT', 'ISSUED'] } },
+        }),
+      ]);
 
-    const paymentsToday = await this.prisma.ticketPayment.count({
-      where: {
-        status: 'CONFIRMED',
-        confirmed_at: {
-          gte: new Date(new Date().setHours(0, 0, 0, 0)),
-        },
-      },
-    });
-
-    const invoicesOpen = await this.prisma.ticketInvoice.count({
-      where: { status: { in: ['DRAFT', 'ISSUED'] } },
-    });
-
-    const transportLm = await this.tickets.fetchTransportLmRegionSummary();
+    const [maleSummary, hulhSummary] = await Promise.all([
+      this.regionSummary(maleTeam, summaries),
+      this.regionSummary(hulhumaleTeam, summaries),
+    ]);
 
     return {
       generated_at: new Date().toISOString(),
-      auto_assign_enabled: overview.auto_assign_enabled,
-      team_auto_assign: overview.team_auto_assign,
+      auto_assign_enabled: settings.enabled,
+      team_auto_assign: settings.team_enabled ?? {},
       regions: {
         male: {
+          ...maleSummary,
           team_id: maleTeam,
           label: 'Malé Access',
-          ...maleSummary,
         },
         hulhumale: {
+          ...hulhSummary,
           team_id: hulhumaleTeam,
           label: 'Hulhumalé Access',
-          ...hulhSummary,
         },
         transport_lm: {
-          label: 'Transport · Last Mile',
           ...transportLm,
+          label: 'Transport · Last Mile',
         },
       },
-      technicians: overview.technicians,
+      technicians,
       finance_ticketify: {
         confirmed_payments_today: paymentsToday,
         open_invoices: invoicesOpen,

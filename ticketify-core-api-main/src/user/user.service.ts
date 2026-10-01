@@ -13,6 +13,11 @@ import { LoggerService } from 'src/infrastructure/logger/logger.service';
 import { TechnicianDetailsDto, TechnicianLocationTracking } from './dto/technician-details.dto';
 import { UpdatePresenceDto } from 'src/config/dto/update-presence.dto';
 import { TechnicianPresence } from '@prisma/client';
+import {
+  DEFAULT_PREFERENCES,
+  UpdatePreferencesDto,
+  type UserPreferences,
+} from './dto/update-preferences.dto';
 
 @Injectable()
 export class UserService {
@@ -22,6 +27,30 @@ export class UserService {
     private logger: LoggerService,
     private config: ConfigService,
   ) {}
+
+  private normalizePreferences(stored: unknown): UserPreferences {
+    const value = stored && typeof stored === 'object' ? (stored as Partial<UserPreferences>) : {};
+    return { ...DEFAULT_PREFERENCES, ...value };
+  }
+
+  async getPreferences(userId: string): Promise<UserPreferences> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { preferences: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return this.normalizePreferences(user.preferences);
+  }
+
+  async updatePreferences(userId: string, dto: UpdatePreferencesDto): Promise<UserPreferences> {
+    const current = await this.getPreferences(userId);
+    const next = { ...current, ...dto };
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { preferences: next },
+    });
+    return next;
+  }
 
   async getMe(user: any) {
     const get_user = await this.prisma.user.findUnique({

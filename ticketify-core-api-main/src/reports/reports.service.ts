@@ -2,21 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { CreateReportDto } from './dto/create-report.dto';
 import { UpdateReportDto } from './dto/update-report.dto';
 import { ConfigService } from '@nestjs/config';
-const { MongoClient, ServerApiVersion } = require('mongodb');
-const uri =
-  'mongodb+srv://mdn:6pcHeB287AQJKLL3@crm.mlnxc.mongodb.net/?retryWrites=true&w=majority&appName=CRM';
-
-const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1, // Use the latest server API version
-    strict: true, // Enforces strict mode for the MongoDB client
-    deprecationErrors: true, // Throws errors on deprecated methods
-  },
-});
+import { CrmMongoService } from './crm-mongo.service';
 
 @Injectable()
 export class ReportsService {
-  constructor(private config: ConfigService) { }
+  constructor(
+    private config: ConfigService,
+    private mongo: CrmMongoService,
+  ) { }
 
   async getTicketQueues() {
     let crm_service_request_stages = await fetch(
@@ -189,31 +182,9 @@ export class ReportsService {
       },
     ];
 
-    try {
-      console.log('Connecting to the database...');
-      await client.connect();
-
-      // Testing the connection with a "ping" command
-      await client.db('admin').command({ ping: 1 });
-      console.log(
-        'Pinged your deployment. You successfully connected to MongoDB!',
-      );
-      const coll = client.db('CRM').collection('ServiceRequests');
-      console.log('Connected to the collection');
-      const cursor = await coll.aggregate(aggregation);
-      console.log('Aggregation query executed');
-      const result = await cursor.toArray();
-
-      return result;
-    } catch (error) {
-      console.error(
-        'Error connecting to the database:',
-        error instanceof Error ? error.message : error,
-      );
-      console.error(error);
-    } finally {
-      await client.close(); // Ensure we close the client connection after use
-    }
+    return this.mongo.run(db =>
+      db.collection('ServiceRequests').aggregate(aggregation).toArray(),
+    );
   }
 
   async findTicketByTeam() {
@@ -275,31 +246,9 @@ export class ReportsService {
       },
     ];
 
-    try {
-      console.log('Connecting to the database...');
-      await client.connect();
-
-      // Testing the connection with a "ping" command
-      await client.db('admin').command({ ping: 1 });
-      console.log(
-        'Pinged your deployment. You successfully connected to MongoDB!',
-      );
-      const coll = client.db('CRM').collection('ServiceRequests');
-      console.log('Connected to the collection');
-      const cursor = await coll.aggregate(aggregation);
-      console.log('Aggregation query executed');
-      const result = await cursor.toArray();
-
-      return result;
-    } catch (error) {
-      console.error(
-        'Error connecting to the database:',
-        error instanceof Error ? error.message : error,
-      );
-      console.error(error);
-    } finally {
-      await client.close(); // Ensure we close the client connection after use
-    }
+    return this.mongo.run(db =>
+      db.collection('ServiceRequests').aggregate(aggregation).toArray(),
+    );
   }
 
   async findTotalTickets() {
@@ -375,30 +324,9 @@ export class ReportsService {
       },
     ];
 
-    try {
-      console.log('Connecting to the database...');
-      await client.connect();
-
-      // Testing the connection with a "ping" command
-      await client.db('admin').command({ ping: 1 });
-      console.log(
-        'Pinged your deployment. You successfully connected to MongoDB!',
-      );
-      const coll = client.db('CRM').collection('ServiceRequests');
-      console.log('Connected to the collection');
-      const cursor = await coll.aggregate(aggregation);
-      console.log('Aggregation query executed');
-      const result = await cursor.toArray();
-      return result;
-    } catch (error) {
-      console.error(
-        'Error connecting to the database:',
-        error instanceof Error ? error.message : error,
-      );
-      console.error(error);
-    } finally {
-      await client.close(); // Ensure we close the client connection after use
-    }
+    return this.mongo.run(db =>
+      db.collection('ServiceRequests').aggregate(aggregation).toArray(),
+    );
   }
 
   formatAgingCsv(
