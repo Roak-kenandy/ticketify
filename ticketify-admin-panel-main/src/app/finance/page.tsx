@@ -1,11 +1,25 @@
 "use client";
 
-import React from "react";
+import * as React from "react";
 import Link from "next/link";
 import moment from "moment";
-import { FileText, Receipt, Wallet, Clock } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { ArrowRight, Clock, FileText, Receipt, RefreshCw, Wallet } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { PageHeader } from "@/components/app/page-header";
+import { StatCard } from "@/components/app/stat-card";
+import { EmptyState } from "@/components/app/empty-state";
+import { TableSkeletonRows } from "@/components/app/filter-bar";
 import axiosInterceptorInstance from "@/lib/axios-interceptor";
+import { formatMvr } from "@/lib/format";
 
 type RecentPayment = {
   invoice_no: string;
@@ -28,103 +42,148 @@ type FinanceSummary = {
 export default function FinanceDashboardPage() {
   const [summary, setSummary] = React.useState<FinanceSummary | null>(null);
   const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState("");
+  const [error, setError] = React.useState(false);
 
-  React.useEffect(() => {
+  const load = React.useCallback(() => {
+    setLoading(true);
+    setError(false);
     axiosInterceptorInstance
       .get("/reports/finance/summary")
       .then((response) => setSummary(response.data))
-      .catch(() => setError("Could not load the finance dashboard."))
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
   }, []);
 
-  const cards = summary
-    ? [
-        {
-          label: "Invoices",
-          value: String(summary.invoices),
-          icon: FileText,
-          color: "text-blue-500",
-        },
-        {
-          label: "Total amount (MVR)",
-          value: summary.total_amount,
-          icon: Wallet,
-          color: "text-emerald-500",
-        },
-        {
-          label: "Confirmed payments",
-          value: String(summary.confirmed),
-          icon: Receipt,
-          color: "text-green-600",
-        },
-        {
-          label: "Pending payments",
-          value: String(summary.pending),
-          icon: Clock,
-          color: "text-amber-500",
-        },
-      ]
-    : [];
+  React.useEffect(() => {
+    load();
+  }, [load]);
+
+  const confirmedRate =
+    summary && summary.payments > 0
+      ? Math.round((summary.confirmed / summary.payments) * 100)
+      : null;
 
   return (
-    <div className="p-6 space-y-6 overflow-auto">
-      <div>
-        <h2 className="text-2xl font-semibold">Dashboard</h2>
-        <p className="text-sm text-muted-foreground">
-          Finance totals for invoices and payment requests
-        </p>
-      </div>
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        {loading &&
-          [0, 1, 2, 3].map((item) => (
-            <div key={item} className="h-28 rounded-xl bg-muted animate-pulse" />
-          ))}
-        {!loading &&
-          cards.map((card) => (
-            <Card key={card.label} className="p-6">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">
-                    {card.label}
-                  </p>
-                  <p className="text-2xl font-bold mt-1">{card.value}</p>
-                </div>
-                <card.icon className={`h-8 w-8 ${card.color}`} />
-              </div>
-            </Card>
-          ))}
-      </div>
+    <>
+      <PageHeader
+        title="Finance overview"
+        description="Invoices and payment requests issued from Ticketify."
+        actions={
+          <>
+            <Button variant="outline" onClick={load} disabled={loading}>
+              <RefreshCw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+              Refresh
+            </Button>
+            <Button asChild>
+              <Link href="/finance/reports">
+                Payments report
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+          </>
+        }
+      />
 
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">Recent payments</h3>
-        <Link href="/finance/reports" className="text-sm text-primary underline">
-          Open reports
-        </Link>
-      </div>
-      {!loading && summary && summary.recent.length === 0 && (
-        <p className="text-sm text-muted-foreground">No payment requests yet.</p>
-      )}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {summary?.recent.map((row, index) => (
-          <Card key={`${row.invoice_no}-${index}`} className="p-5 space-y-2">
-            <p className="font-semibold">{row.invoice_no || "No invoice"}</p>
-            <p className="text-sm text-muted-foreground">
-              Ticket no: {row.ticket_no || "—"}
-            </p>
-            <p className="text-sm">BML reference id: {row.bml_reference_id || "—"}</p>
-            <p className="text-sm">Amount: {row.product_amount || "—"} MVR</p>
-            <p className="text-sm">
-              Issued date:{" "}
-              {row.issued_date
-                ? moment(row.issued_date).format("DD MMM YYYY")
-                : "—"}
-            </p>
-            <p className="text-sm">Issued by: {row.issued_by || "—"}</p>
+      {error ? (
+        <Card>
+          <EmptyState
+            variant="error"
+            title="Couldn't load finance totals"
+            description="The finance service didn't respond. Try again in a moment."
+            action={<Button onClick={load}>Try again</Button>}
+          />
+        </Card>
+      ) : (
+        <div className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              label="Total billed"
+              value={summary ? formatMvr(summary.total_amount) : "—"}
+              icon={Wallet}
+              tone="brand"
+              loading={loading}
+            />
+            <StatCard
+              label="Invoices"
+              value={summary?.invoices ?? 0}
+              icon={FileText}
+              tone="info"
+              loading={loading}
+            />
+            <StatCard
+              label="Confirmed payments"
+              value={summary?.confirmed ?? 0}
+              icon={Receipt}
+              tone="success"
+              loading={loading}
+              hint={confirmedRate !== null ? `${confirmedRate}% of payment requests` : undefined}
+            />
+            <StatCard
+              label="Awaiting payment"
+              value={summary?.pending ?? 0}
+              icon={Clock}
+              tone="warning"
+              loading={loading}
+            />
+          </div>
+
+          <Card className="overflow-hidden">
+            <CardHeader className="flex-row items-center justify-between space-y-0 border-b py-4">
+              <CardTitle>Recent payment requests</CardTitle>
+              <Button variant="ghost" size="sm" asChild>
+                <Link href="/finance/reports">
+                  View all
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </Button>
+            </CardHeader>
+            {!loading && (summary?.recent.length ?? 0) === 0 ? (
+              <EmptyState
+                icon={Receipt}
+                title="No payment requests yet"
+                description="Requests appear here when technicians bill a customer from the app."
+              />
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Invoice</TableHead>
+                    <TableHead>Ticket</TableHead>
+                    <TableHead className="hidden md:table-cell">BML reference</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="hidden sm:table-cell">Issued</TableHead>
+                    <TableHead className="hidden lg:table-cell">Issued by</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {loading ? (
+                    <TableSkeletonRows columns={6} rows={5} />
+                  ) : (
+                    summary?.recent.map((row, index) => (
+                      <TableRow key={`${row.invoice_no}-${index}`}>
+                        <TableCell className="font-medium">{row.invoice_no || "—"}</TableCell>
+                        <TableCell className="tabular-nums">{row.ticket_no || "—"}</TableCell>
+                        <TableCell className="hidden font-mono text-xs text-muted-foreground md:table-cell">
+                          {row.bml_reference_id || "—"}
+                        </TableCell>
+                        <TableCell className="text-right font-medium tabular-nums">
+                          {formatMvr(row.product_amount)}
+                        </TableCell>
+                        <TableCell className="hidden whitespace-nowrap text-muted-foreground sm:table-cell">
+                          {row.issued_date ? moment(row.issued_date).format("DD MMM YYYY") : "—"}
+                        </TableCell>
+                        <TableCell className="hidden text-muted-foreground lg:table-cell">
+                          {row.issued_by || "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            )}
           </Card>
-        ))}
-      </div>
-    </div>
+        </div>
+      )}
+    </>
   );
 }

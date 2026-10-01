@@ -1,122 +1,100 @@
 "use client";
 
-import { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import { AdminAPI } from '@/lib/admin-api';
-import { UserProfile } from '@/types/admin';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Avatar } from '@/components/ui/avatar';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { 
-  ArrowLeft, 
-  User, 
-  Mail, 
-  Phone, 
+import * as React from "react";
+import { useParams } from "next/navigation";
+import Link from "next/link";
+import { toast } from "sonner";
+import {
   Calendar,
-  Shield,
-  Key,
-  Activity,
-  Hash,
+  Clock,
+  Copy,
   Eye,
   EyeOff,
-  X
-} from 'lucide-react';
-import { toast } from 'sonner';
+  Hash,
+  KeyRound,
+  Loader2,
+  Mail,
+  Phone,
+  Shield,
+  UserCheck,
+  UserX,
+} from "lucide-react";
+import { AdminAPI } from "@/lib/admin-api";
+import { initials } from "@/lib/access";
+import { UserProfile } from "@/types/admin";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { PageHeader } from "@/components/app/page-header";
+import { EmptyState } from "@/components/app/empty-state";
+
+function formatDateTime(value?: string) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 export default function UserProfilePage() {
   const params = useParams();
-  const router = useRouter();
   const userId = params.id as string;
-  
-  const [user, setUser] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [showPasswordReset, setShowPasswordReset] = useState(false);
-  const [newPassword, setNewPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [resettingPassword, setResettingPassword] = useState(false);
 
-  useEffect(() => {
-    if (userId) {
-      fetchUser({ silent: true });
-    }
-  }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [user, setUser] = React.useState<UserProfile | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [resetOpen, setResetOpen] = React.useState(false);
+  const [statusSaving, setStatusSaving] = React.useState(false);
 
-  const fetchUser = async (options?: { silent?: boolean }) => {
+  const load = React.useCallback(async () => {
     try {
-      const userData = await AdminAPI.getUserById(userId);
-      setUser(userData);
-    } catch (error) {
-      console.error('Failed to fetch user:', error);
-      if (!options?.silent) {
-        toast.error('Failed to load user profile');
-      }
+      setUser(await AdminAPI.getUserById(userId));
+    } catch {
+      setUser(null);
     } finally {
       setLoading(false);
     }
-  };
+  }, [userId]);
 
-  const handleShowPasswordReset = () => {
-    setShowPasswordReset(true);
-    setNewPassword('');
-  };
+  React.useEffect(() => {
+    if (userId) load();
+  }, [userId, load]);
 
-  const handleCancelPasswordReset = () => {
-    setShowPasswordReset(false);
-    setNewPassword('');
-    setShowPassword(false);
-  };
-
-  const handleResetPassword = async () => {
-    if (!newPassword.trim()) {
-      toast.error('Please enter a new password');
-      return;
-    }
-
-    if (newPassword.length < 6) {
-      toast.error('Password must be at least 6 characters long');
-      return;
-    }
-
+  async function toggleStatus() {
+    if (!user) return;
+    setStatusSaving(true);
     try {
-      setResettingPassword(true);
-      await AdminAPI.resetPassword({
-        user_id: userId,
-        new_password: newPassword
-      });
-      toast.success('Password reset successfully');
-      setShowPasswordReset(false);
-      setNewPassword('');
-      setShowPassword(false);
-    } catch (error: any) {
-      console.error('Failed to reset password:', error);
-      if (error.response?.data?.message) {
-        toast.error(error.response.data.message);
-      } else {
-        toast.error('Failed to reset password');
-      }
+      await AdminAPI.toggleUserStatus(user.id);
+      toast.success(`${user.name} is now ${user.availability ? "inactive" : "active"}`);
+      await load();
+    } catch {
+      toast.error("Couldn't update the status");
     } finally {
-      setResettingPassword(false);
+      setStatusSaving(false);
     }
-  };
+  }
 
   if (loading) {
     return (
       <div className="space-y-6">
-        <div className="animate-pulse">
-          <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/4 mb-6"></div>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 space-y-4">
-              <div className="h-40 bg-gray-200 dark:bg-gray-700 rounded-lg"></div>
-              <div className="h-60 bg-gray-200 dark:bg-gray-700 rounded-lg"></div>
-            </div>
-            <div className="space-y-4">
-              <div className="h-32 bg-gray-200 dark:bg-gray-700 rounded-lg"></div>
-              <div className="h-48 bg-gray-200 dark:bg-gray-700 rounded-lg"></div>
-            </div>
-          </div>
+        <Skeleton className="h-4 w-20" />
+        <Skeleton className="h-8 w-64" />
+        <div className="grid gap-6 lg:grid-cols-3">
+          <Skeleton className="h-64 rounded-xl lg:col-span-2" />
+          <Skeleton className="h-64 rounded-xl" />
         </div>
       </div>
     );
@@ -124,284 +102,244 @@ export default function UserProfilePage() {
 
   if (!user) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-center">
-          <h2 className="text-2xl font-bold">User Not Found</h2>
-          <p className="text-muted-foreground">The requested user could not be found.</p>
-          <Button onClick={() => router.push('/admin/users')} className="mt-4">
-            Back to Users
-          </Button>
-        </div>
-      </div>
+      <Card>
+        <EmptyState
+          variant="no-results"
+          title="User not found"
+          description="This account may have been deleted, or the link is wrong."
+          action={
+            <Button asChild>
+              <Link href="/admin/users">Back to users</Link>
+            </Button>
+          }
+        />
+      </Card>
     );
   }
 
+  const details = [
+    { icon: Mail, label: "Email", value: user.email },
+    { icon: Phone, label: "Phone", value: user.phone || "—" },
+    { icon: Shield, label: "Role", value: user.role?.name ?? "—" },
+    { icon: Calendar, label: "Created", value: formatDateTime(user.created_at) },
+    { icon: Clock, label: "Last sign-in", value: formatDateTime(user.last_login) },
+    { icon: Hash, label: "CRM user ID", value: user.crm_user_id || "—", mono: true },
+  ];
+
+  const timeline = [
+    { label: "Account created", at: user.created_at, tone: "bg-success" },
+    user.last_login ? { label: "Last sign-in", at: user.last_login, tone: "bg-info" } : null,
+    { label: "Profile updated", at: user.updated_at, tone: "bg-muted-foreground" },
+  ].filter(Boolean) as { label: string; at: string; tone: string }[];
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => router.back()}
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <div>
-            <h1 className="text-3xl font-bold text-foreground">User Profile</h1>
-            <p className="text-muted-foreground">View user details and manage account</p>
+    <>
+      <PageHeader backHref="/admin/users" backLabel="Users" title="User profile" />
+
+      <Card className="mb-6">
+        <CardContent className="flex flex-col gap-5 p-6 sm:flex-row sm:items-center">
+          <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xl font-semibold text-primary">
+            {initials(user.name)}
+          </span>
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <h2 className="truncate text-xl font-semibold">{user.name}</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="brand">{user.role?.name}</Badge>
+              <Badge dot variant={user.availability ? "success" : "outline"}>
+                {user.availability ? "Active" : "Inactive"}
+              </Badge>
+              <span className="truncate text-sm text-muted-foreground">{user.email}</span>
+            </div>
           </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Main Content */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Profile Header */}
-          <Card className="p-6">
-            <div className="flex items-center gap-6">
-              <Avatar className="h-20 w-20">
-                <div className="bg-primary/10 text-primary font-medium h-full w-full flex items-center justify-center text-2xl">
-                  {user.name.charAt(0).toUpperCase()}
-                </div>
-              </Avatar>
-              <div className="flex-1">
-                <h2 className="text-2xl font-bold">{user.name}</h2>
-                <p className="text-muted-foreground">{user.email}</p>
-                <div className="flex items-center gap-4 mt-2">
-                  <Badge variant={user.availability ? "default" : "destructive"}>
-                    {user.availability ? "Active" : "Inactive"}
-                  </Badge>
-                  <Badge variant="secondary">{user.role.name}</Badge>
-                  <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                    <Hash className="h-3 w-3" />
-                    {user.id}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </Card>
-
-          {/* Personal Information */}
-          <Card className="p-6">
-            <h3 className="text-lg font-semibold mb-4">User Information</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <User className="h-4 w-4 text-muted-foreground" />
-                  <div>
-                    <p className="text-sm text-muted-foreground">Full Name</p>
-                    <p className="font-medium">{user.name}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Mail className="h-4 w-4 text-muted-foreground" />
-                  <div>
-                    <p className="text-sm text-muted-foreground">Email Address</p>
-                    <p className="font-medium">{user.email}</p>
-                  </div>
-                </div>
-                {user.phone && (
-                  <div className="flex items-center gap-3">
-                    <Phone className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <p className="text-sm text-muted-foreground">Phone Number</p>
-                      <p className="font-medium">{user.phone}</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <Shield className="h-4 w-4 text-muted-foreground" />
-                  <div>
-                    <p className="text-sm text-muted-foreground">Role</p>
-                    <p className="font-medium">{user.role.name}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Calendar className="h-4 w-4 text-muted-foreground" />
-                  <div>
-                    <p className="text-sm text-muted-foreground">Account Created</p>
-                    <p className="font-medium">
-                      {new Date(user.created_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                </div>
-                {user.last_login && (
-                  <div className="flex items-center gap-3">
-                    <Activity className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <p className="text-sm text-muted-foreground">Last Login</p>
-                      <p className="font-medium">
-                        {new Date(user.last_login).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </Card>
-
-          {/* Activity Log */}
-          <Card className="p-6">
-            <h3 className="text-lg font-semibold mb-4">Recent Activity</h3>
-            <div className="space-y-3">
-              <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
-                <div className="h-2 w-2 bg-green-500 rounded-full"></div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium">Account Created</p>
-                  <p className="text-xs text-muted-foreground">
-                    {new Date(user.created_at).toLocaleDateString()} at {new Date(user.created_at).toLocaleTimeString()}
-                  </p>
-                </div>
-              </div>
-              {user.last_login && (
-                <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
-                  <div className="h-2 w-2 bg-blue-500 rounded-full"></div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">Last Login</p>
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(user.last_login).toLocaleDateString()} at {new Date(user.last_login).toLocaleTimeString()}
-                    </p>
-                  </div>
-                </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setResetOpen(true)}>
+              <KeyRound className="h-4 w-4" />
+              Reset password
+            </Button>
+            <Button
+              variant={user.availability ? "outline" : "default"}
+              onClick={toggleStatus}
+              disabled={statusSaving}
+            >
+              {statusSaving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : user.availability ? (
+                <UserX className="h-4 w-4" />
+              ) : (
+                <UserCheck className="h-4 w-4" />
               )}
-              <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
-                <div className="h-2 w-2 bg-gray-500 rounded-full"></div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium">Profile Last Updated</p>
-                  <p className="text-xs text-muted-foreground">
-                    {new Date(user.updated_at).toLocaleDateString()} at {new Date(user.updated_at).toLocaleTimeString()}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </Card>
-        </div>
+              {user.availability ? "Deactivate" : "Activate"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
-        {/* Sidebar */}
-        <div className="space-y-6">
-          {/* Account Status */}
-          <Card className="p-6">
-            <h3 className="font-semibold mb-4">Account Status</h3>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Status</span>
-                <Badge variant={user.availability ? "default" : "destructive"}>
-                  {user.availability ? "Active" : "Inactive"}
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Role</span>
-                <Badge variant="secondary">{user.role.name}</Badge>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">User ID</span>
-                <code className="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
-                  {user.id}
-                </code>
-              </div>
-            </div>
-          </Card>
-
-          {/* Quick Actions / Password Reset */}
-          <Card className="p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold">Quick Actions</h3>
-              {showPasswordReset && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handleCancelPasswordReset}
-                  className="h-6 w-6"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-            
-            {!showPasswordReset ? (
-              <div className="space-y-2">
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="w-full justify-start"
-                  onClick={handleShowPasswordReset}
-                >
-                  <Key className="mr-2 h-4 w-4" />
-                  Reset Password
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="new-password">New Password</Label>
-                  <div className="relative">
-                    <Input
-                      id="new-password"
-                      type={showPassword ? "text" : "password"}
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="Enter new password"
-                      className="pr-10"
-                      disabled={resettingPassword}
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                      onClick={() => setShowPassword(!showPassword)}
-                      disabled={resettingPassword}
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle>Details</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <dl className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+              {details.map((item) => (
+                <div key={item.label} className="flex gap-3">
+                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                    <item.icon className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <dt className="text-xs font-medium text-muted-foreground">{item.label}</dt>
+                    <dd
+                      className={
+                        item.mono
+                          ? "flex items-center gap-1 break-all font-mono text-xs"
+                          : "truncate text-sm font-medium"
+                      }
                     >
-                      {showPassword ? (
-                        <EyeOff className="h-4 w-4" />
-                      ) : (
-                        <Eye className="h-4 w-4" />
+                      {item.value}
+                      {item.mono && item.value !== "—" && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard?.writeText(item.value);
+                            toast.success("Copied");
+                          }}
+                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          aria-label={`Copy ${item.label}`}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </button>
                       )}
-                    </Button>
+                    </dd>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Password must be at least 6 characters long
-                  </p>
                 </div>
-                
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleCancelPasswordReset}
-                    disabled={resettingPassword}
-                    className="flex-1"
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={handleResetPassword}
-                    disabled={resettingPassword || !newPassword.trim()}
-                    className="flex-1"
-                  >
-                    {resettingPassword ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
-                        Updating...
-                      </>
-                    ) : (
-                      <>
-                        <Key className="mr-2 h-4 w-4" />
-                        Update
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </div>
-            )}
-          </Card>
-        </div>
+              ))}
+            </dl>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Account timeline</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ol className="relative space-y-5 border-l pl-5">
+              {timeline.map((item) => (
+                <li key={item.label} className="relative">
+                  <span
+                    aria-hidden
+                    className={`absolute -left-[25px] top-1 h-2.5 w-2.5 rounded-full ring-4 ring-card ${item.tone}`}
+                  />
+                  <p className="text-sm font-medium">{item.label}</p>
+                  <p className="text-xs text-muted-foreground">{formatDateTime(item.at)}</p>
+                </li>
+              ))}
+            </ol>
+          </CardContent>
+        </Card>
       </div>
-    </div>
+
+      <ResetPasswordDialog
+        open={resetOpen}
+        onOpenChange={setResetOpen}
+        userId={user.id}
+        userName={user.name}
+      />
+    </>
+  );
+}
+
+function ResetPasswordDialog({
+  open,
+  onOpenChange,
+  userId,
+  userName,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  userId: string;
+  userName: string;
+}) {
+  const [password, setPassword] = React.useState("");
+  const [show, setShow] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    if (!open) {
+      setPassword("");
+      setShow(false);
+      setError("");
+    }
+  }, [open]);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (password.length < 6) {
+      setError("Use at least 6 characters.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await AdminAPI.resetPassword({ user_id: userId, new_password: password });
+      toast.success(`Password updated for ${userName}`);
+      onOpenChange(false);
+    } catch (err: any) {
+      setError(err.response?.data?.message || "Couldn't reset the password.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}>
+      <DialogContent className="max-w-md">
+        <form onSubmit={submit} className="space-y-5">
+          <DialogHeader>
+            <DialogTitle>Reset password</DialogTitle>
+            <DialogDescription>
+              Set a new password for {userName}. They&apos;ll use it the next time they sign in.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="new-password">New password</Label>
+            <div className="relative">
+              <Input
+                id="new-password"
+                type={show ? "text" : "password"}
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setError("");
+                }}
+                autoComplete="new-password"
+                autoFocus
+                className="pr-10"
+                aria-invalid={Boolean(error)}
+              />
+              <button
+                type="button"
+                onClick={() => setShow((value) => !value)}
+                aria-label={show ? "Hide password" : "Show password"}
+                className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+            <p className={error ? "text-xs font-medium text-destructive" : "text-xs text-muted-foreground"}>
+              {error || "At least 6 characters."}
+            </p>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={saving || !password}>
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+              Update password
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

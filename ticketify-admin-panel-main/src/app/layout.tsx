@@ -4,19 +4,30 @@ import "./globals.css";
 
 import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/theme-provider";
+import { PreferencesProvider } from "@/components/preferences-provider";
+import { PREFERENCES_BOOT_SCRIPT } from "@/lib/preferences";
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
-  title: "Ticketify - Dashboard",
-  description: "Remote support ticketing system",
+  title: {
+    default: "Ticketify · Medianet Operations",
+    template: "%s · Ticketify",
+  },
+  description: "Field operations, dispatch and reporting for Medianet.",
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f8f9fb" },
+    { media: "(prefers-color-scheme: dark)", color: "#0b111c" },
+  ],
 };
 
 export default function RootLayout({
@@ -25,13 +36,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body
-        className={`h-screen w-screen overflow-hidden bg-background ${inter.className}`}
-        style={{ touchAction: "pan-x pan-y" }}>
+    <html lang="en" suppressHydrationWarning className={inter.variable}>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: PREFERENCES_BOOT_SCRIPT }} />
+      </head>
+      <body className="min-h-dvh bg-background font-sans">
         <ThemeProvider>
-          <main className="w-full h-full">{children}</main>
-          <Toaster richColors closeButton position="top-right" />
+          <PreferencesProvider>
+            {children}
+            <Toaster richColors closeButton position="top-right" />
+          </PreferencesProvider>
         </ThemeProvider>
       </body>
     </html>

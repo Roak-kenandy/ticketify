@@ -28,27 +28,31 @@ export const PRESENCE_UI: Record<
     dotClass: string;
     textClass: string;
     pulseClass: string;
+    badge: "success" | "warning" | "outline";
   }
 > = {
   online: {
     markerColor: "#10b981",
     label: "Available",
-    dotClass: "bg-green-500",
-    textClass: "text-green-400",
-    pulseClass: "bg-green-500",
+    dotClass: "bg-emerald-500",
+    textClass: "text-emerald-600 dark:text-emerald-400",
+    pulseClass: "bg-emerald-500",
+    badge: "success",
   },
   busy: {
-    markerColor: "#eab308",
+    markerColor: "#f59e0b",
     label: "Busy",
-    dotClass: "bg-yellow-500",
-    textClass: "text-yellow-400",
-    pulseClass: "bg-yellow-500",
+    dotClass: "bg-amber-500",
+    textClass: "text-amber-600 dark:text-amber-400",
+    pulseClass: "bg-amber-500",
+    badge: "warning",
   },
   offline: {
-    markerColor: "#dc2626",
+    markerColor: "#94a3b8",
     label: "Offline",
-    dotClass: "bg-red-500",
-    textClass: "text-red-400",
-    pulseClass: "bg-red-500",
+    dotClass: "bg-slate-400",
+    textClass: "text-muted-foreground",
+    pulseClass: "bg-slate-400",
+    badge: "outline",
   },
 };

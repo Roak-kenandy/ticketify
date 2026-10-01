@@ -1,14 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import * as React from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { Eye, EyeOff, Info, Loader2, UserPlus } from "lucide-react";
 import { AdminAPI } from "@/lib/admin-api";
-import { Role, CreateUserData } from "@/types/admin";
-import { Card } from "@/components/ui/card";
+import { CreateUserData, Role } from "@/types/admin";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Save, User } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -16,321 +17,323 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
+import { PageHeader } from "@/components/app/page-header";
+import { cn } from "@/lib/utils";
+
+type Errors = Partial<Record<keyof CreateUserData, string>>;
+
+const EMPTY: CreateUserData = {
+  crm_user_id: "",
+  email: "",
+  name: "",
+  phone: "",
+  password: "",
+  role_id: "",
+};
+
+function validate(data: CreateUserData): Errors {
+  const errors: Errors = {};
+  if (!data.name.trim()) errors.name = "Enter the person's full name.";
+  if (!data.email.trim()) {
+    errors.email = "Enter a work email.";
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email.trim())) {
+    errors.email = "That doesn't look like a valid email.";
+  }
+  if (!data.phone.trim()) {
+    errors.phone = "Enter a phone number for SMS and contact.";
+  } else if (!/^[\d\s\-+()]{7,}$/.test(data.phone.trim())) {
+    errors.phone = "Use digits only, e.g. +960 7722229.";
+  }
+  if (!data.crm_user_id.trim()) {
+    errors.crm_user_id = "Paste the user's ID from CRM.";
+  }
+  if (!data.role_id) errors.role_id = "Choose a role.";
+  if (!data.password) {
+    errors.password = "Set a temporary password.";
+  } else if (data.password.length < 6) {
+    errors.password = "Use at least 6 characters.";
+  }
+  return errors;
+}
 
 export default function CreateUserPage() {
   const router = useRouter();
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState<CreateUserData>({
-    crm_user_id: "",
-    email: "",
-    name: "",
-    phone: "",
-    password: "",
-    role_id: "",
-  });
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [roles, setRoles] = React.useState<Role[]>([]);
+  const [form, setForm] = React.useState<CreateUserData>(EMPTY);
+  const [errors, setErrors] = React.useState<Errors>({});
+  const [saving, setSaving] = React.useState(false);
+  const [showPassword, setShowPassword] = React.useState(false);
 
-  useEffect(() => {
-    fetchRoles({ silent: true });
+  React.useEffect(() => {
+    AdminAPI.getAllRoles()
+      .then(setRoles)
+      .catch(() => toast.error("Couldn't load roles. Refresh to try again."));
   }, []);
 
-  const fetchRoles = async (options?: { silent?: boolean }) => {
-    try {
-      const rolesData = await AdminAPI.getAllRoles();
-      setRoles(rolesData);
-    } catch (error) {
-      console.error("Failed to fetch roles:", error);
-      if (!options?.silent) {
-        toast.error("Failed to load roles");
-      }
+  function update(field: keyof CreateUserData, value: string) {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    if (errors[field]) {
+      setErrors((prev) => ({ ...prev, [field]: undefined }));
     }
-  };
+  }
 
-  const validateForm = (): boolean => {
-    const newErrors: Record<string, string> = {};
-
-    if (!formData.crm_user_id.trim()) {
-      newErrors.crm_user_id = "CRM User ID is required";
-    }
-
-    if (!formData.name.trim()) {
-      newErrors.name = "Name is required";
-    }
-
-    if (!formData.email.trim()) {
-      newErrors.email = "Email is required";
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-      newErrors.email = "Invalid email format";
-    }
-
-    if (!formData.password) {
-      newErrors.password = "Password is required";
-    } else if (formData.password.length < 6) {
-      newErrors.password = "Password must be at least 6 characters";
-    }
-
-    if (!formData.role_id) {
-      newErrors.role_id = 'Role is required';
-    }
-
-    if (!formData.phone.trim()) {
-      newErrors.phone = 'Phone number is required';
-    } else if (!/^[\d\s\-\+\(\)]+$/.test(formData.phone)) {
-      newErrors.phone = 'Invalid phone number format';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!validateForm()) {
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    const nextErrors = validate(form);
+    setErrors(nextErrors);
+    const firstInvalid = Object.keys(nextErrors)[0];
+    if (firstInvalid) {
+      document.getElementById(firstInvalid)?.focus();
       return;
     }
 
+    setSaving(true);
     try {
-      setLoading(true);
-      const result = await AdminAPI.createUser(formData);
+      const result = await AdminAPI.createUser({
+        ...form,
+        name: form.name.trim(),
+        email: form.email.trim(),
+        phone: form.phone.trim(),
+        crm_user_id: form.crm_user_id.trim(),
+      });
       if (!result?.user) {
-        toast.error("User was not created. Please check the form and try again.");
+        toast.error("The user wasn't created. Check the details and try again.");
         return;
       }
-      toast.success("User created successfully");
+      toast.success(`${result.user.name} can now sign in`);
       router.push("/admin/users");
     } catch (error: any) {
-      console.error("Failed to create user:", error);
-
-      // Handle specific API errors
-      if (error.response?.data?.message) {
-        toast.error(error.response.data.message);
-      } else if (error.response?.status === 409) {
-        toast.error("User with this email already exists");
+      const message = error.response?.data?.message;
+      if (error.response?.status === 409) {
+        toast.error("An account with this email already exists.");
       } else {
-        toast.error("Failed to create user");
+        toast.error(
+          Array.isArray(message) ? message.join(", ") : message || "Couldn't create the user.",
+        );
       }
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
-  };
+  }
 
-  const handleInputChange = (field: keyof CreateUserData, value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-
-    // Clear error when user starts typing
-    if (errors[field]) {
-      setErrors((prev) => ({ ...prev, [field]: "" }));
-    }
-  };
+  const selectedRole = roles.find((role) => role.id === form.role_id);
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => router.back()}>
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">
-            Create New User
-          </h1>
-          <p className="text-muted-foreground">Add a new user to the system</p>
-        </div>
-      </div>
+    <>
+      <PageHeader
+        backHref="/admin/users"
+        backLabel="Users"
+        title="Add user"
+        description="Create a Ticketify account. The person signs in with this email and the temporary password you set."
+      />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Form */}
-        <div className="lg:col-span-2">
-          <Card className="p-6">
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {/* User Information */}
-              <div>
-                <h3 className="text-lg font-semibold mb-4">
-                  User Information
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="crm_user_id">CRM User ID *</Label>
-                    <Input
-                      id="crm_user_id"
-                      value={formData.crm_user_id}
-                      onChange={(e) =>
-                        handleInputChange("crm_user_id", e.target.value)
-                      }
-                      placeholder="743f1b25-6132-4f5d-9457-1b0fb1c763a3"
-                      className={errors.crm_user_id ? "border-destructive" : ""}
-                    />
-                    {errors.crm_user_id && (
-                      <p className="text-sm text-destructive">{errors.crm_user_id}</p>
-                    )}
-                  </div>
+      <form onSubmit={handleSubmit} noValidate className="grid gap-6 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>Profile</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-5 sm:grid-cols-2">
+              <Field id="name" label="Full name" error={errors.name}>
+                <Input
+                  id="name"
+                  value={form.name}
+                  onChange={(e) => update("name", e.target.value)}
+                  placeholder="Mohamed Saifullah"
+                  autoComplete="off"
+                  aria-invalid={Boolean(errors.name)}
+                />
+              </Field>
+              <Field id="email" label="Work email" error={errors.email}>
+                <Input
+                  id="email"
+                  type="email"
+                  value={form.email}
+                  onChange={(e) => update("email", e.target.value)}
+                  placeholder="name@medianet.mv"
+                  autoComplete="off"
+                  aria-invalid={Boolean(errors.email)}
+                />
+              </Field>
+              <Field id="phone" label="Phone number" error={errors.phone}>
+                <Input
+                  id="phone"
+                  type="tel"
+                  inputMode="tel"
+                  value={form.phone}
+                  onChange={(e) => update("phone", e.target.value)}
+                  placeholder="+960 7722229"
+                  aria-invalid={Boolean(errors.phone)}
+                />
+              </Field>
+              <Field
+                id="crm_user_id"
+                label="CRM user ID"
+                error={errors.crm_user_id}
+                hint="Must match the user's ID in CRM so tickets sync correctly."
+              >
+                <Input
+                  id="crm_user_id"
+                  value={form.crm_user_id}
+                  onChange={(e) => update("crm_user_id", e.target.value)}
+                  placeholder="743f1b25-6132-4f5d-9457-1b0fb1c763a3"
+                  className="font-mono text-xs"
+                  aria-invalid={Boolean(errors.crm_user_id)}
+                />
+              </Field>
+            </CardContent>
+          </Card>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="email">Email Address *</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      value={formData.email}
-                      onChange={(e) =>
-                        handleInputChange("email", e.target.value)
-                      }
-                      placeholder="its@medianet.mv"
-                      className={errors.email ? "border-destructive" : ""}
-                    />
-                    {errors.email && (
-                      <p className="text-sm text-destructive">{errors.email}</p>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="name">Full Name *</Label>
-                    <Input
-                      id="name"
-                      value={formData.name}
-                      onChange={(e) =>
-                        handleInputChange("name", e.target.value)
-                      }
-                      placeholder="Mohamed Saifullah"
-                      className={errors.name ? "border-destructive" : ""}
-                    />
-                    {errors.name && (
-                      <p className="text-sm text-destructive">{errors.name}</p>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="phone">Phone Number *</Label>
-                    <Input
-                      id="phone"
-                      value={formData.phone}
-                      onChange={(e) =>
-                        handleInputChange("phone", e.target.value)
-                      }
-                      placeholder="+9607722229"
-                      className={errors.phone ? "border-destructive" : ""}
-                    />
-                    {errors.phone && (
-                      <p className="text-sm text-destructive">{errors.phone}</p>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="password">Password *</Label>
-                    <Input
-                      id="password"
-                      type="password"
-                      value={formData.password}
-                      onChange={(e) =>
-                        handleInputChange("password", e.target.value)
-                      }
-                      placeholder="Test@123"
-                      className={errors.password ? "border-destructive" : ""}
-                    />
-                    {errors.password && (
-                      <p className="text-sm text-destructive">
-                        {errors.password}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="role_id">Role ID *</Label>
-                    <Select
-                      value={formData.role_id}
-                      onValueChange={(value) =>
-                        handleInputChange("role_id", value)
-                      }
-                    >
-                      <SelectTrigger
-                        className={errors.role_id ? "border-destructive" : ""}
-                      >
-                        <SelectValue placeholder="Select a role" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {roles.map((role) => (
-                          <SelectItem key={role.id} value={role.id}>
-                            {role.name} (ID: {role.id})
-                            {role.description && (
-                              <span className="text-muted-foreground ml-2">
-                                - {role.description}
-                              </span>
-                            )}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {errors.role_id && (
-                      <p className="text-sm text-destructive">
-                        {errors.role_id}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div className="flex gap-4">
-                <Button type="submit" disabled={loading}>
-                  {loading ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
-                      Creating...
-                    </>
-                  ) : (
-                    <>
-                      <Save className="mr-2 h-4 w-4" />
-                      Create User
-                    </>
-                  )}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => router.back()}
+          <Card>
+            <CardHeader>
+              <CardTitle>Access</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-5 sm:grid-cols-2">
+              <Field
+                id="role_id"
+                label="Role"
+                error={errors.role_id}
+                hint={selectedRole?.description}
+              >
+                <Select
+                  value={form.role_id}
+                  onValueChange={(value) => update("role_id", value)}
                 >
-                  Cancel
-                </Button>
-              </div>
-            </form>
-          </Card>
-        </div>
-
-        {/* Sidebar */}
-        <div className="space-y-6">
-          <Card className="p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <User className="h-5 w-5 text-primary" />
-              <h3 className="font-semibold">User Guidelines</h3>
-            </div>
-            <div className="space-y-3 text-sm text-muted-foreground">
-              <p>• Each user needs to have the same id as in the CRM system</p>
-              <p>• Password must be at least 6 characters long</p>
-              <p>• Email address must be unique in the system</p>
-              <p>• Phone number is optional but recommended</p>
-              <p>• Users can update their profile after first login</p>
-            </div>
-          </Card>
-
-          <Card className="p-6">
-            <h3 className="font-semibold mb-4">Available Roles</h3>
-            <div className="space-y-2">
-              {roles.map((role) => (
-                <div key={role.id} className="p-2 border rounded">
-                  <p className="font-medium text-sm">{role.name}</p>
-                  {role.description && (
-                    <p className="text-xs text-muted-foreground">
-                      {role.description}
-                    </p>
-                  )}
+                  <SelectTrigger
+                    id="role_id"
+                    aria-invalid={Boolean(errors.role_id)}
+                    className={cn(errors.role_id && "border-destructive")}
+                  >
+                    <SelectValue placeholder="Choose a role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {roles.map((role) => (
+                      <SelectItem key={role.id} value={role.id}>
+                        {role.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field
+                id="password"
+                label="Temporary password"
+                error={errors.password}
+                hint="At least 6 characters. Share it securely."
+              >
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    value={form.password}
+                    onChange={(e) => update("password", e.target.value)}
+                    autoComplete="new-password"
+                    className="pr-10"
+                    aria-invalid={Boolean(errors.password)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((value) => !value)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
                 </div>
-              ))}
-            </div>
+              </Field>
+            </CardContent>
           </Card>
+
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => router.push("/admin/users")}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <UserPlus className="h-4 w-4" />
+              )}
+              {saving ? "Creating…" : "Create user"}
+            </Button>
+          </div>
         </div>
-      </div>
+
+        <aside className="space-y-6">
+          <Card className="bg-accent/40">
+            <CardContent className="space-y-3 p-5">
+              <div className="flex items-center gap-2 text-sm font-semibold text-accent-foreground">
+                <Info className="h-4 w-4" />
+                Before you start
+              </div>
+              <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
+                <li>The CRM user ID must match exactly, or assigned tickets won&apos;t appear in the app.</li>
+                <li>Each email can only be used once.</li>
+                <li>Technicians sign in on the mobile app; other roles use this console.</li>
+              </ul>
+            </CardContent>
+          </Card>
+
+          {roles.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm">Roles</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1 p-3 pt-0">
+                {roles.map((role) => (
+                  <button
+                    key={role.id}
+                    type="button"
+                    onClick={() => update("role_id", role.id)}
+                    className={cn(
+                      "w-full rounded-lg px-3 py-2 text-left transition-colors hover:bg-muted/60",
+                      form.role_id === role.id && "bg-accent text-accent-foreground hover:bg-accent",
+                    )}
+                  >
+                    <p className="text-sm font-medium">{role.name}</p>
+                    {role.description && (
+                      <p className="text-xs text-muted-foreground">{role.description}</p>
+                    )}
+                  </button>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+        </aside>
+      </form>
+    </>
+  );
+}
+
+function Field({
+  id,
+  label,
+  error,
+  hint,
+  children,
+}: {
+  id: string;
+  label: string;
+  error?: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      {children}
+      {error ? (
+        <p className="text-xs font-medium text-destructive" role="alert">
+          {error}
+        </p>
+      ) : hint ? (
+        <p className="text-xs text-muted-foreground">{hint}</p>
+      ) : null}
     </div>
   );
 }

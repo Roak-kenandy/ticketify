@@ -36,6 +36,23 @@ function storedRoleName(): string {
   }
 }
 
+/** Same key as ACTIVE_PREFS_KEY in ./preferences (not imported to avoid a cycle). */
+const ACTIVE_PREFS_KEY = 'ticketify.prefs.active';
+
+function storedStartPage(): string {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+  try {
+    const prefs = JSON.parse(localStorage.getItem(ACTIVE_PREFS_KEY) || 'null') as {
+      startPage?: string;
+    } | null;
+    return prefs?.startPage ?? '';
+  } catch {
+    return '';
+  }
+}
+
 export class AdminAuth {
   static getToken(): string | null {
     return getAuthToken();
@@ -112,6 +129,15 @@ export class AdminAuth {
     return DISPATCH_ROLES.includes(storedRoleName());
   }
 
+  /** Landing page: the user's chosen start page when they can access it, else the role default. */
+  static homePath(): string {
+    const startPage = storedStartPage();
+    if (startPage === 'operations' && this.canViewDispatchBoard()) return '/dispatch';
+    if (startPage === 'finance' && this.canAccessFinanceReports()) return '/finance';
+    if (startPage === 'map' && this.canViewOpsMap()) return '/';
+    return this.isFinance() ? '/finance' : '/';
+  }
+
   static isUserAuthorized(): boolean {
     const token = this.getToken();
     if (!token) {
@@ -144,6 +170,7 @@ export class AdminAuth {
     removeAuthToken();
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
+    localStorage.removeItem(ACTIVE_PREFS_KEY);
   }
 
   /** Full logout — clears storage + cookies and redirects to login */

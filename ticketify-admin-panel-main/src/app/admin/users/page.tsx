@@ -1,30 +1,31 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import * as React from "react";
 import Link from "next/link";
-import { AdminAPI } from "@/lib/admin-api";
-import { User, Role, UserFilter } from "@/types/admin";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Avatar } from "@/components/ui/avatar";
+import { toast } from "sonner";
 import {
-  Search,
+  MoreHorizontal,
+  Pencil,
   Plus,
-  Edit,
+  RefreshCw,
+  Search,
   Trash2,
   UserCheck,
   UserX,
-  Mail,
-  Phone,
-  Filter,
-  MoreVertical,
+  X,
 } from "lucide-react";
+import { AdminAPI } from "@/lib/admin-api";
+import { initials } from "@/lib/access";
+import { Role, User, UserFilter } from "@/types/admin";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -34,360 +35,363 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { PageHeader } from "@/components/app/page-header";
+import { EmptyState } from "@/components/app/empty-state";
+import { TableSkeletonRows } from "@/components/app/filter-bar";
+
+const COLUMNS = 5;
 
 export default function UsersPage() {
-  const [users, setUsers] = useState<User[]>([]);
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
-  const [filters, setFilters] = useState<UserFilter>({
+  const [users, setUsers] = React.useState<User[]>([]);
+  const [roles, setRoles] = React.useState<Role[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(false);
+  const [searchInput, setSearchInput] = React.useState("");
+  const [filters, setFilters] = React.useState<UserFilter>({
     search: "",
     role: "",
     availability: undefined,
     page: 1,
-    limit: 20,
+    limit: 100,
   });
+  const [pendingDelete, setPendingDelete] = React.useState<User | null>(null);
 
-  useEffect(() => {
-    fetchRoles({ silent: true });
+  React.useEffect(() => {
+    AdminAPI.getAllRoles()
+      .then(setRoles)
+      .catch(() => setRoles([]));
   }, []);
 
-  useEffect(() => {
-    fetchUsers({ silent: true });
-  }, [filters]); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setFilters((prev) =>
+        prev.search === searchInput.trim()
+          ? prev
+          : { ...prev, search: searchInput.trim(), page: 1 },
+      );
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
-  const fetchUsers = async (options?: { silent?: boolean }) => {
+  const fetchUsers = React.useCallback(async () => {
+    setLoading(true);
+    setError(false);
     try {
-      setLoading(true);
       const response = await AdminAPI.getAllUsers(filters);
-      const userList = Array.isArray(response)
-        ? response
-        : response?.users ?? [];
-      setUsers(userList);
-    } catch (error) {
-      console.error("Failed to fetch users:", error);
-      if (!options?.silent) {
-        toast.error("Failed to load users");
-      }
+      setUsers(Array.isArray(response) ? response : response?.users ?? []);
+    } catch {
+      setError(true);
     } finally {
       setLoading(false);
     }
-  };
+  }, [filters]);
 
-  const fetchRoles = async (options?: { silent?: boolean }) => {
+  React.useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
+  async function toggleStatus(user: User) {
     try {
-      const rolesData = await AdminAPI.getAllRoles();
-
-      setRoles(rolesData);
-    } catch (error) {
-      console.error("Failed to fetch roles:", error);
-    }
-  };
-
-  const handleToggleUserStatus = async (userId: string) => {
-    try {
-      await AdminAPI.toggleUserStatus(userId);
-      toast.success("User status updated");
+      await AdminAPI.toggleUserStatus(user.id);
+      toast.success(
+        `${user.name} is now ${user.availability ? "inactive" : "active"}`,
+      );
       fetchUsers();
-    } catch (error) {
-      console.error("Failed to toggle user status:", error);
-      toast.error("Failed to update user status");
+    } catch {
+      toast.error("Couldn't update the user's status");
     }
-  };
+  }
 
-  const handleDeleteUser = async (userId: string) => {
-    if (!confirm("Are you sure you want to delete this user?")) return;
-
+  async function confirmDelete() {
+    if (!pendingDelete) {
+      return;
+    }
     try {
-      await AdminAPI.deleteUser(userId);
-      toast.success("User deleted successfully");
+      await AdminAPI.deleteUser(pendingDelete.id);
+      toast.success(`${pendingDelete.name} was deleted`);
       fetchUsers();
-    } catch (error) {
-      console.error("Failed to delete user:", error);
-      toast.error("Failed to delete user");
+    } catch {
+      toast.error("Couldn't delete the user");
+      throw new Error("delete failed");
     }
-  };
+  }
 
-  const handleSelectUser = (userId: string) => {
-    setSelectedUsers((prev) =>
-      prev.includes(userId)
-        ? prev.filter((id) => id !== userId)
-        : [...prev, userId]
-    );
-  };
+  const filtersActive =
+    Boolean(filters.search) || Boolean(filters.role) || filters.availability !== undefined;
 
-  const handleSelectAll = () => {
-    if (selectedUsers.length === users.length) {
-      setSelectedUsers([]);
-    } else {
-      setSelectedUsers(users.map((user) => user.id));
-    }
-  };
-
-  const handleSearch = (value: string) => {
-    setFilters((prev) => ({ ...prev, search: value, page: 1 }));
-  };
-
-  const handleRoleFilter = (value: string) => {
+  function clearFilters() {
+    setSearchInput("");
     setFilters((prev) => ({
       ...prev,
-      role: value === "all" ? "" : value,
+      search: "",
+      role: "",
+      availability: undefined,
       page: 1,
     }));
-  };
-
-  const handleAvailabilityFilter = (value: string) => {
-    setFilters((prev) => ({
-      ...prev,
-      availability:
-        value === "all" ? undefined : value === "active" ? true : false,
-      page: 1,
-    }));
-  };
-
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <div className="animate-pulse">
-          <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/4 mb-6"></div>
-          <div className="space-y-4">
-            {[...Array(5)].map((_, i) => (
-              <div
-                key={i}
-                className="h-20 bg-gray-200 dark:bg-gray-700 rounded-lg"
-              ></div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
   }
 
   return (
-    <div className="space-y-6 overflow-scroll max-h-[calc(100vh-10px)] pb-10">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">
-            User Management
-          </h1>
-          <p className="text-muted-foreground">
-            Manage user accounts and permissions
-          </p>
-        </div>
-        <Link href="/admin/users/create">
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            Create User
-          </Button>
-        </Link>
-      </div>
+    <>
+      <PageHeader
+        title="Users"
+        description="Everyone with a Ticketify account — technicians, supervisors, finance and management."
+        actions={
+          <>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={fetchUsers}
+              disabled={loading}
+              aria-label="Refresh"
+            >
+              <RefreshCw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+            </Button>
+            <Button asChild>
+              <Link href="/admin/users/create">
+                <Plus className="h-4 w-4" />
+                Add user
+              </Link>
+            </Button>
+          </>
+        }
+      />
 
-      {/* Filters */}
-      <Card className="p-6">
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      <Card className="overflow-hidden">
+        <div className="flex flex-col gap-3 border-b p-4 md:flex-row md:items-center">
+          <div className="relative flex-1 md:max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder="Search by name or email..."
+              placeholder="Search name, email or phone"
               className="pl-9"
-              value={filters.search}
-              onChange={(e) => handleSearch(e.target.value)}
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              aria-label="Search users"
             />
           </div>
-          <Select
-            value={filters.role || "all"}
-            onValueChange={handleRoleFilter}
-          >
-            <SelectTrigger className="w-48">
-              <SelectValue placeholder="Filter by role" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Roles</SelectItem>
-              {roles.map((role) => (
-                <SelectItem key={role.id} value={role.name.toLowerCase()}>
-                  {role.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={
-              filters.availability === undefined
-                ? "all"
-                : filters.availability
-                ? "active"
-                : "inactive"
-            }
-            onValueChange={handleAvailabilityFilter}
-          >
-            <SelectTrigger className="w-48">
-              <SelectValue placeholder="Filter by status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Status</SelectItem>
-              <SelectItem value="active">Active (Online)</SelectItem>
-              <SelectItem value="inactive">Inactive (Offline)</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </Card>
-
-      {/* Bulk Actions */}
-      {selectedUsers.length > 0 && (
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">
-              {selectedUsers.length} user{selectedUsers.length > 1 ? "s" : ""}{" "}
-              selected
-            </p>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm">
-                Bulk Edit
+          <div className="flex flex-wrap gap-2">
+            <Select
+              value={filters.role || "all"}
+              onValueChange={(value) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  role: value === "all" ? "" : value,
+                  page: 1,
+                }))
+              }
+            >
+              <SelectTrigger className="w-40" aria-label="Filter by role">
+                <SelectValue placeholder="Role" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All roles</SelectItem>
+                {roles.map((role) => (
+                  <SelectItem key={role.id} value={role.name.toLowerCase()}>
+                    {role.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={
+                filters.availability === undefined
+                  ? "all"
+                  : filters.availability
+                    ? "active"
+                    : "inactive"
+              }
+              onValueChange={(value) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  availability:
+                    value === "all" ? undefined : value === "active",
+                  page: 1,
+                }))
+              }
+            >
+              <SelectTrigger className="w-40" aria-label="Filter by status">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="inactive">Inactive</SelectItem>
+              </SelectContent>
+            </Select>
+            {filtersActive && (
+              <Button variant="ghost" onClick={clearFilters}>
+                <X className="h-4 w-4" />
+                Clear
               </Button>
-              <Button variant="destructive" size="sm">
-                Delete Selected
-              </Button>
-            </div>
+            )}
           </div>
-        </Card>
-      )}
-
-      {/* Users Table */}
-      <Card className="overflow-scroll">
-        <div className="overflow-x-auto ">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left p-4">
-                  <input
-                    type="checkbox"
-                    checked={
-                      selectedUsers.length === users.length && users.length > 0
-                    }
-                    onChange={handleSelectAll}
-                    className="rounded"
-                  />
-                </th>
-                <th className="text-left p-4">User</th>
-                <th className="text-left p-4">Role</th>
-                <th className="text-left p-4">Status</th>
-                <th className="text-left p-4">Contact</th>
-                <th className="text-left p-4">Created</th>
-                <th className="text-left p-4">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((user) => (
-                <tr
-                  key={user.id}
-                  className="border-b border-border hover:bg-muted/50"
-                >
-                  <td className="p-4">
-                    <input
-                      type="checkbox"
-                      checked={selectedUsers.includes(user.id)}
-                      onChange={() => handleSelectUser(user.id)}
-                      className="rounded"
-                    />
-                  </td>
-                  <td className="p-4">
-                    <div className="flex items-center gap-3">
-                      <Avatar className="h-10 w-10">
-                        <div className="bg-primary/10 text-primary font-medium h-full w-full flex items-center justify-center text-sm">
-                          {user.name.charAt(0).toUpperCase()}
-                        </div>
-                      </Avatar>
-                      <div>
-                        <Link
-                          href={`/admin/users/${user.id}`}
-                          className="font-medium hover:underline"
-                        >
-                          {user.name}
-                        </Link>
-                        <p className="text-sm text-muted-foreground">
-                          {user.email}
-                        </p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="p-4">
-                    <Badge variant="secondary">{user.role.name}</Badge>
-                  </td>
-                  <td className="p-4">
-                    <Badge
-                      variant={user.availability ? "default" : "destructive"}
-                    >
-                      {user.availability ? "Active" : "Inactive"}
-                    </Badge>
-                  </td>
-                  <td className="p-4">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2 text-sm">
-                        <Mail className="h-3 w-3" />
-                        {user.email}
-                      </div>
-                      {user.phone && (
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Phone className="h-3 w-3" />
-                          {user.phone}
-                        </div>
-                      )}
-                    </div>
-                  </td>
-                  <td className="p-4 text-sm text-muted-foreground">
-                    {new Date(user.created_at).toLocaleDateString()}
-                  </td>
-                  <td className="p-4">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="sm">
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem asChild>
-                          <Link href={`/admin/users/${user.id}`}>
-                            <Edit className="mr-2 h-4 w-4" />
-                            Edit
-                          </Link>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => handleToggleUserStatus(user.id)}
-                        >
-                          {user.availability ? (
-                            <>
-                              <UserX className="mr-2 h-4 w-4" /> Deactivate
-                            </>
-                          ) : (
-                            <>
-                              <UserCheck className="mr-2 h-4 w-4" /> Activate
-                            </>
-                          )}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => handleDeleteUser(user.id)}
-                          className="text-destructive"
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {users.length === 0 && (
-            <div className="text-center py-12">
-              <p className="text-muted-foreground">No users found</p>
-            </div>
+          {!loading && !error && (
+            <p className="text-sm text-muted-foreground md:ml-auto">
+              <span className="font-medium tabular-nums text-foreground">
+                {users.length}
+              </span>{" "}
+              {users.length === 1 ? "user" : "users"}
+            </p>
           )}
         </div>
+
+        {error ? (
+          <EmptyState
+            variant="error"
+            title="Couldn't load users"
+            description="Something went wrong while fetching accounts."
+            action={<Button onClick={fetchUsers}>Try again</Button>}
+          />
+        ) : !loading && users.length === 0 ? (
+          filtersActive ? (
+            <EmptyState
+              variant="no-results"
+              title="No users match these filters"
+              description="Try a different name, role or status."
+              action={
+                <Button variant="outline" onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState
+              title="No users yet"
+              description="Create the first account to start assigning tickets."
+              action={
+                <Button asChild>
+                  <Link href="/admin/users/create">
+                    <Plus className="h-4 w-4" />
+                    Add user
+                  </Link>
+                </Button>
+              }
+            />
+          )
+        ) : (
+          <Table containerClassName="max-h-[calc(100dvh-300px)]">
+            <TableHeader sticky>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>User</TableHead>
+                <TableHead>Role</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="hidden md:table-cell">Phone</TableHead>
+                <TableHead className="hidden lg:table-cell">Created</TableHead>
+                <TableHead className="w-12">
+                  <span className="sr-only">Actions</span>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading ? (
+                <TableSkeletonRows columns={COLUMNS + 1} />
+              ) : (
+                users.map((user) => (
+                  <TableRow key={user.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-3">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                          {initials(user.name)}
+                        </span>
+                        <div className="min-w-0">
+                          <Link
+                            href={`/admin/users/${user.id}`}
+                            className="block truncate font-medium hover:text-primary hover:underline"
+                          >
+                            {user.name}
+                          </Link>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {user.email}
+                          </p>
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="brand">{user.role?.name ?? "—"}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge dot variant={user.availability ? "success" : "outline"}>
+                        {user.availability ? "Active" : "Inactive"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="hidden tabular-nums text-muted-foreground md:table-cell">
+                      {user.phone || "—"}
+                    </TableCell>
+                    <TableCell className="hidden whitespace-nowrap text-muted-foreground lg:table-cell">
+                      {new Date(user.created_at).toLocaleDateString(undefined, {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                      })}
+                    </TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            aria-label={`Actions for ${user.name}`}
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-44">
+                          <DropdownMenuItem asChild>
+                            <Link href={`/admin/users/${user.id}`}>
+                              <Pencil className="mr-2 h-4 w-4" />
+                              View profile
+                            </Link>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => toggleStatus(user)}>
+                            {user.availability ? (
+                              <>
+                                <UserX className="mr-2 h-4 w-4" />
+                                Deactivate
+                              </>
+                            ) : (
+                              <>
+                                <UserCheck className="mr-2 h-4 w-4" />
+                                Activate
+                              </>
+                            )}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => setPendingDelete(user)}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        )}
       </Card>
-    </div>
+
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
+        title={`Delete ${pendingDelete?.name ?? "user"}?`}
+        description="This permanently removes the account and can't be undone. To block sign-in temporarily, deactivate the user instead."
+        confirmLabel="Delete user"
+        destructive
+        onConfirm={confirmDelete}
+      />
+    </>
   );
 }

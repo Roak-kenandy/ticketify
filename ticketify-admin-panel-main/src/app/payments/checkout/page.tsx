@@ -3,6 +3,7 @@
 import Image from 'next/image';
 import React, { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { AlertCircle, Loader2, Lock } from 'lucide-react';
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:3333/api/v1';
@@ -52,25 +53,33 @@ function CheckoutBody() {
       .finally(() => setLoading(false));
   }, [reference]);
 
+  const [redirecting, setRedirecting] = useState(false);
+
   function payNow() {
     if (!data?.can_pay || !terms) return;
+    setRedirecting(true);
     window.location.href = data.bml_checkout_url;
   }
 
   if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center px-4">
-        <p className="text-sm font-medium text-slate-600">Loading payment…</p>
-      </div>
-    );
+    return <PageLoading label="Loading payment…" />;
   }
 
   if (error || !data) {
     return (
-      <div className="flex min-h-screen items-center justify-center px-4">
-        <div className="w-full max-w-md rounded-2xl border border-red-200 bg-white p-6 shadow-sm">
-          <p className="text-center text-sm font-medium text-red-700">
+      <div className="flex min-h-dvh items-center justify-center px-4">
+        <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-md">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-600">
+            <AlertCircle className="h-6 w-6" />
+          </div>
+          <h1 className="text-lg font-semibold text-slate-900">
+            We couldn&apos;t open this payment
+          </h1>
+          <p className="mt-2 text-sm text-slate-600">
             {error ?? 'Payment not found'}
+          </p>
+          <p className="mt-1 text-sm text-slate-500">
+            Please check the link you received or contact Medianet.
           </p>
         </div>
       </div>
@@ -78,10 +87,11 @@ function CheckoutBody() {
   }
 
   return (
-    <div className="mx-auto min-h-screen w-full max-w-lg px-4 py-6 pb-10 sm:py-10">
+    <div className="mx-auto w-full max-w-lg px-4 py-6 pb-10 sm:py-10">
       <header className="mb-6 text-center">
-        <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-          Medianet
+        <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <Lock className="h-3 w-3" />
+          Medianet · Secure payment
         </p>
         <h1 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">
           Service charge payment
@@ -197,11 +207,30 @@ function CheckoutBody() {
 
           <button
             type="button"
-            disabled={!terms || !data.can_pay}
+            disabled={!terms || !data.can_pay || redirecting}
             onClick={payNow}
-            className="w-full rounded-xl bg-[#003366] px-4 py-3.5 text-base font-semibold text-white shadow-sm transition hover:bg-[#002244] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500">
-            Pay now
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#003366] px-4 py-3.5 text-base font-semibold text-white shadow-sm transition hover:bg-[#002244] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#003366] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500">
+            {redirecting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Opening Bank of Maldives…
+              </>
+            ) : (
+              <>
+                <Lock className="h-4 w-4" />
+                Pay {data.currency}{' '}
+                {data.amount_mvr.toLocaleString('en-US', {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
+              </>
+            )}
           </button>
+          {!terms && data.can_pay && (
+            <p className="-mt-2 text-center text-xs text-slate-500">
+              Tick the box above to continue.
+            </p>
+          )}
 
           {data.status !== 'PENDING' && (
             <p className="text-center text-xs text-amber-700">
@@ -238,14 +267,20 @@ function DetailRow({
   );
 }
 
+function PageLoading({ label }: { label: string }) {
+  return (
+    <div
+      className="flex min-h-dvh flex-col items-center justify-center gap-3 px-4"
+      role="status">
+      <Loader2 className="h-6 w-6 animate-spin text-[#003366]" />
+      <p className="text-sm font-medium text-slate-600">{label}</p>
+    </div>
+  );
+}
+
 export default function PaymentCheckoutPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex min-h-screen items-center justify-center">
-          <p className="text-sm text-slate-600">Loading…</p>
-        </div>
-      }>
+    <Suspense fallback={<PageLoading label="Loading…" />}>
       <CheckoutBody />
     </Suspense>
   );

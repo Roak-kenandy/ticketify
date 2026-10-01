@@ -1,12 +1,12 @@
 "use client";
 
-import React from "react";
+import * as React from "react";
 import moment from "moment";
-import { Download, Search } from "lucide-react";
+import { toast } from "sonner";
+import { Download, Loader2, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -15,7 +15,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { PageHeader } from "@/components/app/page-header";
+import { EmptyState } from "@/components/app/empty-state";
+import { FilterBar, FilterField, TableSkeletonRows } from "@/components/app/filter-bar";
+import { Pagination, paginate } from "@/components/app/pagination";
 import axiosInterceptorInstance from "@/lib/axios-interceptor";
+import { buildQuery, downloadFile } from "@/lib/download";
+import { formatMvr } from "@/lib/format";
 
 type FinanceRow = {
   invoice_no: string;
@@ -30,251 +36,254 @@ type FinanceRow = {
   issued_by: string;
 };
 
-export default function FinanceReportsPage() {
-  const [serviceRequestId, setServiceRequestId] = React.useState("");
-  const [from, setFrom] = React.useState("");
-  const [to, setTo] = React.useState("");
-  const [applied, setApplied] = React.useState({
-    serviceRequestId: "",
-    from: "",
-    to: "",
-  });
-  const [rows, setRows] = React.useState<FinanceRow[]>([]);
-  const [page, setPage] = React.useState(1);
-  const [loading, setLoading] = React.useState(true);
-  const [downloading, setDownloading] = React.useState(false);
-  const [error, setError] = React.useState("");
+type Filters = { serviceRequestId: string; from: string; to: string };
 
-  const load = React.useCallback((filters: typeof applied) => {
+const EMPTY: Filters = { serviceRequestId: "", from: "", to: "" };
+
+export default function FinanceReportsPage() {
+  const [draft, setDraft] = React.useState<Filters>(EMPTY);
+  const [applied, setApplied] = React.useState<Filters>(EMPTY);
+  const [rows, setRows] = React.useState<FinanceRow[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(false);
+  const [downloading, setDownloading] = React.useState(false);
+  const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState(25);
+
+  const query = React.useMemo(
+    () =>
+      buildQuery({
+        service_request_id: applied.serviceRequestId,
+        from: applied.from,
+        to: applied.to,
+      }),
+    [applied],
+  );
+
+  const load = React.useCallback(() => {
     setLoading(true);
-    setError("");
-    const params = new URLSearchParams();
-    if (filters.serviceRequestId) {
-      params.set("service_request_id", filters.serviceRequestId);
-    }
-    if (filters.from) {
-      params.set("from", filters.from);
-    }
-    if (filters.to) {
-      params.set("to", filters.to);
-    }
-    const query = params.toString();
+    setError(false);
     axiosInterceptorInstance
-      .get(`/reports/finance/payments${query ? `?${query}` : ""}`)
+      .get(`/reports/finance/payments${query}`)
       .then((response) => setRows(response.data ?? []))
-      .catch(() => setError("Could not load the finance report."))
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, []);
+  }, [query]);
 
   React.useEffect(() => {
-    load(applied);
-  }, [applied, load]);
+    load();
+  }, [load]);
 
-  function applyFilters(event?: React.FormEvent) {
-    event?.preventDefault();
+  const dateError =
+    draft.from && draft.to && draft.from > draft.to
+      ? "The from date must be before the to date."
+      : "";
+
+  function apply() {
+    if (dateError) {
+      toast.error(dateError);
+      return;
+    }
     setPage(1);
-    setApplied({ serviceRequestId: serviceRequestId.trim(), from, to });
+    setApplied({ ...draft, serviceRequestId: draft.serviceRequestId.trim() });
   }
 
-  const filtersActive = Boolean(
-    serviceRequestId || from || to || applied.serviceRequestId || applied.from || applied.to,
-  );
-
-  function clearFilters() {
-    setServiceRequestId("");
-    setFrom("");
-    setTo("");
+  function clear() {
+    setDraft(EMPTY);
+    setApplied(EMPTY);
     setPage(1);
-    setApplied({ serviceRequestId: "", from: "", to: "" });
   }
 
-  const pageSize = 10;
-  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-  const currentPage = Math.min(page, pageCount);
-  const pageRows = rows.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize,
-  );
-  const rangeStart = rows.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
-  const rangeEnd = Math.min(currentPage * pageSize, rows.length);
-
-  function downloadExcel() {
+  async function download() {
     setDownloading(true);
-    const params = new URLSearchParams();
-    if (applied.serviceRequestId) {
-      params.set("service_request_id", applied.serviceRequestId);
+    try {
+      await downloadFile(
+        `/reports/finance/payments/export${query}`,
+        "finance-payments.xls",
+        "application/vnd.ms-excel",
+      );
+      toast.success("Report downloaded");
+    } catch {
+      toast.error("Couldn't download the report.");
+    } finally {
+      setDownloading(false);
     }
-    if (applied.from) {
-      params.set("from", applied.from);
-    }
-    if (applied.to) {
-      params.set("to", applied.to);
-    }
-    const query = params.toString();
-    axiosInterceptorInstance
-      .get(`/reports/finance/payments/export${query ? `?${query}` : ""}`, {
-        responseType: "blob",
-      })
-      .then((response) => {
-        const blob = new Blob([response.data], {
-          type: "application/vnd.ms-excel",
-        });
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(blob);
-        link.download = "finance-payments.xls";
-        link.click();
-        URL.revokeObjectURL(link.href);
-      })
-      .catch(() => setError("Could not download the Excel report."))
-      .finally(() => setDownloading(false));
   }
+
+  const filtered = Boolean(applied.serviceRequestId || applied.from || applied.to);
+  const total = rows.reduce((sum, row) => {
+    const value = Number(String(row.product_amount ?? "").replace(/,/g, ""));
+    return Number.isFinite(value) ? sum + value : sum;
+  }, 0);
+  const { pageCount, current, pageRows, rangeStart, rangeEnd } = paginate(rows, page, pageSize);
 
   return (
-    <div className="flex h-screen flex-col p-6 overflow-hidden space-y-4">
-      <div>
-        <h2 className="text-2xl font-semibold">Reports</h2>
-      </div>
-      {error && <p className="text-sm text-destructive">{error}</p>}
+    <>
+      <PageHeader
+        title="Payments"
+        description="Every invoice line and BML payment request raised from a ticket."
+        actions={
+          <Button onClick={download} disabled={downloading || loading || rows.length === 0}>
+            {downloading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+            Export to Excel
+          </Button>
+        }
+      />
 
-      <form
-        className="flex flex-wrap items-end gap-3"
-        onSubmit={applyFilters}
-      >
-        <div className="space-y-2 min-w-[220px] flex-1">
-          <Label htmlFor="service-request-id">Service Request No</Label>
+      <FilterBar onSubmit={apply}>
+        <FilterField label="Service request" htmlFor="service-request-id" className="min-w-[220px] flex-1 sm:max-w-xs">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               id="service-request-id"
-              value={serviceRequestId}
-              onChange={(event) => setServiceRequestId(event.target.value)}
+              value={draft.serviceRequestId}
+              onChange={(e) => setDraft((prev) => ({ ...prev, serviceRequestId: e.target.value }))}
               placeholder="Ticket or SR number"
               className="pl-9"
             />
           </div>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="from-date">From date</Label>
+        </FilterField>
+        <FilterField label="From" htmlFor="from-date">
           <Input
             id="from-date"
             type="date"
-            value={from}
-            onChange={(event) => setFrom(event.target.value)}
+            value={draft.from}
+            max={draft.to || undefined}
+            onChange={(e) => setDraft((prev) => ({ ...prev, from: e.target.value }))}
+            className="w-40"
+            aria-invalid={Boolean(dateError)}
           />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="to-date">To date</Label>
+        </FilterField>
+        <FilterField label="To" htmlFor="to-date">
           <Input
             id="to-date"
             type="date"
-            value={to}
-            onChange={(event) => setTo(event.target.value)}
+            value={draft.to}
+            min={draft.from || undefined}
+            onChange={(e) => setDraft((prev) => ({ ...prev, to: e.target.value }))}
+            className="w-40"
+            aria-invalid={Boolean(dateError)}
           />
+        </FilterField>
+        <div className="flex gap-2">
+          <Button type="submit" disabled={loading}>
+            <Search className="h-4 w-4" />
+            Apply
+          </Button>
+          {filtered && (
+            <Button type="button" variant="ghost" onClick={clear}>
+              <X className="h-4 w-4" />
+              Clear
+            </Button>
+          )}
         </div>
-        <Button type="submit">Search</Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="bg-[#E7E7E9] text-foreground hover:bg-[#E7E7E9]/90"
-          disabled={!filtersActive}
-          onClick={clearFilters}
-        >
-          Clear filter
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={downloading}
-          onClick={downloadExcel}
-        >
-          <Download className="h-4 w-4 mr-2" />
-          {downloading ? "Downloading..." : "Download"}
-        </Button>
-      </form>
+      </FilterBar>
 
-      <Card>
-        <Table containerClassName="max-h-[calc(100vh-280px)]">
-          <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_0_hsl(var(--border))]">
-            <TableRow className="hover:bg-background">
-              <TableHead className="bg-background">Invoice no</TableHead>
-              <TableHead className="bg-background">BML reference id</TableHead>
-              <TableHead className="bg-background">Ticket no</TableHead>
-              <TableHead className="bg-background">Ticket category</TableHead>
-              <TableHead className="bg-background">Customer name</TableHead>
-              <TableHead className="bg-background">Customer phone no</TableHead>
-              <TableHead className="bg-background">Product name</TableHead>
-              <TableHead className="bg-background">Product amount</TableHead>
-              <TableHead className="bg-background">Issued date</TableHead>
-              <TableHead className="bg-background">Issued by</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading && (
-              <TableRow>
-                <TableCell colSpan={10} className="text-muted-foreground">
-                  Loading report...
-                </TableCell>
-              </TableRow>
-            )}
-            {!loading && rows.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={10} className="text-muted-foreground">
-                  No payment requests match this search.
-                </TableCell>
-              </TableRow>
-            )}
-            {!loading &&
-              pageRows.map((row, index) => (
-                <TableRow key={`${row.invoice_no}-${row.product_name}-${index}`}>
-                  <TableCell>{row.invoice_no || "—"}</TableCell>
-                  <TableCell>{row.bml_reference_id || "—"}</TableCell>
-                  <TableCell>{row.ticket_no || "—"}</TableCell>
-                  <TableCell>{row.ticket_category || "—"}</TableCell>
-                  <TableCell>{row.customer_name || "—"}</TableCell>
-                  <TableCell>{row.customer_phone || "—"}</TableCell>
-                  <TableCell>{row.product_name || "—"}</TableCell>
-                  <TableCell>{row.product_amount || "—"}</TableCell>
-                  <TableCell>
-                    {row.issued_date
-                      ? moment(row.issued_date).format("DD MMM YYYY")
-                      : "—"}
-                  </TableCell>
-                  <TableCell>{row.issued_by || "—"}</TableCell>
-                </TableRow>
-              ))}
-          </TableBody>
-        </Table>
-        <div className="flex items-center justify-between gap-3 border-t px-4 py-3">
-          <p className="text-sm text-muted-foreground">
-            {rows.length === 0
-              ? "0 records"
-              : `Showing ${rangeStart}–${rangeEnd} of ${rows.length}`}
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={currentPage <= 1}
-              onClick={() => setPage(currentPage - 1)}
-            >
-              Previous
-            </Button>
-            <span className="text-sm">
-              Page {currentPage} of {pageCount}
+      <Card className="overflow-hidden">
+        {!loading && !error && rows.length > 0 && (
+          <div className="flex items-center justify-between border-b px-4 py-3 text-sm">
+            <span className="text-muted-foreground">
+              <span className="font-medium tabular-nums text-foreground">{rows.length}</span>{" "}
+              {rows.length === 1 ? "line" : "lines"}
             </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={currentPage >= pageCount}
-              onClick={() => setPage(currentPage + 1)}
-            >
-              Next
-            </Button>
+            <span className="text-muted-foreground">
+              Total <span className="font-semibold tabular-nums text-foreground">{formatMvr(total)}</span>
+            </span>
           </div>
-        </div>
+        )}
+
+        {error ? (
+          <EmptyState
+            variant="error"
+            title="Couldn't load payments"
+            description="The finance service didn't respond."
+            action={<Button onClick={load}>Try again</Button>}
+          />
+        ) : !loading && rows.length === 0 ? (
+          filtered ? (
+            <EmptyState
+              variant="no-results"
+              title="No payments match this search"
+              description="Check the ticket number or widen the date range."
+              action={
+                <Button variant="outline" onClick={clear}>
+                  Clear filters
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState
+              title="No payment requests yet"
+              description="Payments appear once a technician bills a customer from a ticket."
+            />
+          )
+        ) : (
+          <>
+            <Table containerClassName="max-h-[calc(100dvh-380px)] min-h-[320px]">
+              <TableHeader sticky>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Invoice</TableHead>
+                  <TableHead>BML reference</TableHead>
+                  <TableHead>Ticket</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Phone</TableHead>
+                  <TableHead>Item</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead>Issued</TableHead>
+                  <TableHead>Issued by</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loading ? (
+                  <TableSkeletonRows columns={10} rows={8} />
+                ) : (
+                  pageRows.map((row, index) => (
+                    <TableRow key={`${row.invoice_no}-${row.product_name}-${index}`}>
+                      <TableCell className="whitespace-nowrap font-medium">{row.invoice_no || "—"}</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {row.bml_reference_id || "—"}
+                      </TableCell>
+                      <TableCell className="tabular-nums">{row.ticket_no || "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap">{row.ticket_category || "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap">{row.customer_name || "—"}</TableCell>
+                      <TableCell className="tabular-nums">{row.customer_phone || "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap">{row.product_name || "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">
+                        {formatMvr(row.product_amount)}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-muted-foreground">
+                        {row.issued_date ? moment(row.issued_date).format("DD MMM YYYY") : "—"}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-muted-foreground">
+                        {row.issued_by || "—"}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+            <Pagination
+              total={rows.length}
+              page={current}
+              pageCount={pageCount}
+              pageSize={pageSize}
+              rangeStart={rangeStart}
+              rangeEnd={rangeEnd}
+              noun="lines"
+              onPageChange={setPage}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setPage(1);
+              }}
+            />
+          </>
+        )}
       </Card>
-    </div>
+    </>
   );
 }

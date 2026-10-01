@@ -1,159 +1,225 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import * as React from "react";
+import Link from "next/link";
+import {
+  ArrowRight,
+  FileSpreadsheet,
+  MapPinned,
+  RefreshCw,
+  TrendingUp,
+  UserCheck,
+  UserPlus,
+  Users,
+} from "lucide-react";
 import { AdminAPI } from "@/lib/admin-api";
 import { UserStats } from "@/types/admin";
-import { Card } from "@/components/ui/card";
-import { Users, UserCheck, UserPlus, TrendingUp } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/app/page-header";
+import { StatCard } from "@/components/app/stat-card";
+import { EmptyState } from "@/components/app/empty-state";
+
+const QUICK_ACTIONS = [
+  {
+    href: "/admin/users/create",
+    icon: UserPlus,
+    title: "Add a user",
+    text: "Create a technician, supervisor or finance account.",
+  },
+  {
+    href: "/admin/users",
+    icon: Users,
+    title: "Manage users",
+    text: "Search accounts, change status or reset passwords.",
+  },
+  {
+    href: "/admin/reports",
+    icon: FileSpreadsheet,
+    title: "Master report",
+    text: "Filter tickets by area and type, export to Excel.",
+  },
+  {
+    href: "/",
+    icon: MapPinned,
+    title: "Live map",
+    text: "Track technicians and assignment load in real time.",
+  },
+];
 
 export default function AdminDashboard() {
-  const [stats, setStats] = useState<UserStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = React.useState<UserStats | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(false);
 
-  useEffect(() => {
-    fetchStats();
-  }, []);
-
-  const fetchStats = async () => {
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setError(false);
     try {
-      const userStats = await AdminAPI.getUserStats();
-      setStats(userStats);
-    } catch (error) {
-      console.error("Failed to fetch admin stats:", error);
+      setStats(await AdminAPI.getUserStats());
+    } catch {
+      setError(true);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <div className="animate-pulse">
-          <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/4 mb-6"></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {[...Array(4)].map((_, i) => (
-              <div
-                key={i}
-                className="h-32 bg-gray-200 dark:bg-gray-700 rounded-lg"
-              ></div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
+  React.useEffect(() => {
+    load();
+  }, [load]);
+
+  const growth =
+    stats && stats.totalUsers > 0
+      ? Math.round((stats.newUsersThisMonth / stats.totalUsers) * 100)
+      : 0;
+  const roles = Object.entries(stats?.usersByRole ?? {}).sort(
+    (a, b) => b[1] - a[1],
+  );
+  const maxRole = Math.max(1, ...roles.map(([, count]) => count));
 
   return (
-    <div className="space-y-6 bg-w">
-      <div>
-        <h1 className="text-3xl font-bold text-foreground">Admin Dashboard</h1>
-        <p className="text-muted-foreground">
-          Manage users, roles, and system settings
-        </p>
-      </div>
+    <>
+      <PageHeader
+        title="Team overview"
+        description="Accounts, roles and activity across the Ticketify workforce."
+        actions={
+          <>
+            <Button variant="outline" onClick={load} disabled={loading}>
+              <RefreshCw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+              Refresh
+            </Button>
+            <Button asChild>
+              <Link href="/admin/users/create">
+                <UserPlus className="h-4 w-4" />
+                Add user
+              </Link>
+            </Button>
+          </>
+        }
+      />
 
-      {stats && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <Card className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  Total Users
-                </p>
-                <p className="text-2xl font-bold">{stats.totalUsers}</p>
-              </div>
-              <Users className="h-8 w-8 text-blue-500" />
-            </div>
-          </Card>
+      {error ? (
+        <Card>
+          <EmptyState
+            variant="error"
+            title="Couldn't load team statistics"
+            description="The server didn't respond. Check your connection and try again."
+            action={<Button onClick={load}>Try again</Button>}
+          />
+        </Card>
+      ) : (
+        <div className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              label="Total users"
+              value={stats?.totalUsers ?? 0}
+              icon={Users}
+              tone="brand"
+              loading={loading}
+            />
+            <StatCard
+              label="Active now"
+              value={stats?.activeUsers ?? 0}
+              icon={UserCheck}
+              tone="success"
+              loading={loading}
+              hint={
+                stats && stats.totalUsers > 0
+                  ? `${Math.round((stats.activeUsers / stats.totalUsers) * 100)}% of all accounts`
+                  : undefined
+              }
+            />
+            <StatCard
+              label="New this month"
+              value={stats?.newUsersThisMonth ?? 0}
+              icon={UserPlus}
+              tone="info"
+              loading={loading}
+            />
+            <StatCard
+              label="Monthly growth"
+              value={`${growth}%`}
+              icon={TrendingUp}
+              tone="warning"
+              loading={loading}
+            />
+          </div>
 
-          <Card className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  Active Users
-                </p>
-                <p className="text-2xl font-bold">{stats.activeUsers}</p>
-              </div>
-              <UserCheck className="h-8 w-8 text-green-500" />
-            </div>
-          </Card>
+          <div className="grid gap-6 lg:grid-cols-5">
+            <Card className="lg:col-span-3">
+              <CardHeader className="pb-4">
+                <CardTitle>Users by role</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <div className="space-y-4">
+                    {Array.from({ length: 4 }).map((_, index) => (
+                      <Skeleton key={index} className="h-8 w-full" />
+                    ))}
+                  </div>
+                ) : roles.length === 0 ? (
+                  <EmptyState
+                    compact
+                    title="No role data yet"
+                    description="Role totals appear once users are created."
+                  />
+                ) : (
+                  <ul className="space-y-4">
+                    {roles.map(([role, count]) => (
+                      <li key={role} className="space-y-1.5">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="font-medium capitalize">{role}</span>
+                          <span className="tabular-nums text-muted-foreground">
+                            {count} {count === 1 ? "user" : "users"}
+                          </span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-muted">
+                          <div
+                            className="h-full rounded-full bg-primary transition-[width] duration-500"
+                            style={{ width: `${(count / maxRole) * 100}%` }}
+                          />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
 
-          <Card className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  New This Month
-                </p>
-                <p className="text-2xl font-bold">{stats.newUsersThisMonth}</p>
-              </div>
-              <UserPlus className="h-8 w-8 text-purple-500" />
-            </div>
-          </Card>
-
-          <Card className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  Growth
-                </p>
-                <p className="text-2xl font-bold">
-                  {stats.totalUsers > 0
-                    ? Math.round(
-                        (stats.newUsersThisMonth / stats.totalUsers) * 100
-                      )
-                    : 0}
-                  %
-                </p>
-              </div>
-              <TrendingUp className="h-8 w-8 text-orange-500" />
-            </div>
-          </Card>
+            <Card className="lg:col-span-2">
+              <CardHeader className="pb-2">
+                <CardTitle>Quick actions</CardTitle>
+              </CardHeader>
+              <CardContent className="p-2 pt-0">
+                <ul>
+                  {QUICK_ACTIONS.map((action) => (
+                    <li key={action.href}>
+                      <Link
+                        href={action.href}
+                        className="group flex items-center gap-3 rounded-lg p-3 transition-colors hover:bg-muted/60"
+                      >
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+                          <action.icon className="h-4 w-4" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-medium">
+                            {action.title}
+                          </span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {action.text}
+                          </span>
+                        </span>
+                        <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="p-6">
-          <h3 className="text-lg font-semibold mb-4">Users by Role</h3>
-          {stats?.usersByRole ? (
-            <div className="space-y-3">
-              {Object.entries(stats.usersByRole).map(([role, count]) => (
-                <div key={role} className="flex items-center justify-between">
-                  <span className="capitalize text-sm">{role}</span>
-                  <span className="font-medium">{count} users</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-muted-foreground text-sm">
-              No role data available
-            </p>
-          )}
-        </Card>
-
-        <Card className="p-6">
-          <h3 className="text-lg font-semibold mb-4">Quick Actions</h3>
-          <div className="space-y-2">
-            <a
-              href="/admin/users"
-              className="block p-3 rounded-lg hover:bg-muted transition-colors"
-            >
-              <p className="font-medium">Manage Users</p>
-              <p className="text-sm text-muted-foreground">
-                View, edit, and create user accounts
-              </p>
-            </a>
-            <a
-              href="/admin/users/create"
-              className="block p-3 rounded-lg hover:bg-muted transition-colors"
-            >
-              <p className="font-medium">Create New User</p>
-              <p className="text-sm text-muted-foreground">
-                Add a new user to the system
-              </p>
-            </a>
-          </div>
-        </Card>
-      </div>
-    </div>
+    </>
   );
 }
