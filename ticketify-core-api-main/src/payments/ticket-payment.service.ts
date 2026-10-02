@@ -1221,10 +1221,12 @@ export class TicketPaymentService {
   ) {
     const nodeEnv = this.config.get<string>('NODE_ENV') ?? 'development';
     const headerVerified = this.bml.verifyWebhookHeaders(headers);
-    const legacyVerified =
-      nodeEnv === 'production'
-        ? false
-        : this.bml.verifyLegacyWebhookPayload(payload);
+    const legacyAllowed =
+      nodeEnv !== 'production' &&
+      this.config.get<string>('BML_ALLOW_LEGACY_WEBHOOK_SIGNATURE') !== 'false';
+    const legacyVerified = legacyAllowed
+      ? this.bml.verifyLegacyWebhookPayload(payload)
+      : false;
 
     if (!headerVerified && !legacyVerified) {
       throw new ForbiddenException('Invalid BML webhook signature');

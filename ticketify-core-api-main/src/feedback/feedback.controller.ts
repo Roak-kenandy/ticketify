@@ -27,6 +27,7 @@ export class FeedbackController {
       ticketId,
       createFeedbackDto.rating,
       createFeedbackDto.review,
+      createFeedbackDto.token,
     );
   }
 

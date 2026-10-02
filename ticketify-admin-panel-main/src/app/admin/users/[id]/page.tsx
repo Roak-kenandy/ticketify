@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/app/page-header";
 import { EmptyState } from "@/components/app/empty-state";
+import { passwordPolicyError } from "@/lib/password-policy";
 
 function formatDateTime(value?: string) {
   if (!value) return "—";
@@ -78,7 +79,7 @@ export default function UserProfilePage() {
     setStatusSaving(true);
     try {
       await AdminAPI.toggleUserStatus(user.id);
-      toast.success(`${user.name} is now ${user.availability ? "inactive" : "active"}`);
+      toast.success(`${user.name} is now ${user.is_active ? "inactive" : "active"}`);
       await load();
     } catch {
       toast.error("Couldn't update the status");
@@ -145,8 +146,8 @@ export default function UserProfilePage() {
             <h2 className="truncate text-xl font-semibold">{user.name}</h2>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="brand">{user.role?.name}</Badge>
-              <Badge dot variant={user.availability ? "success" : "outline"}>
-                {user.availability ? "Active" : "Inactive"}
+              <Badge dot variant={user.is_active ? "success" : "outline"}>
+                {user.is_active ? "Active" : "Inactive"}
               </Badge>
               <span className="truncate text-sm text-muted-foreground">{user.email}</span>
             </div>
@@ -157,18 +158,18 @@ export default function UserProfilePage() {
               Reset password
             </Button>
             <Button
-              variant={user.availability ? "outline" : "default"}
+              variant={user.is_active ? "outline" : "default"}
               onClick={toggleStatus}
               disabled={statusSaving}
             >
               {statusSaving ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
-              ) : user.availability ? (
+              ) : user.is_active ? (
                 <UserX className="h-4 w-4" />
               ) : (
                 <UserCheck className="h-4 w-4" />
               )}
-              {user.availability ? "Deactivate" : "Activate"}
+              {user.is_active ? "Deactivate" : "Activate"}
             </Button>
           </div>
         </CardContent>
@@ -274,8 +275,9 @@ function ResetPasswordDialog({
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (password.length < 6) {
-      setError("Use at least 6 characters.");
+    const policyError = passwordPolicyError(password);
+    if (policyError) {
+      setError(policyError);
       return;
     }
     setSaving(true);

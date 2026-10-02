@@ -4,7 +4,6 @@ import { HttpErrorByCode } from '@nestjs/common/utils/http-error-by-code.util';
 @Injectable()
 export class ParseDatePipe implements PipeTransform<string, Date> {
   transform(value: string): Date {
-    console.log('value', value);
     const date = new Date(value);
 
     if (isNaN(date.getTime())) {

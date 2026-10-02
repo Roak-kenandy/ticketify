@@ -33,6 +33,7 @@ function ReviewForm() {
   const params = useParams();
   const ticketId = params?.ticketId as string;
   const userId = searchParams.get("userId");
+  const linkToken = searchParams.get("t") ?? undefined;
 
   const [rating, setRating] = useState(0);
   const [hoveredRating, setHoveredRating] = useState(0);
@@ -62,7 +63,7 @@ function ReviewForm() {
 
     setSubmitting(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/feedbacks/${ticketId}`, {
+      const res = await fetch(`${API_BASE_URL}/feedbacks/${encodeURIComponent(ticketId)}`, {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -70,6 +71,7 @@ function ReviewForm() {
         },
         body: JSON.stringify({
           userId,
+          token: linkToken,
           rating,
           review: review.trim(),
         }),

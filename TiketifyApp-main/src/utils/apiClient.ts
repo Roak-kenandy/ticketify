@@ -143,9 +143,16 @@ export async function apiFetch(
   return silent ? run() : trackApiLoading(run());
 }
 
+export const SERVER_ERROR_MESSAGE = 'Something went wrong. Please try again.';
+
 export function formatApiError(data: any, fallback = 'Request failed'): string {
+  const status = Number(data?.statusCode);
+  if (status >= 500) {
+    return SERVER_ERROR_MESSAGE;
+  }
   const message = data?.message ?? data?.error ?? fallback;
-  return Array.isArray(message) ? String(message[0]) : String(message);
+  const text = Array.isArray(message) ? String(message[0]) : String(message);
+  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 }
 
 /** JSON request that throws ApiError on any non-2xx response. */

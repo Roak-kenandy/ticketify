@@ -16,6 +16,10 @@ import type { Response } from 'express';
 import { JwtGuard } from 'src/auth/guard';
 import { RolesGuard } from 'src/auth/guard/roles.guard';
 import { Roles } from 'src/infrastructure/decorators/roles.decorator';
+import {
+  TicketAccessGuard,
+  TicketScope,
+} from 'src/infrastructure/security/ticket-access.guard';
 import { CreateTicketPaymentDto } from './dto/create-ticket-payment.dto';
 import { TicketPaymentService } from './ticket-payment.service';
 
@@ -32,14 +36,16 @@ function assertReference(reference: string): string {
 export class PaymentsController {
   constructor(private payments: TicketPaymentService) {}
 
-  @UseGuards(JwtGuard, RolesGuard)
+  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @TicketScope('crmTicketId')
   @Roles(['Technician', 'Admin', 'Supervisor', 'Administrator'])
   @Get('tickets/:crmTicketId')
   listForTicket(@Param('crmTicketId') crmTicketId: string) {
     return this.payments.listForTicket(crmTicketId);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
+  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @TicketScope('crmTicketId')
   @Roles(['Technician', 'Admin', 'Supervisor', 'Administrator'])
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('tickets/:crmTicketId')
@@ -111,14 +117,16 @@ export class PaymentsController {
     return res.type('text/html').send(result.html);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
+  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @TicketScope('reference', 'payment')
   @Roles(['Technician', 'Admin', 'Supervisor', 'Administrator'])
   @Get(':reference')
   async getPayment(@Param('reference') reference: string) {
     return this.payments.getByReference(reference);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
+  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @TicketScope('reference', 'payment')
   @Roles(['Technician', 'Admin', 'Supervisor', 'Administrator'])
   @Throttle({ default: { limit: 30, ttl: 60000 } })
   @Post(':reference/reconcile')

@@ -59,7 +59,7 @@ export default function UsersPage() {
   const [filters, setFilters] = React.useState<UserFilter>({
     search: "",
     role: "",
-    availability: undefined,
+    isActive: undefined,
     page: 1,
     limit: 100,
   });
@@ -103,7 +103,7 @@ export default function UsersPage() {
     try {
       await AdminAPI.toggleUserStatus(user.id);
       toast.success(
-        `${user.name} is now ${user.availability ? "inactive" : "active"}`,
+        `${user.name} is now ${user.is_active ? "inactive" : "active"}`,
       );
       fetchUsers();
     } catch {
@@ -126,7 +126,7 @@ export default function UsersPage() {
   }
 
   const filtersActive =
-    Boolean(filters.search) || Boolean(filters.role) || filters.availability !== undefined;
+    Boolean(filters.search) || Boolean(filters.role) || filters.isActive !== undefined;
 
   function clearFilters() {
     setSearchInput("");
@@ -134,7 +134,7 @@ export default function UsersPage() {
       ...prev,
       search: "",
       role: "",
-      availability: undefined,
+      isActive: undefined,
       page: 1,
     }));
   }
@@ -202,16 +202,16 @@ export default function UsersPage() {
             </Select>
             <Select
               value={
-                filters.availability === undefined
+                filters.isActive === undefined
                   ? "all"
-                  : filters.availability
+                  : filters.isActive
                     ? "active"
                     : "inactive"
               }
               onValueChange={(value) =>
                 setFilters((prev) => ({
                   ...prev,
-                  availability:
+                  isActive:
                     value === "all" ? undefined : value === "active",
                   page: 1,
                 }))
@@ -318,8 +318,8 @@ export default function UsersPage() {
                       <Badge variant="brand">{user.role?.name ?? "—"}</Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge dot variant={user.availability ? "success" : "outline"}>
-                        {user.availability ? "Active" : "Inactive"}
+                      <Badge dot variant={user.is_active ? "success" : "outline"}>
+                        {user.is_active ? "Active" : "Inactive"}
                       </Badge>
                     </TableCell>
                     <TableCell className="hidden tabular-nums text-muted-foreground md:table-cell">
@@ -352,7 +352,7 @@ export default function UsersPage() {
                             </Link>
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => toggleStatus(user)}>
-                            {user.availability ? (
+                            {user.is_active ? (
                               <>
                                 <UserX className="mr-2 h-4 w-4" />
                                 Deactivate

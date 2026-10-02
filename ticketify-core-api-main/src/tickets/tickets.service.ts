@@ -27,6 +27,7 @@ import { IntegrationAuditService } from 'src/infrastructure/audit/integration-au
 import { WorkflowConfigService } from 'src/config/workflow-config.service';
 import { TicketBillingService } from 'src/finance/ticket-billing.service';
 import { LmHandoffDto } from './dto/lm-handoff.dto';
+import { signReviewLink } from 'src/infrastructure/security/review-link';
 
 type LmContact = {
   id: string;
@@ -435,7 +436,6 @@ export class TicketsService {
   }
 
   async findAllTeamTickets(user: string) {
-    console.log(user);
     let crm_user = await this.user.crmGetUser(user);
 
     this.logger.log('Ticket Service', 'CRM User found');
@@ -487,7 +487,6 @@ export class TicketsService {
   }
 
   async crmUploadFile(file: any) {
-    console.log(file);
     // change file to form
     let form = new FormData();
     form.append('file', file);
@@ -504,12 +503,10 @@ export class TicketsService {
         },
       },
     );
-    await console.log(crm_file);
 
     let response = await crm_file.json();
 
     if (!response.ok) {
-      console.log('File Not uploaded' + JSON.stringify(response));
       this.logger.error('Ticket Service', 'CRM file upload failed');
       return new ForbiddenException('CRM file upload failed');
     } else {
@@ -547,7 +544,6 @@ export class TicketsService {
     file_id: string,
     description: string,
   ) {
-    console.log('Adding attachment to ticket' + file_id);
 
     let crm_add_attachment = await fetch(
       this.config.get('CRM_BACKOFFICE_API_URL') +
@@ -572,7 +568,6 @@ export class TicketsService {
     let response = await crm_add_attachment.json();
 
     if (!crm_add_attachment.ok) {
-      console.log('Attachment not added' + JSON.stringify(response));
       this.logger.error('Ticket Service', 'Attachment not added');
       return new ForbiddenException('Attachment not added');
     }
@@ -605,7 +600,6 @@ export class TicketsService {
     let response = await crm_add_note.json();
 
     if (!crm_add_note.ok) {
-      console.log('Note not added' + JSON.stringify(response));
       this.logger.error('Ticket Service', 'Note not added');
       return new ForbiddenException('Note not added');
     }
@@ -846,7 +840,6 @@ Medianet Support Team
   }
 
   async fetchTeamServiceRequests(team_id: string) {
-    console.log('Fetching team tickets' + team_id);
     let crm_service_requests = await fetch(
       this.config.get('CRM_BACKOFFICE_API_URL') +
         '/service_requests?assigned_to_team_id=' +
@@ -1316,7 +1309,12 @@ Medianet Support Team
     ticketId: string,
     crmUserId: string,
   ): string {
-    return `${this.getCustomerReviewBaseUrl()}/customer-review/${ticketId}?userId=${crmUserId}`;
+    const query = new URLSearchParams({ userId: crmUserId });
+    const secret = this.config.get<string>('FEEDBACK_LINK_SECRET')?.trim();
+    if (secret) {
+      query.set('t', signReviewLink(ticketId, crmUserId, secret));
+    }
+    return `${this.getCustomerReviewBaseUrl()}/customer-review/${encodeURIComponent(ticketId)}?${query}`;
   }
 
   private resolveNextStageId(ticket: any, stageIdOverride?: string): string {
@@ -1433,7 +1431,6 @@ Medianet Support Team
       );
     }
     let user = await this.user.crmGetUser(ticket.assigned_to?.user?.id);
-    console.log('Closing ticket' + ticket_id + 'to stage ' + resolvedStageId);
     let crm_start_service_request = await fetch(
       this.config.get('CRM_BACKOFFICE_API_URL') +
         '/service_requests/' +
@@ -1459,7 +1456,6 @@ Medianet Support Team
     let response = await crm_start_service_request.json();
 
     if (!crm_start_service_request.ok) {
-      console.log('Service request not Closed' + JSON.stringify(response));
       return new ForbiddenException(
         'Service request not Closed',
         crm_start_service_request.statusText,
@@ -1496,12 +1492,9 @@ Medianet Support Team
     smsNotification: boolean,
   ) {
     await this.assertNoPendingLastMile(ticket_id);
-    console.log('smsNotification', smsNotification ? 'Enabled' : 'Disabled');
     let ticket = await this.crmFindServiceRequest(ticket_id);
 
     let user = await this.user.crmGetUser(ticket.assigned_to?.user?.id);
-    console.log('Progressing ticket' + ticket_id);
-    console.log('Progressing ticket' + stage_id);
     let crm_start_service_request = await fetch(
       this.config.get('CRM_BACKOFFICE_API_URL') +
         '/service_requests/' +
@@ -1526,7 +1519,6 @@ Medianet Support Team
     let response = await crm_start_service_request.json();
 
     if (!crm_start_service_request.ok) {
-      console.log('Service request not progressed' + JSON.stringify(response));
       return new ForbiddenException(
         'Service request not progressed',
         crm_start_service_request.statusText,
@@ -1562,7 +1554,6 @@ Medianet Support Team
         return this.crmFindServiceRequest(ticket_id);
       }
     } else {
-      console.log('Service request not started' + JSON.stringify(response));
       return new ForbiddenException(
         'Service request not started',
         crm_start_service_request.statusText,
@@ -1694,7 +1685,6 @@ Medianet Support Team
 
     let response = await crm_assign_service_request_to_user.json();
 
-    console.log('🔁 CRM API response:', response);
 
     if (!crm_assign_service_request_to_user.ok) {
       this.logger.error('Ticket Service', 'Ticket Service User not Assigned');

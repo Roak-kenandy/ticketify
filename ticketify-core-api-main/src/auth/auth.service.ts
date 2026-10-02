@@ -1,7 +1,8 @@
 import {
+  BadRequestException,
   ForbiddenException,
   HttpException,
-  Inject,
+  HttpStatus,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,154 +10,139 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { LoggerService } from 'src/infrastructure/logger/logger.service';
-import { SignUpDto } from './dto';
+import { ChangePasswordDto, ResetPasswordDto, SignUpDto } from './dto';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import * as argon from 'argon2';
 import { ActivitiesService } from 'src/activities/activities.service';
+import { CrmApiClient } from 'src/infrastructure/crm/crm-api.client';
+
+const MAX_FAILED_LOGINS = 5;
+const LOCKOUT_MS = 15 * 60 * 1000;
 
 @Injectable()
 export class AuthService {
+  /** email -> recent failures; per-process, complements the per-IP throttle. */
+  private readonly failedLogins = new Map<
+    string,
+    { count: number; lockedUntil: number; last: number }
+  >();
+  private dummyHash: Promise<string> | null = null;
+
   constructor(
     private prisma: PrismaService,
     private logger: LoggerService,
     private jwt: JwtService,
     private config: ConfigService,
     private activity: ActivitiesService,
+    private crmApi: CrmApiClient,
   ) {}
 
   async signUp(dto: SignUpDto) {
-    try {
-      const skipCrmValidation =
-        this.config.get('SKIP_CRM_VALIDATION') === 'true';
+    const role = await this.prisma.role.findUnique({
+      where: { id: dto.role_id },
+      select: { id: true, deleted_at: true },
+    });
+    if (!role || role.deleted_at) {
+      throw new BadRequestException('Unknown role');
+    }
 
-      if (!skipCrmValidation) {
-        const crm_user = await fetch(
-          this.config.get('CRM_BACKOFFICE_API_URL') +
-            '/users/' +
-            dto.crm_user_id,
-          {
-            headers: {
-              content_type: 'application/json',
-              api_key: this.config.get('CRM_API_KEY'),
-            },
-          },
-        );
-
-        if (!crm_user.ok) {
-          this.logger.error('AuthService', 'CRM User not found');
-          throw new NotFoundException('CRM User not found');
-        }
-
-        this.logger.log('AuthService', 'CRM User found');
-      } else {
-        this.logger.log(
-          'AuthService',
-          'Skipping CRM validation (local development)',
-        );
+    const skipCrmValidation =
+      this.config.get('SKIP_CRM_VALIDATION') === 'true' &&
+      this.config.get('NODE_ENV') !== 'production';
+    if (!skipCrmValidation) {
+      const crmUser = await this.crmApi.request(
+        'GET',
+        `/users/${encodeURIComponent(dto.crm_user_id)}`,
+      );
+      if (!crmUser.ok) {
+        throw new NotFoundException('CRM user not found');
       }
+    }
 
+    try {
       const user = await this.prisma.user.create({
         data: {
           crm_user_id: dto.crm_user_id,
-          email: dto.email,
-          name: dto.name,
-          phone: dto.phone,
+          email: dto.email.trim().toLowerCase(),
+          name: dto.name.trim(),
+          phone: dto.phone.trim(),
           password: await argon.hash(dto.password),
-          role_id: dto.role_id,
+          role_id: role.id,
         },
       });
-
-      if (!user) {
-        this.logger.error('AuthService', 'User not created' + user);
-        throw new HttpException('User not created', 500);
-      }
-
       delete user.password;
-
-      this.logger.log('AuthService', 'User created' + user);
-
-      return {
-        message: 'User created',
-        user,
-      };
+      delete user.token_version;
+      this.logger.log('AuthService', `User created ${user.id}`);
+      return { message: 'User created', user };
     } catch (e) {
-      if (e instanceof PrismaClientKnownRequestError) {
-        if (e.code === 'P2002') {
-          this.logger.error(
-            'AuthService',
-            e.meta.target[0] + ' already exists',
-          );
-          throw new ForbiddenException(e.meta.target[0] + ' already exists');
-        }
+      if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new ForbiddenException(
+          'A user with these details already exists',
+        );
       }
       throw e;
     }
   }
 
-  async resetPassword(dto: { user_id: string; new_password: string }) {
-    const user = await this.prisma.user.findFirst({
-      where: {
-        id: dto.user_id,
-      },
+  async resetPassword(dto: ResetPasswordDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: dto.user_id },
     });
-
     if (!user) {
-      throw new ForbiddenException('User not found');
+      throw new NotFoundException('User not found');
     }
-
-    // change the password
-    const updated = await this.prisma.user.update({
-      where: {
-        id: user.id,
-      },
+    await this.prisma.user.update({
+      where: { id: user.id },
       data: {
         password: await argon.hash(dto.new_password),
+        token_version: { increment: 1 },
       },
     });
-
-    if (!updated) {
-      throw new ForbiddenException('Password not updated');
-    }
-
+    this.failedLogins.delete(user.email.toLowerCase());
     await this.activity.createUserLog('Password reset', user);
-
-    return {
-      message: 'Password reset',
-    };
+    return { message: 'Password reset' };
   }
 
   async login(dto: { email: string; password: string }) {
-    // TODO: encrypt password before sending to the database
+    const email = String(dto.email ?? '')
+      .trim()
+      .toLowerCase();
+    this.assertNotLocked(email);
+
     const user = await this.prisma.user.findFirst({
-      where: {
-        email: { equals: String(dto.email ?? '').trim(), mode: 'insensitive' },
-      },
-      include: {
-        role: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-      },
+      where: { email: { equals: email, mode: 'insensitive' } },
+      include: { role: { select: { id: true, name: true } } },
     });
 
-    if (!user) {
+    // Verify against a dummy hash for unknown emails so response time does not
+    // reveal which accounts exist.
+    const hash = user?.password ?? (await this.getDummyHash());
+    const match = await argon
+      .verify(hash, String(dto.password ?? ''))
+      .catch(() => false);
+
+    if (!user || !match) {
+      this.recordFailedLogin(email);
       throw new ForbiddenException('Invalid credentials');
     }
-
-    const match = await argon.verify(user.password, dto.password);
-
-    if (!match) {
-      throw new ForbiddenException('Invalid credentials');
+    if (!user.is_active) {
+      throw new ForbiddenException(
+        'This account has been deactivated. Contact your administrator.',
+      );
     }
+    this.failedLogins.delete(email);
 
     delete user.password;
 
     if (user.role.name === 'Technician') {
       await this.prisma.user.update({
         where: { id: user.id },
-        data: { availability: true, presence: 'ONLINE', busy_comment: null, busy_until: null },
+        data: {
+          availability: true,
+          presence: 'ONLINE',
+          busy_comment: null,
+          busy_until: null,
+        },
       });
       user.availability = true;
       user.presence = 'ONLINE';
@@ -164,6 +150,7 @@ export class AuthService {
 
     await this.activity.createUserLog('User logged in', user);
 
+    const { token_version, ...publicUser } = user;
     return {
       statusCode: 200,
       message: 'User logged in',
@@ -172,109 +159,124 @@ export class AuthService {
         user.email,
         user.crm_user_id,
         [user.role.name],
+        token_version,
       ),
-      user,
+      user: publicUser,
     };
   }
 
-  async changePassword(
-    user: any,
-    dto: {
-      old_password: string;
-      new_password: string;
-    },
-  ) {
-    const existing_user = await this.prisma.user.findFirst({
-      where: {
-        id: user.id,
-      },
+  /** Revokes every token issued to the user (all devices). */
+  async logout(userId: string) {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { token_version: { increment: 1 } },
     });
+    return { message: 'Logged out' };
+  }
 
-    if (!existing_user) {
-      throw new ForbiddenException('User not found');
+  async changePassword(user: { id: string }, dto: ChangePasswordDto) {
+    const existing = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      include: { role: { select: { name: true } } },
+    });
+    if (!existing) {
+      throw new NotFoundException('User not found');
     }
 
-    const match = await argon.verify(existing_user.password, dto.old_password);
+    const match = await argon
+      .verify(existing.password, dto.old_password)
+      .catch(() => false);
     if (!match) {
       throw new ForbiddenException('Current password is incorrect');
     }
-
     if (dto.old_password === dto.new_password) {
-      throw new ForbiddenException('New password cannot be the same as old');
+      throw new BadRequestException('New password cannot be the same as old');
     }
 
-    // change the password
     const updated = await this.prisma.user.update({
-      where: {
-        id: user.id,
-      },
+      where: { id: user.id },
       data: {
         password: await argon.hash(dto.new_password),
+        token_version: { increment: 1 },
       },
     });
 
-    if (!updated) {
-      throw new ForbiddenException('Password not updated');
-    }
+    await this.activity.createUserLog('Password updated', existing);
 
-    await this.activity.createUserLog('Password updated', user);
-
+    // Other sessions are revoked; this device continues with a fresh token.
     return {
       message: 'Password updated',
+      access_token: await this.generateToken(
+        updated.id,
+        updated.email,
+        updated.crm_user_id,
+        [existing.role.name],
+        updated.token_version,
+      ),
     };
   }
 
   async getRoles() {
-    const roles = await this.prisma.role.findMany({
-      select: {
-        id: true,
-        name: true,
-      },
+    return this.prisma.role.findMany({
+      where: { deleted_at: null },
+      select: { id: true, name: true },
     });
-
-    return roles;
   }
 
   async generateToken(
     user_id: string,
     email: string,
     crm_user_id: string,
-    Roles: any[],
+    Roles: string[],
+    tokenVersion: number,
   ) {
-    const payload = {
-      sub: user_id,
-      email,
-      crm_user_id,
-      Roles,
-    };
-
-    const token = await this.jwt.sign(payload, {
-      // dont expire the token
-      expiresIn: '365d',
-      secret: this.config.get('JWT_SECRET'),
-    });
-
-    return token;
+    return this.jwt.sign(
+      { sub: user_id, email, crm_user_id, Roles, tv: tokenVersion },
+      {
+        expiresIn: this.config.get<string>('JWT_EXPIRES_IN') || '7d',
+        secret: this.config.get('JWT_SECRET'),
+        algorithm: 'HS256',
+      },
+    );
   }
 
-  async generateRefreshToken(
-    user_id: string,
-    email: string,
-    crm_user_id: string,
-    Roles: any,
-  ) {
-    const payload = {
-      sub: user_id,
-      email,
-      crm_user_id,
-      Roles,
-    };
+  private assertNotLocked(email: string) {
+    const entry = this.failedLogins.get(email);
+    if (entry && entry.lockedUntil > Date.now()) {
+      const minutes = Math.ceil((entry.lockedUntil - Date.now()) / 60000);
+      throw new HttpException(
+        `Too many failed attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
 
-    const token = await this.jwt.sign(payload, {
-      expiresIn: '365d',
-      secret: this.config.get('JWT_REFRESH_SECRET'),
+  private recordFailedLogin(email: string) {
+    const now = Date.now();
+    const entry = this.failedLogins.get(email);
+    const count = entry && now - entry.last < LOCKOUT_MS ? entry.count + 1 : 1;
+    this.failedLogins.set(email, {
+      count,
+      last: now,
+      lockedUntil: count >= MAX_FAILED_LOGINS ? now + LOCKOUT_MS : 0,
     });
+    if (count >= MAX_FAILED_LOGINS) {
+      this.logger.error(
+        'AuthService',
+        'Account temporarily locked after failed logins',
+      );
+    }
+    if (this.failedLogins.size > 10000) {
+      for (const [key, value] of this.failedLogins) {
+        if (now - value.last > LOCKOUT_MS) this.failedLogins.delete(key);
+      }
+    }
+  }
 
-    return token;
+  private getDummyHash() {
+    if (!this.dummyHash) {
+      this.dummyHash = argon.hash(`dummy-${Math.random()}`);
+    }
+    return this.dummyHash;
   }
 }

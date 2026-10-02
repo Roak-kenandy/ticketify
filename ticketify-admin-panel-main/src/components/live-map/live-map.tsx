@@ -23,7 +23,7 @@ import {
 } from "./types";
 
 const MAPS_API_KEY =
-  process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyCYBlF9CilcGol6Nmh3fc_avgW6N6N6BjQ";
+  process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 const DEFAULT_CENTER = { lat: 4.1752, lng: 73.5095 };
 const DEFAULT_ZOOM = 13;
 const FOCUS_ZOOM = 17;

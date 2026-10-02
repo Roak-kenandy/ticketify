@@ -22,6 +22,10 @@ model User {
   password               String
   user_location_tracking UserLocationTracking[]
   availability           Boolean                @default(false)
+  /// Deactivated accounts cannot log in and their tokens stop working.
+  is_active              Boolean                @default(true)
+  /// Bumped on logout, password change and deactivation to revoke issued tokens.
+  token_version          Int                    @default(0)
   presence               TechnicianPresence     @default(OFFLINE)
   busy_comment           String?
   busy_until             DateTime?

@@ -203,6 +203,12 @@ const ActivityDetailsScreen = ({navigation, route}: Props) => {
   const attachments: any[] = data?.attachments?.content ?? [];
   const services: any[] = data?.contact?.services?.content ?? [];
   const phone: string | undefined = data?.contact?.phone?.number;
+  // CRM data is untrusted: only digits and a leading + may reach a tel: URL.
+  const dialablePhone = phone
+    ? String(phone)
+        .replace(/[^\d+]/g, '')
+        .replace(/(?!^)\+/g, '')
+    : '';
   const customerName: string | undefined =
     data?.contact?.person_name?.full_name ||
     data?.contact?.company_name ||
@@ -491,7 +497,9 @@ const ActivityDetailsScreen = ({navigation, route}: Props) => {
                 label="Phone"
                 value={phone}
                 onPress={
-                  phone ? () => Linking.openURL(`tel:${phone}`) : undefined
+                  dialablePhone
+                    ? () => Linking.openURL(`tel:${dialablePhone}`)
+                    : undefined
                 }
               />
               <InfoRow
@@ -668,7 +676,9 @@ const ActivityDetailsScreen = ({navigation, route}: Props) => {
             <ActionChip
               icon="call-outline"
               label="Call"
-              onPress={() => Linking.openURL(`tel:${phone}`)}
+              onPress={() =>
+                dialablePhone && Linking.openURL(`tel:${dialablePhone}`)
+              }
             />
           ) : null}
           {canEdit ? (

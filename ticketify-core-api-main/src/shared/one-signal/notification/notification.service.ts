@@ -56,8 +56,6 @@ export default class NotificationService {
       );
       if (error instanceof OneSignal.HTTPError) {
         // When status code of HTTP response is not 2xx, HTTPError is thrown.
-        console.log(error.statusCode);
-        console.log(error.body);
       }
       throw new HttpException('Error sending notification', 500);
     }

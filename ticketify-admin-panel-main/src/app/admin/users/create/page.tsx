@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { PageHeader } from "@/components/app/page-header";
 import { cn } from "@/lib/utils";
+import { passwordPolicyError } from "@/lib/password-policy";
 
 type Errors = Partial<Record<keyof CreateUserData, string>>;
 
@@ -41,17 +42,20 @@ function validate(data: CreateUserData): Errors {
   }
   if (!data.phone.trim()) {
     errors.phone = "Enter a phone number for SMS and contact.";
-  } else if (!/^[\d\s\-+()]{7,}$/.test(data.phone.trim())) {
+  } else if (!/^\+?[0-9 ]{6,20}$/.test(data.phone.trim())) {
     errors.phone = "Use digits only, e.g. +960 7722229.";
   }
   if (!data.crm_user_id.trim()) {
     errors.crm_user_id = "Paste the user's ID from CRM.";
+  } else if (!/^[A-Za-z0-9-]{8,64}$/.test(data.crm_user_id.trim())) {
+    errors.crm_user_id = "CRM IDs contain only letters, numbers and dashes.";
   }
   if (!data.role_id) errors.role_id = "Choose a role.";
   if (!data.password) {
     errors.password = "Set a temporary password.";
-  } else if (data.password.length < 6) {
-    errors.password = "Use at least 6 characters.";
+  } else {
+    const policyError = passwordPolicyError(data.password);
+    if (policyError) errors.password = policyError;
   }
   return errors;
 }

@@ -8,13 +8,14 @@ import {
   View,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
-import {useSelector} from 'react-redux';
+import {useDispatch, useSelector} from 'react-redux';
 import * as yup from 'yup';
 import PrimaryButton from '../../../components/ui/primary-button';
 import colors from '../../../constants/colors';
 import {globalStyles, spacing} from '../../../constants/styles';
 import {apiPost} from '../../../utils/apiClient';
 import {showError, showSuccess} from '../../../utils/notify';
+import {saveSession} from '../../../utils/secureSession';
 
 type Props = {
   onDone: () => void;
@@ -31,7 +32,10 @@ const validationSchema = yup.object().shape({
   newPassword: yup
     .string()
     .required('Enter a new password')
-    .min(6, 'Use at least 6 characters')
+    .min(8, 'Use at least 8 characters')
+    .max(128, 'Use at most 128 characters')
+    .matches(/[A-Za-z]/, 'Include at least one letter')
+    .matches(/\d/, 'Include at least one number')
     .notOneOf([yup.ref('currentPassword')], 'New password must be different'),
   confirmPassword: yup
     .string()
@@ -49,6 +53,8 @@ const FIELDS: {name: FieldName; label: string}[] = [
 
 const ChangePasswordForm = ({onDone}: Props) => {
   const token = useSelector((state: any) => state.auth?.token);
+  const user = useSelector((state: any) => state.auth?.user);
+  const dispatch = useDispatch();
   const [visible, setVisible] = React.useState(false);
 
   return (
@@ -65,6 +71,14 @@ const ChangePasswordForm = ({onDone}: Props) => {
             },
             token,
           );
+          // The server revokes every older token on password change and returns a fresh one.
+          if (data?.access_token) {
+            await saveSession(user, data.access_token).catch(() => {});
+            dispatch({
+              type: 'LOGIN_SUCCESS',
+              payload: {user, isLoggedIn: true, token: data.access_token},
+            });
+          }
           showSuccess(data?.message || 'Password changed');
           helpers.resetForm();
           onDone();

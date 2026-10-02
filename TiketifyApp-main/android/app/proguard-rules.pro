@@ -1,10 +1,15 @@
 # Add project specific ProGuard rules here.
-# By default, the flags in this file are appended to flags specified
-# in /usr/local/Cellar/android-sdk/24.3.3/tools/proguard/proguard-android.txt
-# You can edit the include path and order by changing the proguardFiles
-# directive in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# React Native, Hermes, OkHttp, Play Services and the RN community modules ship
+# their own consumer rules; only app-specific rules belong here.
 
-# Add any project specific keep options here:
+# App native modules are looked up by name from JS.
+-keep class com.ticketify.** { *; }
+-keep class com.tiketify.** { *; }
+
+# Strip verbose/debug/info logging from release builds so location data and
+# API payloads never reach logcat.
+-assumenosideeffects class android.util.Log {
+    public static int v(...);
+    public static int d(...);
+    public static int i(...);
+}

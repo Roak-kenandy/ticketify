@@ -43,7 +43,6 @@ RCT_EXPORT_METHOD(startBackgroundLocationService:(NSString *)apiEndpoint
                   rejecter:(RCTPromiseRejectBlock)reject) {
     
     RCTLogInfo(@"[BackgroundLocationManager] Starting iOS background location service");
-    RCTLogInfo(@"[BackgroundLocationManager] API Endpoint: %@", apiEndpoint);
     RCTLogInfo(@"[BackgroundLocationManager] Has Token: %@", authToken ? @"YES" : @"NO");
     
     self.apiEndpoint = apiEndpoint;
@@ -197,8 +196,6 @@ RCT_EXPORT_METHOD(isServiceRunning:(RCTPromiseResolveBlock)resolve
         return;
     }
     
-    RCTLogInfo(@"[BackgroundLocationManager] 📍 Location received: lat=%.6f, lng=%.6f, accuracy=%.1fm",
-              location.coordinate.latitude, location.coordinate.longitude, location.horizontalAccuracy);
     
     [self sendLocationToServer:location];
     
@@ -294,10 +291,6 @@ RCT_EXPORT_METHOD(isServiceRunning:(RCTPromiseResolveBlock)resolve
             RCTLogInfo(@"[BackgroundLocationManager] ✅ Location sent successfully (HTTP %ld)", (long)httpResponse.statusCode);
         } else {
             RCTLogError(@"[BackgroundLocationManager] ❌ Server error: HTTP %ld", (long)httpResponse.statusCode);
-            if (data) {
-                NSString *responseString = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-                RCTLogError(@"[BackgroundLocationManager] Response: %@", responseString);
-            }
         }
     }];
     

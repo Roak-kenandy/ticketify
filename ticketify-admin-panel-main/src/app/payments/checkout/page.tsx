@@ -29,6 +29,25 @@ type Summary = {
   bml_checkout_url: string;
 };
 
+const CHECKOUT_PATH = /\/payments\/public\/TKT-PAY-[A-Za-z0-9_-]{4,64}\/bml$/;
+
+/** Only follow the API's own BML redirect route; never an arbitrary URL from the response. */
+function safeCheckoutUrl(raw: string | undefined): string | null {
+  try {
+    const url = new URL(raw ?? '');
+    const allowHttp = process.env.NODE_ENV !== 'production';
+    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && allowHttp)) {
+      return null;
+    }
+    if (url.username || url.password || !CHECKOUT_PATH.test(url.pathname)) {
+      return null;
+    }
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 function CheckoutBody() {
   const params = useSearchParams();
   const reference = params.get('reference') ?? '';
@@ -79,8 +98,13 @@ function CheckoutBody() {
 
   function payNow() {
     if (!data?.can_pay || !terms || redirecting) return;
+    const target = safeCheckoutUrl(data.bml_checkout_url);
+    if (!target) {
+      setError("This payment link is invalid. Please contact Medianet.");
+      return;
+    }
     setRedirecting(true);
-    window.location.assign(data.bml_checkout_url);
+    window.location.assign(target);
   }
 
   if (loading) {

@@ -10,6 +10,10 @@ import {
 import { JwtGuard } from 'src/auth/guard';
 import { RolesGuard } from 'src/auth/guard/roles.guard';
 import { Roles } from 'src/infrastructure/decorators/roles.decorator';
+import {
+  TicketAccessGuard,
+  TicketScope,
+} from 'src/infrastructure/security/ticket-access.guard';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { TicketInvoiceService } from './ticket-invoice.service';
 import { TicketReceiptService } from './ticket-receipt.service';
@@ -23,14 +27,16 @@ export class InvoicesController {
     private receipts: TicketReceiptService,
   ) {}
 
-  @UseGuards(JwtGuard, RolesGuard)
+  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @TicketScope('crmTicketId')
   @Roles(FINANCE_ROLES)
   @Get('tickets/:crmTicketId')
   listForTicket(@Param('crmTicketId') crmTicketId: string) {
     return this.invoices.listForTicket(crmTicketId);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
+  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @TicketScope('crmTicketId')
   @Roles(FINANCE_ROLES)
   @Post('tickets/:crmTicketId')
   create(
@@ -46,19 +52,23 @@ export class InvoicesController {
     );
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
+  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @TicketScope('id', 'invoice')
   @Roles(FINANCE_ROLES)
   @Get(':id')
   getInvoice(@Param('id') id: string) {
     return this.invoices.getById(id);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
+  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @TicketScope('id', 'invoice')
   @Roles(FINANCE_ROLES)
   @Get(':id/receipt')
   async getReceiptForInvoice(@Param('id') id: string) {
     const invoice = await this.invoices.getById(id);
-    return invoice.receipt ?? { message: 'No receipt yet — payment not confirmed' };
+    return (
+      invoice.receipt ?? { message: 'No receipt yet — payment not confirmed' }
+    );
   }
 }
 
@@ -66,7 +76,8 @@ export class InvoicesController {
 export class ReceiptsController {
   constructor(private receipts: TicketReceiptService) {}
 
-  @UseGuards(JwtGuard, RolesGuard)
+  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @TicketScope('reference', 'payment')
   @Roles(FINANCE_ROLES)
   @Get('payments/:reference')
   async byPayment(@Param('reference') reference: string) {
@@ -77,7 +88,8 @@ export class ReceiptsController {
     return receipt;
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
+  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @TicketScope('receiptNumber', 'receipt')
   @Roles(FINANCE_ROLES)
   @Get(':receiptNumber')
   byNumber(@Param('receiptNumber') receiptNumber: string) {

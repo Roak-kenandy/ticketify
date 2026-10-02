@@ -28,6 +28,9 @@ export class AdminAPI {
         filters.availability ? 'AVAILABLE' : 'UNAVAILABLE',
       );
     }
+    if (filters?.isActive !== undefined) {
+      params.append('status', filters.isActive ? 'ACTIVE' : 'INACTIVE');
+    }
     if (filters?.department) {
       params.append('department', filters.department);
     }

@@ -37,12 +37,19 @@ export class CrmApiClient {
     path: string,
     body?: unknown,
   ): Promise<CrmHttpResult<T>> {
+    const pathname = path.split('?')[0];
+    if (/\.\.|[#\\\s]/.test(pathname) || /[#\s]/.test(path)) {
+      throw new Error('Rejected unsafe CRM path');
+    }
     const url = `${this.baseUrl()}${path.startsWith('/') ? path : `/${path}`}`;
     try {
       const response = await fetch(url, {
         method,
         headers: this.defaultHeaders(),
         body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(
+          Number(this.config.get('CRM_REQUEST_TIMEOUT_MS')) || 30000,
+        ),
       });
 
       let data: T;
@@ -55,13 +62,16 @@ export class CrmApiClient {
       if (!response.ok) {
         this.logger.error(
           'CRM API',
-          `${method} ${path} failed (${response.status}): ${JSON.stringify(data)}`,
+          `${method} ${pathname} failed (${response.status}): ${JSON.stringify(data)?.slice(0, 300)}`,
         );
       }
 
       return { ok: response.ok, status: response.status, data };
     } catch (error) {
-      this.logger.error('CRM API', `${method} ${path} network error: ${error}`);
+      this.logger.error(
+        'CRM API',
+        `${method} ${pathname} network error: ${error}`,
+      );
       throw error;
     }
   }
@@ -75,10 +85,18 @@ export class CrmApiClient {
   }
 
   postServiceRequestAction(ticketId: string, payload: Record<string, unknown>) {
-    return this.request('POST', `/service_requests/${ticketId}/actions`, payload);
+    return this.request(
+      'POST',
+      `/service_requests/${ticketId}/actions`,
+      payload,
+    );
   }
 
-  listActivitiesByServiceRequest(serviceRequestId: string, page = 1, size = 20) {
+  listActivitiesByServiceRequest(
+    serviceRequestId: string,
+    page = 1,
+    size = 20,
+  ) {
     return this.request<{ content?: unknown[] }>(
       'GET',
       `/activities?service_request_id=${encodeURIComponent(serviceRequestId)}&page=${page}&size=${size}`,
@@ -112,17 +130,18 @@ export class CrmApiClient {
   }
 
   listTeamUsers(teamId: string, page = 1, size = 50) {
-    return this.request<{ content?: { id: string; first_name?: string; last_name?: string }[] }>(
+    return this.request<{
+      content?: { id: string; first_name?: string; last_name?: string }[];
+    }>(
       'GET',
       `/users?size=${size}&page=${page}&teams=${encodeURIComponent(teamId)}`,
     );
   }
 
   listContactAddresses(contactId: string) {
-    return this.request<{ content?: { id: string; address_line_1?: string; type?: string }[] }>(
-      'GET',
-      `/contacts/${contactId}/addresses`,
-    );
+    return this.request<{
+      content?: { id: string; address_line_1?: string; type?: string }[];
+    }>('GET', `/contacts/${contactId}/addresses`);
   }
 
   createActivity(payload: Record<string, unknown>) {

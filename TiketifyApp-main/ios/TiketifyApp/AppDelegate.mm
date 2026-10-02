@@ -2,7 +2,34 @@
 
 #import <React/RCTBundleURLProvider.h>
 
+static NSInteger const TKPrivacyOverlayTag = 0x7A11;
+
 @implementation AppDelegate
+
+// Hide customer data from the app-switcher snapshot.
+- (void)applicationWillResignActive:(UIApplication *)application
+{
+  if ([RCTAppDelegate instancesRespondToSelector:_cmd]) {
+    [super applicationWillResignActive:application];
+  }
+  if (self.window == nil || [self.window viewWithTag:TKPrivacyOverlayTag] != nil) {
+    return;
+  }
+  UIVisualEffectView *overlay =
+      [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleRegular]];
+  overlay.frame = self.window.bounds;
+  overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+  overlay.tag = TKPrivacyOverlayTag;
+  [self.window addSubview:overlay];
+}
+
+- (void)applicationDidBecomeActive:(UIApplication *)application
+{
+  if ([RCTAppDelegate instancesRespondToSelector:_cmd]) {
+    [super applicationDidBecomeActive:application];
+  }
+  [[self.window viewWithTag:TKPrivacyOverlayTag] removeFromSuperview];
+}
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {

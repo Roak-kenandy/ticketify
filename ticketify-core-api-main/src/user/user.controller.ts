@@ -12,36 +12,37 @@ import {
 import { JwtGuard } from 'src/auth/guard';
 import { CreateLocationTrackDto } from './dto/create-location-track';
 import { UserService } from './user.service';
-import { IsNotEmpty } from 'class-validator';
 import { Roles } from 'src/infrastructure/decorators/roles.decorator';
-import { RolesGuard } from 'src/auth/guard/roles.guard';
 import { UpdatePresenceDto } from 'src/config/dto/update-presence.dto';
 import { UpdatePreferencesDto } from './dto/update-preferences.dto';
+import {
+  ADMIN_ROLES,
+  DISPATCH_MANAGE_ROLES,
+  FIELD_ROLES,
+  OPS_VIEW_ROLES,
+} from 'src/auth/ops-roles';
 
+@UseGuards(JwtGuard)
 @Controller('users')
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
-
-  @UseGuards(JwtGuard)
+  @Roles(OPS_VIEW_ROLES)
   @Get('technicians')
   getTechnicians() {
     return this.userService.getTechnicians();
   }
 
-  @UseGuards(JwtGuard)
   @Get('me')
   me(@Req() req: { user: any }) {
     return this.userService.getMe(req.user);
   }
 
-  @UseGuards(JwtGuard)
   @Get('me/preferences')
   myPreferences(@Req() req: { user: { id: string } }) {
     return this.userService.getPreferences(req.user.id);
   }
 
-  @UseGuards(JwtGuard)
   @Patch('me/preferences')
   updateMyPreferences(
     @Req() req: { user: { id: string } },
@@ -50,60 +51,40 @@ export class UserController {
     return this.userService.updatePreferences(req.user.id, body);
   }
 
-  @UseGuards(JwtGuard)
+  @Roles([...ADMIN_ROLES, 'Supervisor'])
   @Get()
-  //   const [filters, setFilters] = useState<UserFilter>({
-  //   search: "",
-  //   role: "",
-  //   availability: undefined,
-  //   page: 1,
-  //   limit: 20,
-  // });
   getAllUsers(
-    @Query()
-    filters: {
-      search?: string;
-      role?: string;
-      availability?: 'AVAILABLE' | 'UNAVAILABLE' | 'BREAK' | 'OFFLINE';
-      page?: number;
-      limit?: number;
-    },
+    @Query('search') search?: string,
+    @Query('role') role?: string,
+    @Query('availability')
+    availability?: 'AVAILABLE' | 'UNAVAILABLE' | 'BREAK' | 'OFFLINE',
+    @Query('status') status?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
-    return this.userService.getAllUsers(
-      filters
-    );
+    return this.userService.getAllUsers({
+      search: search?.slice(0, 100),
+      role: role?.slice(0, 64),
+      availability,
+      status:
+        status === 'ACTIVE' || status === 'INACTIVE' ? status : undefined,
+      page: Math.max(1, Number(page) || 1),
+      limit: Math.min(100, Math.max(1, Number(limit) || 20)),
+    });
   }
 
-
-  @UseGuards(JwtGuard)
-  @Roles(['ADMIN', 'SUPERVISOR'])
+  @Roles(DISPATCH_MANAGE_ROLES)
   @Get('stats')
   getUserStats() {
     return this.userService.getUserStats();
   }
 
-  @UseGuards(JwtGuard)
-  @Roles(['ADMIN', 'SUPERVISOR'])
+  @Roles([...ADMIN_ROLES, 'Supervisor'])
   @Get(':id')
   getUserById(@Param('id') id: string) {
-    if (!id) {
-      throw new Error('User ID is required');
-    }
     return this.userService.getUserById(id);
   }
 
-
-  
-  @Get('technicians/:team_id')
-  getTechniciansByTeam(@Param('team_id') team_id: string) {
-    console.log('team_id', team_id);
-    if (!team_id) {
-      throw new Error('Team ID is required');
-    }
-    return this.userService.getTechniciansByTeam(team_id);
-  }
-
-  @UseGuards(JwtGuard)
   @Patch('status')
   updateStatus(
     @Query('status')
@@ -113,30 +94,23 @@ export class UserController {
     return this.userService.updateStatus({ status }, req.user);
   }
 
-  @UseGuards(JwtGuard)
-  @Roles(['TECHNICIAN'])
+  @Roles(FIELD_ROLES)
   @Patch('presence')
   updatePresence(@Body() body: UpdatePresenceDto, @Req() req: { user: any }) {
     return this.userService.updatePresence(body, req.user);
   }
 
-  @UseGuards(JwtGuard)
   @Post('location')
   addLocationTracking(
-    @Body()
-    location: CreateLocationTrackDto,
+    @Body() location: CreateLocationTrackDto,
     @Req() req: { user: any },
   ) {
     return this.userService.addLocationTracking(location, req.user);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(OPS_VIEW_ROLES)
   @Get('technician/:id/details')
-  @Roles(['Admin', 'Supervisor', 'Administrator', 'CEO'])
   getTechnicianDetails(@Param('id') id: string) {
-    if (!id) {
-      throw new Error('Technician ID is required');
-    }
     return this.userService.getTechnicianDetails(id);
   }
 }

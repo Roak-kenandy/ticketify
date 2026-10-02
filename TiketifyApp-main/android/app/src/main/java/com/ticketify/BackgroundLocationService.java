@@ -76,7 +76,6 @@ public class BackgroundLocationService extends Service {
         if (intent != null) {
             apiEndpoint = intent.getStringExtra("apiEndpoint");
             authToken = intent.getStringExtra("authToken");
-            Log.d(TAG, "API Endpoint: " + apiEndpoint);
             Log.d(TAG, "Has Token: " + (authToken != null && !authToken.isEmpty()));
         }
         
@@ -155,8 +154,6 @@ public class BackgroundLocationService extends Service {
                 }
                 
                 for (Location location : locationResult.getLocations()) {
-                    Log.d(TAG, String.format("Location received: lat=%.6f, lng=%.6f, accuracy=%.1fm", 
-                        location.getLatitude(), location.getLongitude(), location.getAccuracy()));
                     
                     sendLocationToServer(location);
                 }
@@ -206,7 +203,6 @@ public class BackgroundLocationService extends Service {
                 .addHeader("Content-Type", "application/json")
                 .build();
             
-            Log.d(TAG, "Sending location to server: " + json);
             
             httpClient.newCall(request).enqueue(new Callback() {
                 @Override
@@ -220,7 +216,7 @@ public class BackgroundLocationService extends Service {
                     if (response.isSuccessful()) {
                         Log.d(TAG, "Location sent to server successfully");
                     } else {
-                        Log.e(TAG, "Server returned error: " + response.code() + " " + response.message());
+                        Log.w(TAG, "Server returned error: " + response.code());
                     }
                     response.close();
                 }

@@ -1,12 +1,12 @@
 import React from 'react';
 import {ActivityIndicator, Image, StyleSheet, Text, View} from 'react-native';
-import * as KeyChain from 'react-native-keychain';
 import {useDispatch} from 'react-redux';
 import {OneSignal} from 'react-native-onesignal';
 import colors from '../../constants/colors';
 import {spacing} from '../../constants/styles';
 import {apiGet, isTokenExpired} from '../../utils/apiClient';
 import {clearStoredSession} from '../../utils/session';
+import {loadSession, StoredSession} from '../../utils/secureSession';
 
 type Props = {
   navigation: any;
@@ -28,25 +28,19 @@ const SplashScreen = (props: Props) => {
     };
 
     async function bootstrapSession() {
-      let credentials: false | KeyChain.UserCredentials = false;
+      let session: StoredSession | null = null;
       try {
-        credentials = await KeyChain.getGenericPassword();
+        session = await loadSession();
       } catch {
         goToLogin();
         return;
       }
-      if (!credentials || !credentials.password) {
+      if (!session) {
         goToLogin();
         return;
       }
 
-      const token = credentials.password;
-      let storedUser: any = null;
-      try {
-        storedUser = JSON.parse(credentials.username);
-      } catch {
-        storedUser = null;
-      }
+      const {token, user: storedUser} = session;
 
       if (isTokenExpired(token)) {
         await clearStoredSession(dispatch);

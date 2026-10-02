@@ -1,4 +1,6 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { verifyReviewLink } from 'src/infrastructure/security/review-link';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { CrmApiClient } from 'src/infrastructure/crm/crm-api.client';
 import NotificationService from 'src/shared/one-signal/notification/notification.service';
@@ -20,6 +22,7 @@ export class FeedbackService {
     private ticket: TicketsService,
     private notification: NotificationService,
     private crm: CrmApiClient,
+    private config: ConfigService,
   ) {}
 
   async create(
@@ -27,13 +30,20 @@ export class FeedbackService {
     ticket_id: string,
     rating: number,
     review: string,
+    token?: string,
   ) {
     try {
       if (!user_id || !ticket_id || !rating || !review) {
         throw new Error('Invalid input');
       }
+      const secret = this.config.get<string>('FEEDBACK_LINK_SECRET')?.trim();
+      if (secret && !verifyReviewLink(ticket_id, user_id, token, secret)) {
+        throw new ForbiddenException('Invalid review link for this ticket');
+      }
 
-      const crmTicket = await this.crm.getServiceRequest(ticket_id);
+      const crmTicket = await this.crm.getServiceRequest(
+        encodeURIComponent(ticket_id),
+      );
       if (!crmTicket.ok) {
         throw new ForbiddenException('Ticket not found');
       }
@@ -107,7 +117,9 @@ export class FeedbackService {
 
   /** Lightweight ticket shape for feedback list (avoids full crmFindServiceRequest per row). */
   private async loadTicketSummary(ticketId: string): Promise<TicketSummary> {
-    const crmResult = await this.crm.getServiceRequest(ticketId).catch(() => null);
+    const crmResult = await this.crm
+      .getServiceRequest(encodeURIComponent(ticketId))
+      .catch(() => null);
     if (!crmResult?.ok) {
       return {
         id: ticketId,
@@ -149,15 +161,18 @@ export class FeedbackService {
     const CONCURRENCY = 6;
     let next = 0;
     await Promise.all(
-      Array.from({ length: Math.min(CONCURRENCY, feedbacks.length) }, async () => {
-        while (next < feedbacks.length) {
-          const index = next++;
-          const feedback = feedbacks[index];
-          const { resolved: _resolved, ...ticket } =
-            await this.ticketSummaryForFeedbackList(feedback.ticket_id);
-          results[index] = { feedback, ticket };
-        }
-      }),
+      Array.from(
+        { length: Math.min(CONCURRENCY, feedbacks.length) },
+        async () => {
+          while (next < feedbacks.length) {
+            const index = next++;
+            const feedback = feedbacks[index];
+            const { resolved: _resolved, ...ticket } =
+              await this.ticketSummaryForFeedbackList(feedback.ticket_id);
+            results[index] = { feedback, ticket };
+          }
+        },
+      ),
     );
     return results;
   }

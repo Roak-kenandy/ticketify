@@ -1,57 +1,68 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
-import { LoginDto, SignUpDto } from './dto';
+import {
+  ChangePasswordDto,
+  LoginDto,
+  ResetPasswordDto,
+  SignUpDto,
+} from './dto';
 import { JwtGuard } from './guard';
 import { Roles } from 'src/infrastructure/decorators/roles.decorator';
-import { RolesGuard } from './guard/roles.guard';
+import { ADMIN_ROLES } from './ops-roles';
 
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(['Technician', 'Admin'])
+  @UseGuards(JwtGuard)
+  @Roles(ADMIN_ROLES)
   @Post('sign-up')
   signUp(@Body() dto: SignUpDto) {
     return this.authService.signUp(dto);
   }
 
-  @Throttle({ default: { limit: 15, ttl: 60000 } })
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(['Technician', 'Admin'])
+  @UseGuards(JwtGuard)
+  @HttpCode(200)
+  @Post('logout')
+  logout(@Req() req: { user: { id: string } }) {
+    return this.authService.logout(req.user.id);
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @UseGuards(JwtGuard)
   @Post('change-password')
   changePassword(
-    @Body()
-    dto: {
-      old_password: string;
-      new_password: string;
-    },
-    @Req() req: { user: any },
+    @Body() dto: ChangePasswordDto,
+    @Req() req: { user: { id: string } },
   ) {
     return this.authService.changePassword(req.user, dto);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
+  @UseGuards(JwtGuard)
+  @Roles(ADMIN_ROLES)
   @Post('reset-password')
-  @Roles(['Admin'])
-  resetPassword(
-    @Body()
-    dto: {
-      user_id: string;
-      new_password: string;
-    },
-  ) {
+  resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(dto);
   }
 
-  @Get('roles')
   @UseGuards(JwtGuard)
+  @Roles(ADMIN_ROLES)
+  @Get('roles')
   getRoles() {
     return this.authService.getRoles();
   }

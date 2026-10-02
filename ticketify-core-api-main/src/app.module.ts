@@ -5,6 +5,7 @@ import { ActivitiesModule } from './activities/activities.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './infrastructure/config/prisma/prisma.module';
+import { validateEnv } from './infrastructure/config/env.validation';
 import { UserModule } from './user/user.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { FeedbackModule } from './feedback/feedback.module';
@@ -19,16 +20,20 @@ import { PaymentsModule } from './payments/payments.module';
 import { FinanceModule } from './finance/finance.module';
 import { DispatchModule } from './dispatch/dispatch.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { SecurityModule } from './infrastructure/security/security.module';
+import { SafeParamsGuard } from './infrastructure/security/safe-params.guard';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      validate: validateEnv,
     }),
     ThrottlerModule.forRoot({
       throttlers: [{ name: 'default', ttl: 60000, limit: 200 }],
     }),
     CrmApiModule,
+    SecurityModule,
     IntegrationAuditModule,
     ChargesModule,
     WorkflowConfigModule,
@@ -51,6 +56,10 @@ import { DashboardModule } from './dashboard/dashboard.module';
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: SafeParamsGuard,
     },
   ],
 })

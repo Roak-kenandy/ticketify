@@ -30,7 +30,6 @@ public class BackgroundLocationModule extends ReactContextBaseJavaModule {
     public void startBackgroundLocationService(String apiEndpoint, String authToken, Promise promise) {
         try {
             Log.d(TAG, "Starting background location service");
-            Log.d(TAG, "API Endpoint: " + apiEndpoint);
             Log.d(TAG, "Has Token: " + (authToken != null && !authToken.isEmpty()));
             
             Context context = getReactApplicationContext();

@@ -1,17 +1,22 @@
-import * as KeyChain from 'react-native-keychain';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {OneSignal} from 'react-native-onesignal';
 import {apiFetch} from './apiClient';
+import {clearSession} from './secureSession';
 
 export async function clearStoredSession(dispatch: (action: any) => void) {
   try {
-    await KeyChain.resetGenericPassword();
+    await clearSession();
   } catch {
     // Keychain can be unavailable (e.g. device lock changes); still log out.
   }
   try {
     // offline_locations belong to this user; never replay them under the next login.
-    await AsyncStorage.multiRemove(['user', 'token', 'offline_locations']);
+    await AsyncStorage.multiRemove([
+      'user',
+      'token',
+      'offline_locations',
+      'background_proofs',
+    ]);
   } catch {
     // Non-blocking
   }
@@ -20,8 +25,9 @@ export async function clearStoredSession(dispatch: (action: any) => void) {
 
 /**
  * Full sign-out: mark the technician offline (so dispatch stops assigning
- * work), detach this device from their push notifications, then clear the
- * stored session. Network steps are best effort and never block sign-out.
+ * work), revoke the token on the server, detach this device from their push
+ * notifications, then clear the stored session. Network steps are best effort
+ * and never block sign-out.
  */
 export async function signOut(
   dispatch: (action: any) => void,
@@ -32,6 +38,11 @@ export async function signOut(
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({presence: 'OFFLINE'}),
+      timeoutMs: 4000,
+      silent: true,
+    }).catch(() => {});
+    await apiFetch('/auth/logout', token, {
+      method: 'POST',
       timeoutMs: 4000,
       silent: true,
     }).catch(() => {});

@@ -55,7 +55,16 @@ react {
 /**
  * Set this to true to Run Proguard on Release builds to minify the Java bytecode.
  */
-def enableProguardInReleaseBuilds = false
+def enableProguardInReleaseBuilds = true
+
+/**
+ * Release signing secrets are read from ~/.gradle/gradle.properties or environment
+ * variables (TICKETIFY_UPLOAD_STORE_FILE, TICKETIFY_UPLOAD_STORE_PASSWORD,
+ * TICKETIFY_UPLOAD_KEY_ALIAS, TICKETIFY_UPLOAD_KEY_PASSWORD) and must never be committed.
+ */
+def releaseSigningValue(String name) {
+    return project.findProperty(name) ?: System.getenv(name)
+}
 
 /**
  * The preferred build flavor of JavaScriptCore (JSC)
@@ -92,10 +101,12 @@ android {
         }
        
         release {
-            storeFile file('ticketify.keystore')
-            storePassword 'Ticketify@2024'
-            keyAlias 'ticketify-key'
-            keyPassword 'Ticketify@2024'
+            if (releaseSigningValue('TICKETIFY_UPLOAD_STORE_PASSWORD')) {
+                storeFile file(releaseSigningValue('TICKETIFY_UPLOAD_STORE_FILE') ?: 'ticketify.keystore')
+                storePassword releaseSigningValue('TICKETIFY_UPLOAD_STORE_PASSWORD')
+                keyAlias releaseSigningValue('TICKETIFY_UPLOAD_KEY_ALIAS') ?: 'ticketify-key'
+                keyPassword releaseSigningValue('TICKETIFY_UPLOAD_KEY_PASSWORD')
+            }
         }
     
     }
@@ -106,9 +117,11 @@ android {
         release {
             // Caution! In production, you need to generate your own keystore file.
             // see https://reactnative.dev/docs/signed-apk-android.
-           signingConfig signingConfigs.release
+            signingConfig signingConfigs.release
+            debuggable false
             minifyEnabled enableProguardInReleaseBuilds
-            proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+            shrinkResources enableProguardInReleaseBuilds
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
     }
 }

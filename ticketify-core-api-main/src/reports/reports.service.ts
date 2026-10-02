@@ -21,13 +21,7 @@ export class ReportsService {
         },
       },
     );
-    console.log(
-      'Fetching data from CRM API' +
-      this.config.get('CRM_BACKOFFICE_API_URL') +
-      '/service_requests/queues',
-    );
 
-    console.log(crm_service_request_stages);
 
     return crm_service_request_stages.json();
   }
@@ -43,7 +37,6 @@ export class ReportsService {
       },
     );
 
-    console.log(crm_teams);
 
     return crm_teams.json();
   }
@@ -53,7 +46,6 @@ export class ReportsService {
     // show ticket aging for each ticket
     // show ticket count, aging and percentage
 
-    console.log(queue, team);
 
     const aggregation = [
       {

@@ -8,6 +8,7 @@ export interface User {
     name: string;
   };
   availability: boolean;
+  is_active: boolean;
   created_at: string;
   updated_at: string;
   last_login?: string;
@@ -28,6 +29,7 @@ export interface UserProfile {
   name: string;
   phone: string;
   availability: boolean;
+  is_active: boolean;
   created_at: string;
   updated_at: string;
   last_login?: string;
@@ -82,6 +84,7 @@ export interface UpdateUserData {
 export interface UserFilter {
   role?: string;
   availability?: boolean;
+  isActive?: boolean;
   department?: string;
   search?: string;
   page?: number;

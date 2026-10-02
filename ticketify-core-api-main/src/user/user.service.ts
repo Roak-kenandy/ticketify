@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -90,6 +91,7 @@ export class UserService {
     }
 
     delete get_user.password;
+    delete get_user.token_version;
 
     return {
       ...get_user,
@@ -104,6 +106,7 @@ export class UserService {
     }
 
     delete get_user.password;
+    delete get_user.token_version;
 
     return {
       ...get_user,
@@ -196,56 +199,9 @@ export class UserService {
 
     return technicians.map((technician) => {
       delete technician.password;
+      delete technician.token_version;
       return technician;
     });
-  }
-
-  async getTechniciansByTeam(team_id: string) {
-    const crm_users = await fetch(
-      `https://app.crm.com/backoffice/v2/users?teams=${team_id}&size=100&user_roles=a23492ca-89f7-4ccc-92c0-387a61ab1802`,
-      {
-        headers: {
-          content_type: 'application/json',
-          api_key: this.config.get('CRM_API_KEY'),
-        },
-      },
-    );
-
-    if (!crm_users.ok) {
-      this.logger.error('Ticket Service', 'CRM User not found');
-      return new ForbiddenException('CRM User not found');
-    }
-
-    const crm_users_data = await crm_users.json();
-
-    // Use Promise.all to wait for all user async operations to complete
-    const updatedCrmUsers = await Promise.all(
-      crm_users_data?.content.map(async (crm_user) => {
-        // Retrieve user details for each crm_user
-        const user = await this.prisma.user.findFirst({
-          where: {
-            crm_user_id: crm_user.id,
-          },
-          include: {
-            user_location_tracking: {
-              orderBy: {
-                created_at: 'desc',
-              },
-              take: 1,
-            },
-          },
-        });
-
-        // Add additional fields to crm_user
-        crm_user['user_id'] = user?.id || 'null';
-        crm_user['availability'] = user?.availability || false;
-        crm_user['location'] = user?.user_location_tracking[0] || null;
-
-        return crm_user;
-      }),
-    );
-
-    return updatedCrmUsers; // Return the updated crm_users_data
   }
 
   async getOnlineTechnicians() {
@@ -298,6 +254,7 @@ export class UserService {
       .filter(t => !excluded.has(t.crm_user_id))
       .map((technician) => {
         delete technician.password;
+        delete technician.token_version;
         return technician;
       });
   }
@@ -522,6 +479,7 @@ export class UserService {
       search?: string;
       role?: string;
       availability?: 'AVAILABLE' | 'UNAVAILABLE' | 'BREAK' | 'OFFLINE';
+      status?: 'ACTIVE' | 'INACTIVE';
       page?: number;
       limit?: number;
     },
@@ -577,6 +535,9 @@ export class UserService {
                   filters.availability === 'AVAILABLE' ? true : false,
               }
             : {},
+          filters.status
+            ? { is_active: filters.status === 'ACTIVE' }
+            : {},
         ],
       },
       orderBy: {
@@ -586,6 +547,7 @@ export class UserService {
 
     return users.map((user) => {
       delete user.password;
+      delete user.token_version;
       return user;
     });
   }
@@ -774,6 +736,18 @@ export class UserService {
       throw new NotFoundException('User not found');
     }
 
+    if (['Admin', 'Administrator'].includes(user.role.name)) {
+      const admins = await this.prisma.user.count({
+        where: {
+          is_active: true,
+          role: { name: { in: ['Admin', 'Administrator'] } },
+        },
+      });
+      if (admins <= 1) {
+        throw new BadRequestException('You cannot delete the last administrator');
+      }
+    }
+
     await this.prisma.$transaction([
       this.prisma.userLocationTracking.deleteMany({ where: { user_id: id } }),
       this.prisma.userLog.deleteMany({ where: { user_id: id } }),
@@ -800,16 +774,25 @@ export class UserService {
       throw new NotFoundException('User not found');
     }
 
+    const activate = !user.is_active;
     const updated = await this.prisma.user.update({
       where: { id },
-      data: { availability: !user.availability },
+      data: activate
+        ? { is_active: true }
+        : {
+            is_active: false,
+            availability: false,
+            presence: 'OFFLINE',
+            token_version: { increment: 1 },
+          },
       include: { role: { select: { id: true, name: true } } },
     });
 
     delete updated.password;
+    delete updated.token_version;
 
     await this.activity.createUserLog(
-      `Admin toggled availability to ${updated.availability ? 'active' : 'inactive'}`,
+      `Admin ${activate ? 'activated' : 'deactivated'} the account`,
       updated,
     );
 

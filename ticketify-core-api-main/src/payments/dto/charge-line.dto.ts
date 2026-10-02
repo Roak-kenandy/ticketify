@@ -1,13 +1,33 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsInt, IsOptional, IsString, Min, ValidateNested } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 
 export class ChargeLineDto {
   @IsString()
+  @MaxLength(64)
   code: string;
 
   @IsInt()
   @Min(1)
+  @Max(1000)
   quantity: number;
+}
+
+export class ChargePreviewDto {
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => ChargeLineDto)
+  items: ChargeLineDto[];
 }
 
 export class CreateTicketPaymentDto {

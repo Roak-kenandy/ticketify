@@ -175,6 +175,17 @@ export class AdminAuth {
 
   /** Full logout — clears storage + cookies and redirects to login */
   static logout(): void {
+    const token = this.getToken();
+    if (token && typeof window !== 'undefined') {
+      // Revoke server-side so a copied token stops working immediately.
+      const apiBase =
+        process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:3333/api/v1';
+      fetch(`${apiBase}/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        keepalive: true,
+      }).catch(() => undefined);
+    }
     this.clearSession();
     if (typeof window !== 'undefined') {
       window.location.href = '/auth/login';

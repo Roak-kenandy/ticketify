@@ -1,8 +1,8 @@
 import {
   IsInt,
   IsNotEmpty,
+  IsOptional,
   IsString,
-  IsUUID,
   Max,
   MaxLength,
   Min,
@@ -11,7 +11,13 @@ import {
 export class CreateFeedbackDto {
   @IsNotEmpty()
   @IsString()
+  @MaxLength(64)
   userId: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  token?: string;
 
   @IsInt()
   @Min(1)

@@ -15,10 +15,9 @@ import PrimaryButton from '../../../components/ui/primary-button';
 import colors from '../../../constants/colors';
 import {globalStyles} from '../../../constants/styles';
 import {useDispatch} from 'react-redux';
-import * as KeyChain from 'react-native-keychain';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import {OneSignal} from 'react-native-onesignal';
 import {apiFetch, formatApiError} from '../../../utils/apiClient';
+import {saveSession} from '../../../utils/secureSession';
 
 type Props = {
   navigation: any;
@@ -67,15 +66,9 @@ const LoginForm = (_props: Props) => {
       }
 
       try {
-        await KeyChain.setGenericPassword(JSON.stringify(data.user), token);
+        await saveSession(data.user, token);
       } catch {
         // Session still valid in memory for this session
-      }
-
-      try {
-        await AsyncStorage.setItem('user', JSON.stringify(data.user));
-      } catch {
-        // Non-blocking
       }
 
       dispatch({

@@ -34,6 +34,11 @@ local.properties
 *.keystore
 !debug.keystore
 
+# Local environment / signing secrets
+.env
+.env.*
+keystore.properties
+
 # node.js
 #
 node_modules/
