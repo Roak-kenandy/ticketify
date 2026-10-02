@@ -7,9 +7,12 @@ import {
   Put,
   Query,
   Req,
+  Res,
+  UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { JwtGuard } from 'src/auth/guard';
 import { RolesGuard } from 'src/auth/guard/roles.guard';
 import { Roles } from 'src/infrastructure/decorators/roles.decorator';
@@ -47,23 +50,26 @@ export class TicketsController {
         crm_user_id: string;
       };
     },
-    @Param('team_id') team_id: string,
-    @Param('state') state: string,
+    @Query('team_id') team_id?: string,
+    @Query('state') state?: string,
   ): Promise<any> {
-    let tickets = await this.ticketsService.fetchServiceRequests(
-      req.user.crm_user_id,
-      team_id,
-      state,
-    );
-
-    return tickets;
+    if (team_id || state) {
+      return this.ticketsService.fetchServiceRequests(
+        req.user.crm_user_id,
+        team_id,
+        state,
+      );
+    }
+    return this.ticketsService.fetchMyTickets(req.user.crm_user_id);
   }
 
+  @UseGuards(JwtGuard)
   @Get('/team/:team_id')
   async fetchTicketsByTeam(@Param('team_id') team_id: string) {
     return this.ticketsService.fetchTeamServiceRequests(team_id);
   }
 
+  @UseGuards(JwtGuard)
   @Get('/user/:user_id')
   async fetchTicketsByUser(@Param('user_id') user_id: string) {
     return this.ticketsService.fetchUserTickets(user_id);
@@ -80,12 +86,17 @@ export class TicketsController {
       };
     },
   ) {
-    return this.ticketsService.findAllTeamTickets(req.user.crm_user_id);
+    return this.ticketsService.findAllTeamTicketsSafe(req.user.crm_user_id);
   }
 
+  @UseGuards(JwtGuard)
   @Get('files/:file_id')
-  async fetchFile(@Param('file_id') file_id: string) {
-    await this.ticketsService.fetchFile(file_id);
+  async fetchFile(@Param('file_id') file_id: string, @Res() res: Response) {
+    const file = await this.ticketsService.fetchFile(file_id);
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Content-Length', String(file.buffer.length));
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.send(file.buffer);
   }
 
   @UseGuards(JwtGuard)
@@ -227,7 +238,9 @@ ${body.note}
   }
 
   @UseGuards(JwtGuard)
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 15 * 1024 * 1024, files: 1 } }),
+  )
   @Post(':id/attachments')
   async uploadAttachmentToTicket(
     @Req()
@@ -238,7 +251,15 @@ ${body.note}
     },
     @Param('id') ticket_id: string,
     @Body() body: any,
+    @UploadedFile() file?: Express.Multer.File,
   ) {
+    if (file) {
+      return this.ticketsService.uploadDeviceFileToTicket(
+        ticket_id,
+        file,
+        body?.description,
+      );
+    }
     return this.ticketsService.uploadAttachmentToTicket(
       ticket_id,
       req.user.crm_user_id,

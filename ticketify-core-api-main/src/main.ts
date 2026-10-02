@@ -3,6 +3,7 @@ import { AppModule } from './app.module';
 import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
+import { ReturnedExceptionInterceptor } from './infrastructure/common/interceptors/returned-exception.interceptor';
 
 function parseCorsOrigins(raw: string | undefined): string[] | true {
   if (!raw?.trim()) {
@@ -47,7 +48,10 @@ async function bootstrap() {
     credentials: true,
   });
 
-  app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
+  app.useGlobalInterceptors(
+    new ReturnedExceptionInterceptor(),
+    new ClassSerializerInterceptor(app.get(Reflector)),
+  );
   app.setGlobalPrefix('api/v1');
   await app.listen(config.get<number>('PORT') ?? 3333);
 }

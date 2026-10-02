@@ -1,40 +1,46 @@
+import React from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   Linking,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import {DrawerContentScrollView} from '@react-navigation/drawer';
 import Icon from 'react-native-vector-icons/Ionicons';
 import colors from '../../constants/colors';
 import {useDispatch, useSelector} from 'react-redux';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as KeyChain from 'react-native-keychain';
 import {spacing} from '../../constants/styles';
+import {signOut} from '../../utils/session';
+import {SUPPORT_PHONE} from '../../constants/app';
+import {initials as getInitials} from '../../constants/ticket-meta';
 
 const NAV_ITEMS = [
   {route: 'Home', label: 'Dashboard', icon: 'grid-outline'},
   {route: 'My Tickets', label: 'My tickets', icon: 'layers-outline'},
-  {route: 'Feedbacks', label: 'Feedbacks', icon: 'chatbubble-ellipses-outline'},
+  {route: 'Feedbacks', label: 'Reviews', icon: 'star-outline'},
+  {route: 'Account', label: 'Account', icon: 'person-circle-outline'},
 ] as const;
 
-function getInitials(name?: string) {
-  if (!name) {
-    return '?';
-  }
-  return name
-    .split(' ')
-    .map(part => part[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
+export function confirmSignOut(onConfirm: () => void) {
+  Alert.alert(
+    'Sign out?',
+    "You'll be marked offline and stop receiving job notifications on this device.",
+    [
+      {text: 'Cancel', style: 'cancel'},
+      {text: 'Sign out', style: 'destructive', onPress: onConfirm},
+    ],
+  );
 }
 
 const CustomDrawer = (props: any) => {
   const dispatch = useDispatch();
   const user = useSelector((state: any) => state.auth.user);
+  const token = useSelector((state: any) => state.auth.token);
   const activeRoute = props.state.routeNames[props.state.index];
+  const [signingOut, setSigningOut] = React.useState(false);
 
   return (
     <View style={styles.root}>
@@ -85,17 +91,23 @@ const CustomDrawer = (props: any) => {
         <DrawerAction
           icon="call-outline"
           label="Contact support"
-          onPress={() => Linking.openURL('tel:+9609993529')}
+          onPress={() => Linking.openURL(`tel:${SUPPORT_PHONE}`)}
         />
         <DrawerAction
           icon="log-out-outline"
-          label="Sign out"
+          label={signingOut ? 'Signing out…' : 'Sign out'}
           danger
-          onPress={async () => {
-            await KeyChain.resetGenericPassword();
-            await AsyncStorage.multiRemove(['user', 'token']);
-            dispatch({type: 'LOGOUT'});
-          }}
+          loading={signingOut}
+          onPress={() =>
+            confirmSignOut(async () => {
+              setSigningOut(true);
+              try {
+                await signOut(dispatch, token);
+              } finally {
+                setSigningOut(false);
+              }
+            })
+          }
         />
       </View>
     </View>
@@ -107,20 +119,30 @@ function DrawerAction({
   label,
   onPress,
   danger,
+  loading,
 }: {
   icon: string;
   label: string;
   onPress: () => void;
   danger?: boolean;
+  loading?: boolean;
 }) {
+  const tint = danger ? colors.error : colors.gray2;
   return (
-    <TouchableOpacity style={styles.action} onPress={onPress} activeOpacity={0.7}>
-      <Icon
-        name={icon}
-        size={20}
-        color={danger ? colors.error : colors.gray2}
-        style={styles.actionIcon}
-      />
+    <TouchableOpacity
+      style={styles.action}
+      onPress={onPress}
+      disabled={loading}
+      activeOpacity={0.7}>
+      {loading ? (
+        <ActivityIndicator
+          size="small"
+          color={tint}
+          style={styles.actionIcon}
+        />
+      ) : (
+        <Icon name={icon} size={20} color={tint} style={styles.actionIcon} />
+      )}
       <Text style={[styles.actionText, danger && styles.actionDanger]}>
         {label}
       </Text>

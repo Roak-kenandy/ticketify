@@ -1,4 +1,4 @@
-import {configureStore, Middleware} from '@reduxjs/toolkit';
+import {configureStore} from '@reduxjs/toolkit';
 
 import authReducer from './reducers/auth.reducer';
 import globalReducer from './reducers/global.reducer';
@@ -10,6 +10,15 @@ export const store = configureStore({
     global: globalReducer,
     notifications: NotificationReducer,
   },
+  middleware: getDefaultMiddleware =>
+    getDefaultMiddleware({
+      // Ticket payloads are large CRM documents; the dev-only checks walk the
+      // whole tree on every dispatch and make the JS thread stutter.
+      serializableCheck: false,
+      immutableCheck: false,
+    }),
 });
+
+export type RootState = ReturnType<typeof store.getState>;
 
 export default store;

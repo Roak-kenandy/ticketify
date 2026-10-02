@@ -57,7 +57,10 @@ function tryReleasePending(ticketId: string, serverTicket: any) {
   }
 }
 
-function shouldPreferLocalState(localState: string, serverState: string): boolean {
+function shouldPreferLocalState(
+  localState: string,
+  serverState: string,
+): boolean {
   return (STATE_RANK[localState] ?? 0) > (STATE_RANK[serverState] ?? 0);
 }
 
@@ -74,37 +77,45 @@ function mergePendingIntoTicket(ticket: any): any {
     pendingById.delete(String(ticket.id));
     return ticket;
   }
-  const {_mutatedAt, ...rest} = pending;
-  return {...ticket, ...rest};
+  return {...ticket, ...withoutMeta(pending)};
 }
 
-function applyPendingToList(tickets: any[]): any[] {
-  return tickets.map(mergePendingIntoTicket);
+function withoutMeta(pending: Record<string, unknown>) {
+  const rest = {...pending};
+  delete rest._mutatedAt;
+  return rest;
 }
 
-function applyPendingToTeamTickets(teams: any[]): any[] {
-  if (!Array.isArray(teams)) {
-    return teams;
+/** `/tickets/teams` returns `[{team, tickets: {content: [...]}}]`. */
+export function teamTicketList(group: any): any[] {
+  if (Array.isArray(group?.tickets?.content)) {
+    return group.tickets.content;
   }
-  return teams.map(team => {
-    if (!Array.isArray(team?.content)) {
-      return team;
-    }
-    return {...team, content: applyPendingToList(team.content)};
-  });
+  if (Array.isArray(group?.content)) {
+    return group.content;
+  }
+  return [];
+}
+
+function withTeamTicketList(group: any, list: any[]): any {
+  if (Array.isArray(group?.tickets?.content)) {
+    return {...group, tickets: {...group.tickets, content: list}};
+  }
+  if (Array.isArray(group?.content)) {
+    return {...group, content: list};
+  }
+  return group;
 }
 
 function mergeTicketFromServer(server: any, local?: any): any {
   const id = String(server?.id);
   tryReleasePending(id, server);
-  let merged = mergePendingIntoTicket(server);
+  const merged = mergePendingIntoTicket(server);
   const pending = pendingById.get(id);
   if (pending) {
     const age = Date.now() - (pending._mutatedAt as number);
     if (age < MAX_PENDING_MS) {
-      const {_mutatedAt, ...rest} = pending;
-      merged = {...merged, ...rest};
-      return merged;
+      return {...merged, ...withoutMeta(pending)};
     }
   }
   if (local && shouldPreferLocalState(local.state, merged.state)) {
@@ -127,11 +138,7 @@ function mergeTicketListFromServer(incoming: any[], existing: any[]): any[] {
       continue;
     }
     const pending = pendingById.get(id);
-    if (
-      pending ||
-      local.state === 'IN_PROGRESS' ||
-      local.state === 'CLOSED'
-    ) {
+    if (pending || local.state === 'IN_PROGRESS' || local.state === 'CLOSED') {
       merged.push(mergePendingIntoTicket(local));
     }
   }
@@ -144,22 +151,19 @@ function mergeTeamTicketsFromServer(incoming: any[], existing: any[]): any[] {
     return incoming;
   }
   const existingMap = new Map<string, any>();
-  for (const team of existing) {
-    for (const ticket of team?.content ?? []) {
+  for (const team of Array.isArray(existing) ? existing : []) {
+    for (const ticket of teamTicketList(team)) {
       existingMap.set(String(ticket.id), ticket);
     }
   }
-  return incoming.map(team => {
-    if (!Array.isArray(team?.content)) {
-      return team;
-    }
-    return {
-      ...team,
-      content: team.content.map((ticket: any) =>
+  return incoming.map(team =>
+    withTeamTicketList(
+      team,
+      teamTicketList(team).map((ticket: any) =>
         mergeTicketFromServer(ticket, existingMap.get(String(ticket.id))),
       ),
-    };
-  });
+    ),
+  );
 }
 
 function normalizeServerTicket(ticketId: string, serverTicket?: any) {
@@ -171,12 +175,15 @@ function normalizeServerTicket(ticketId: string, serverTicket?: any) {
 }
 
 export async function fetchMyTickets(token: string) {
-  const data = await apiGet('/tickets', token);
+  const data = await apiGet('/tickets', token, {
+    silent: true,
+    timeoutMs: 30000,
+  });
   return data?.content ?? [];
 }
 
 export async function fetchTeamTickets(token: string) {
-  return apiGet('/tickets/teams', token);
+  return apiGet('/tickets/teams', token, {silent: true, timeoutMs: 30000});
 }
 
 export async function fetchTicketById(token: string, ticketId: string) {
@@ -192,10 +199,7 @@ export async function syncAllTickets(
   if (!token) {
     return;
   }
-  if (
-    !options?.force &&
-    Date.now() - lastMutationAt < MUTATION_GRACE_MS
-  ) {
+  if (!options?.force && Date.now() - lastMutationAt < MUTATION_GRACE_MS) {
     return;
   }
 
@@ -232,6 +236,17 @@ export async function syncAllTickets(
     errors.push(teamResult.reason);
   }
 
+  dispatch({
+    type: 'TICKETS_SYNC_STATUS',
+    payload: {
+      syncedAt: errors.length < 2 ? Date.now() : undefined,
+      error:
+        errors.length > 0
+          ? errors[0]?.message || 'Could not load tickets'
+          : null,
+    },
+  });
+
   if (errors.length === 2) {
     throw errors[0];
   }
@@ -258,11 +273,7 @@ export function patchTicketState(
   });
 }
 
-async function reconcileTicket(
-  dispatch: any,
-  token: string,
-  ticketId: string,
-) {
+async function reconcileTicket(dispatch: any, token: string, ticketId: string) {
   if (!pendingById.has(ticketId)) {
     return;
   }
@@ -326,11 +337,7 @@ export async function notifyTicketMutation(
 }
 
 /** @deprecated use notifyTicketMutation */
-export function applyTicketChange(
-  dispatch: any,
-  token: string,
-  ticket: any,
-) {
+export function applyTicketChange(dispatch: any, token: string, ticket: any) {
   notifyTicketMutation(dispatch, token, ticket.id, {}, ticket);
 }
 

@@ -1,6 +1,9 @@
 import {
+  BadRequestException,
   ForbiddenException,
+  HttpException,
   Injectable,
+  NotFoundException,
   Req,
   ServiceUnavailableException,
   StreamableFile,
@@ -376,38 +379,50 @@ export class TicketsService {
   }
 
   async crmFindServiceRequest(crm_id: string) {
-    let service_request = await this.FetchRequestDetails(crm_id);
+    const service_request = await this.FetchRequestDetails(crm_id);
+    if (!service_request || service_request instanceof HttpException) {
+      throw new NotFoundException('Ticket not found in CRM');
+    }
 
-    this.logger.log('Ticket Service', 'CRM Service request found');
-    this.logger.log(
-      'Ticket Service',
-      service_request?.categories ? 'Categories found' : 'No categories found',
-    );
-    let service_request_notes = await this.FetchServiceRequestNotes(crm_id);
-    let service_request_activities = await this.fetchRequestActivities(crm_id);
-    let service_request_queue_stages =
-      await this.fetchRequestQueueStages(crm_id);
+    // Everything below only depends on the ticket itself, so fetch it in
+    // parallel (previously seven sequential CRM round trips).
+    const settle = async <T>(work: Promise<T>, fallback: T): Promise<T> => {
+      try {
+        const value = await work;
+        return value instanceof HttpException || value == null ? fallback : value;
+      } catch (error) {
+        this.logger.error('Ticket Service', `Ticket ${crm_id} detail part failed: ${error}`);
+        return fallback;
+      }
+    };
+    const empty = { content: [] as any[] };
+    const queueId = service_request.queue?.id;
+    const contactId = service_request.contact?.id;
 
-    let queue_info = await this.crmFindQueueById(service_request.queue?.id);
-    console.log(queue_info);
-    let contact_details = await this.fetchContactDetails(
-      service_request.contact?.id,
-    );
-    let service_request_attachments =
-      await this.FetchServiceRequestAttachments(crm_id);
+    const [notes, activities, stages, queue_info, contact, attachments] =
+      await Promise.all([
+        settle(this.FetchServiceRequestNotes(crm_id), empty),
+        settle(this.fetchRequestActivities(crm_id), empty),
+        settle(this.fetchRequestQueueStages(crm_id), { ...service_request.queue, content: [] }),
+        queueId ? settle(this.crmFindQueueById(queueId), null) : Promise.resolve(null),
+        contactId
+          ? settle(this.fetchContactDetails(contactId), service_request.contact)
+          : Promise.resolve(service_request.contact ?? null),
+        settle(this.FetchServiceRequestAttachments(crm_id), empty),
+      ]);
 
-    await Promise.all(
-      service_request_attachments?.content?.map(async (attachment) => {
-        attachment.file_url =
-          this.config.get('API_URL') + '/files/' + attachment.file?.id;
-      }),
-    );
+    const apiUrl = String(this.config.get('API_URL') ?? '').replace(/\/$/, '');
+    for (const attachment of attachments?.content ?? []) {
+      if (attachment?.file?.id) {
+        attachment.file_url = `${apiUrl}/tickets/files/${attachment.file.id}`;
+      }
+    }
     service_request.queue_info = queue_info;
-    service_request.queue = service_request_queue_stages;
-    service_request.notes = service_request_notes;
-    service_request.attachments = service_request_attachments;
-    service_request.activities = service_request_activities;
-    service_request.contact = contact_details;
+    service_request.queue = stages;
+    service_request.notes = notes;
+    service_request.attachments = attachments;
+    service_request.activities = activities;
+    service_request.contact = contact;
     service_request.categories = service_request.categories || [];
 
     return service_request;
@@ -873,16 +888,33 @@ Medianet Support Team
     return { new_tickets, in_progress_tickets };
   }
 
-  private async fetchAllTeamTicketsInState(team_id: string, state: string) {
-    const size = 100;
-    const maxPages = Number(this.config.get('CRM_MAX_PAGES') ?? 20);
+  private fetchAllTeamTicketsInState(team_id: string, state: string) {
+    return this.fetchAllTicketsInState({ assigned_to_team_id: team_id }, state);
+  }
+
+  /**
+   * Every CRM page of tickets in one state for a team or user. The CRM returns
+   * newest first, so `maxPages` caps very old backlogs rather than new work.
+   */
+  private async fetchAllTicketsInState(
+    owner: { assigned_to_team_id?: string; assigned_to_user_id?: string },
+    state: string,
+    opts: { maxPages?: number; size?: number } = {},
+  ) {
+    const size = opts.size ?? 100;
+    const maxPages = opts.maxPages ?? Number(this.config.get('CRM_MAX_PAGES') ?? 20);
     const timeoutMs = Number(this.config.get('CRM_REQUEST_TIMEOUT_MS') ?? 15_000);
     const base = String(this.config.get('CRM_BACKOFFICE_API_URL') ?? '').replace(/\/$/, '');
+    const ownerQuery = Object.entries(owner)
+      .filter(([, value]) => Boolean(value))
+      .map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`)
+      .join('&');
+    const label = ownerQuery || 'all';
     const rows: any[] = [];
 
     for (let page = 1; page <= maxPages; page++) {
       const url =
-        `${base}/service_requests?assigned_to_team_id=${encodeURIComponent(team_id)}` +
+        `${base}/service_requests?${ownerQuery}` +
         `&states=${state}&size=${size}&page=${page}`;
       let response: Response;
       try {
@@ -891,11 +923,11 @@ Medianet Support Team
           signal: AbortSignal.timeout(timeoutMs),
         });
       } catch (error) {
-        this.logger.error('Ticket Service', `CRM ${state} tickets for team ${team_id} failed: ${error}`);
+        this.logger.error('Ticket Service', `CRM ${state} tickets for ${label} failed: ${error}`);
         throw new ServiceUnavailableException('CRM did not respond in time. Try again shortly.');
       }
       if (!response.ok) {
-        this.logger.error('Ticket Service', `CRM ${state} tickets for team ${team_id}: HTTP ${response.status}`);
+        this.logger.error('Ticket Service', `CRM ${state} tickets for ${label}: HTTP ${response.status}`);
         throw new ServiceUnavailableException('CRM returned an error while loading tickets.');
       }
       const body = (await response.json()) as {
@@ -907,6 +939,58 @@ Medianet Support Team
       if (!body?.paging?.has_more || content.length === 0) break;
     }
     return rows;
+  }
+
+  /**
+   * Technician app "my tickets": all open work across every CRM page plus the
+   * most recent closed tickets. Replaces a single unfiltered page of 100 that
+   * was mostly CLOSED and silently dropped open jobs for busy technicians.
+   */
+  async fetchMyTickets(crm_user_id: string, recentClosed = 50) {
+    if (!crm_user_id) {
+      throw new BadRequestException('Your account is not linked to a CRM user.');
+    }
+    const owner = { assigned_to_user_id: crm_user_id };
+    const [newRows, inProgressRows, closedRows] = await Promise.all([
+      this.fetchAllTicketsInState(owner, 'NEW'),
+      this.fetchAllTicketsInState(owner, 'IN_PROGRESS'),
+      this.fetchAllTicketsInState(owner, 'CLOSED', { maxPages: 1, size: recentClosed }).catch(
+        () => [] as any[],
+      ),
+    ]);
+    const content = [...inProgressRows, ...newRows, ...closedRows];
+    return {
+      content,
+      counts: {
+        new: newRows.length,
+        in_progress: inProgressRows.length,
+        closed_recent: closedRows.length,
+      },
+    };
+  }
+
+  /** Unassigned + assigned NEW tickets for each of the technician's CRM teams. */
+  async findAllTeamTicketsSafe(crm_user_id: string) {
+    const crm_user = await this.user.crmGetUser(crm_user_id);
+    const teams: { id: string; name?: string }[] = Array.isArray(crm_user?.teams)
+      ? crm_user.teams
+      : [];
+    const groups = await Promise.all(
+      teams.map(async (team) => {
+        try {
+          const content = await this.fetchAllTicketsInState(
+            { assigned_to_team_id: team.id },
+            'NEW',
+            { maxPages: 3 },
+          );
+          return { team, tickets: { content } };
+        } catch (error) {
+          this.logger.error('Ticket Service', `Team ${team.id} tickets failed: ${error}`);
+          return { team, tickets: { content: [] as any[] }, error: 'unavailable' };
+        }
+      }),
+    );
+    return groups.sort((a, b) => String(a.team?.name ?? '').localeCompare(String(b.team?.name ?? '')));
   }
 
   async fetchUnassignedNewTeamTickets(team_id: string) {
@@ -1067,12 +1151,91 @@ Medianet Support Team
     return crm_service_request_queue_stages.json();
   }
 
-  async fetchFile(file_id: string) {
-    this.logger.log('Ticket Service', 'Fetching file');
-    let crm_file = await this.fetchRequestFile(file_id);
-    this.logger.log('Ticket Service', 'File fetched');
+  /**
+   * Streams a CRM file to an authenticated client so the CRM API key never
+   * ships inside the mobile app.
+   */
+  async fetchFile(file_id: string): Promise<{ buffer: Buffer; contentType: string }> {
+    if (!/^[A-Za-z0-9-]{8,64}$/.test(file_id ?? '')) {
+      throw new BadRequestException('Invalid file id');
+    }
+    const base = String(this.config.get('CRM_BACKOFFICE_API_URL') ?? '').replace(/\/$/, '');
+    let response: Response;
+    try {
+      response = await fetch(`${base}/files/${file_id}`, {
+        headers: { api_key: this.config.get('CRM_API_KEY') },
+        signal: AbortSignal.timeout(Number(this.config.get('CRM_FILE_TIMEOUT_MS') ?? 30_000)),
+      });
+    } catch (error) {
+      this.logger.error('Ticket Service', `CRM file ${file_id} failed: ${error}`);
+      throw new ServiceUnavailableException('Could not load the file right now.');
+    }
+    if (response.status === 404) {
+      throw new NotFoundException('File not found');
+    }
+    if (!response.ok) {
+      this.logger.error('Ticket Service', `CRM file ${file_id}: HTTP ${response.status}`);
+      throw new ServiceUnavailableException('Could not load the file right now.');
+    }
+    const maxBytes = 15 * 1024 * 1024;
+    const declared = Number(response.headers.get('content-length') ?? 0);
+    if (declared > maxBytes) {
+      throw new BadRequestException('File is too large to preview');
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > maxBytes) {
+      throw new BadRequestException('File is too large to preview');
+    }
+    return {
+      buffer,
+      contentType: response.headers.get('content-type') || 'application/octet-stream',
+    };
+  }
 
-    return crm_file;
+  /** Upload a device file to the CRM and attach it to the ticket in one call. */
+  async uploadDeviceFileToTicket(
+    ticket_id: string,
+    file: { buffer: Buffer; mimetype?: string; originalname?: string; size?: number },
+    description: string,
+  ) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Choose a photo to upload');
+    }
+    if (!description?.trim()) {
+      throw new BadRequestException('Add a short description for the attachment');
+    }
+    const base = String(this.config.get('CRM_BACKOFFICE_API_URL') ?? '').replace(/\/$/, '');
+    const form = new FormData();
+    form.append(
+      'file',
+      new Blob([new Uint8Array(file.buffer)], { type: file.mimetype || 'application/octet-stream' }),
+      file.originalname || `attachment-${Date.now()}.jpg`,
+    );
+    form.append('description', description.trim());
+
+    let upload: Response;
+    try {
+      upload = await fetch(`${base}/upload/files`, {
+        method: 'POST',
+        headers: { api_key: this.config.get('CRM_API_KEY'), accept: 'application/json' },
+        body: form,
+        signal: AbortSignal.timeout(Number(this.config.get('CRM_FILE_TIMEOUT_MS') ?? 60_000)),
+      });
+    } catch (error) {
+      this.logger.error('Ticket Service', `CRM upload for ${ticket_id} failed: ${error}`);
+      throw new ServiceUnavailableException('Upload timed out. Please try again.');
+    }
+    const uploaded = (await upload.json().catch(() => null)) as { id?: string; message?: string } | null;
+    if (!upload.ok || !uploaded?.id) {
+      this.logger.error('Ticket Service', `CRM upload for ${ticket_id}: HTTP ${upload.status}`);
+      throw new ServiceUnavailableException(uploaded?.message || 'The CRM rejected the upload.');
+    }
+
+    const attachment = await this.crmAddAttachmentToTicket(ticket_id, uploaded.id, description.trim());
+    if (attachment instanceof HttpException) {
+      throw attachment;
+    }
+    return { message: 'Attachment uploaded', file_id: uploaded.id, attachment };
   }
 
   async fetchRequestActivities(crm_id: string) {
@@ -1401,28 +1564,6 @@ Medianet Support Team
     }
   }
 
-  async fetchRequestFile(file_id: string) {
-    let crm_request_file = await fetch(
-      this.config.get('CRM_BACKOFFICE_API_URL') +
-        '/files/8e6ca7f6-9577-4ab9-8699-a9ff8ae6d3c8',
-      {
-        headers: {
-          api_key: this.config.get('CRM_API_KEY'),
-        },
-      },
-    );
-    //app.crm.com/backoffice/v2/files/8e6ca7f6-9577-4ab9-8699-a9ff8ae6d3c8
-
-    if (!crm_request_file.ok) {
-      this.logger.error('Ticket Service', 'CRM file not found');
-      return new ForbiddenException('CRM file not found');
-    }
-
-    this.logger.log('Ticket Service', 'CRM  file found');
-
-    return crm_request_file;
-  }
-
   async FetchServiceRequestNotes(crm_id: string) {
     let crm_service_request_notes = await fetch(
       this.config.get('CRM_BACKOFFICE_API_URL') +
@@ -1689,15 +1830,12 @@ Medianet Support Team
   // activtiies for LM
 
   async findTicketActivitiesContext(id: string) {
-    const lmContext = await this.getLmHandoffContext(id);
-    let noResponseActivities: Awaited<
-      ReturnType<TicketsService['listNoResponseActivities']>
-    > = [];
-    try {
-      noResponseActivities = await this.listNoResponseActivities(id);
-    } catch {
-      noResponseActivities = [];
-    }
+    const [lmContext, noResponseActivities] = await Promise.all([
+      this.getLmHandoffContext(id),
+      this.listNoResponseActivities(id).catch(
+        () => [] as Awaited<ReturnType<TicketsService['listNoResponseActivities']>>,
+      ),
+    ]);
     const pendingNoResponse = noResponseActivities.some(
       (a) => this.resolveCrmActivityState(a) === 'PENDING',
     );

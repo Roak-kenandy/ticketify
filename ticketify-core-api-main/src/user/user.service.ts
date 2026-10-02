@@ -2,6 +2,8 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -83,7 +85,9 @@ export class UserService {
         },
       },
     });
-    console.log('User', get_user);
+    if (!get_user) {
+      throw new UnauthorizedException('Account no longer exists');
+    }
 
     delete get_user.password;
 
@@ -197,8 +201,6 @@ export class UserService {
   }
 
   async getTechniciansByTeam(team_id: string) {
-    console.log('Team ID', team_id);
-
     const crm_users = await fetch(
       `https://app.crm.com/backoffice/v2/users?teams=${team_id}&size=100&user_roles=a23492ca-89f7-4ccc-92c0-387a61ab1802`,
       {
@@ -337,15 +339,24 @@ export class UserService {
   }
 
   async crmGetUser(user_id: any) {
-    let crm_get_user = await fetch(
-      this.config.get('CRM_BACKOFFICE_API_URL') + '/users/' + user_id,
-      {
-        headers: {
-          content_type: 'application/json',
-          api_key: this.config.get('CRM_API_KEY'),
+    let crm_get_user: Response;
+    try {
+      crm_get_user = await fetch(
+        this.config.get('CRM_BACKOFFICE_API_URL') + '/users/' + user_id,
+        {
+          headers: {
+            content_type: 'application/json',
+            api_key: this.config.get('CRM_API_KEY'),
+          },
+          signal: AbortSignal.timeout(
+            Number(this.config.get('CRM_REQUEST_TIMEOUT_MS') ?? 15_000),
+          ),
         },
-      },
-    );
+      );
+    } catch (error) {
+      this.logger.error('User Service', `CRM user ${user_id} request failed: ${error}`);
+      throw new ServiceUnavailableException('CRM did not respond in time. Try again shortly.');
+    }
 
     if (!crm_get_user.ok) {
       this.logger.error('Ticket Service', 'CRM User not found');
@@ -365,7 +376,17 @@ export class UserService {
       return new Date();
     }
     const parsed = new Date(raw);
-    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+    const now = Date.now();
+    // Older Android builds sent local time with a 'Z' suffix, which lands in
+    // the future and would pin the map to a stale point for hours.
+    const maxClockSkewMs = 2 * 60 * 1000;
+    if (
+      Number.isNaN(parsed.getTime()) ||
+      parsed.getTime() - now > maxClockSkewMs
+    ) {
+      return new Date(now);
+    }
+    return parsed;
   }
 
   async addLocationTracking(location: CreateLocationTrackDto, user: any) {

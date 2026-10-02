@@ -30,7 +30,11 @@ const initialValues = {
 };
 
 const validationSchema = yup.object().shape({
-  email: yup.string().required().email('Please enter a valid email address'),
+  email: yup
+    .string()
+    .trim()
+    .required('Email is required')
+    .email('Please enter a valid email address'),
   password: yup.string().required('Password is required'),
 });
 
@@ -51,25 +55,19 @@ const LoginForm = (_props: Props) => {
       const {data, response} = await apiFetch('/auth/login', null, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({email, password}),
+        body: JSON.stringify({email: email.trim(), password}),
       });
 
       const token = data?.access_token;
-      const isSuccess =
-        response.ok && Boolean(token) && Boolean(data?.user);
+      const isSuccess = response.ok && Boolean(token) && Boolean(data?.user);
 
       if (!isSuccess) {
-        setLoginError(
-          formatApiError(data, 'Invalid email or password'),
-        );
+        setLoginError(formatApiError(data, 'Invalid email or password'));
         return;
       }
 
       try {
-        await KeyChain.setGenericPassword(
-          JSON.stringify(data.user),
-          token,
-        );
+        await KeyChain.setGenericPassword(JSON.stringify(data.user), token);
       } catch {
         // Session still valid in memory for this session
       }
@@ -98,11 +96,7 @@ const LoginForm = (_props: Props) => {
         }
       }, 1500);
     } catch (err: any) {
-      const message =
-        err?.message === 'Network request failed'
-          ? 'Cannot reach server. Check USB connection and ensure the API is running.'
-          : err?.message || 'Something went wrong. Please try again.';
-      setLoginError(message);
+      setLoginError(err?.message || 'Something went wrong. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -162,6 +156,9 @@ const LoginForm = (_props: Props) => {
                   <TextInput
                     ref={passwordRef}
                     secureTextEntry
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    textContentType="password"
                     placeholder="Enter your password"
                     placeholderTextColor={colors.gray3}
                     style={globalStyles.input}

@@ -129,7 +129,7 @@ export class AuthService {
     // TODO: encrypt password before sending to the database
     const user = await this.prisma.user.findFirst({
       where: {
-        email: dto.email,
+        email: { equals: String(dto.email ?? '').trim(), mode: 'insensitive' },
       },
       include: {
         role: {
@@ -195,15 +195,12 @@ export class AuthService {
     }
 
     const match = await argon.verify(existing_user.password, dto.old_password);
-
-    const same = await argon.verify(existing_user.password, dto.new_password);
-
-    if (same) {
-      throw new ForbiddenException('New password cannot be the same as old');
+    if (!match) {
+      throw new ForbiddenException('Current password is incorrect');
     }
 
-    if (!match) {
-      throw new ForbiddenException('Invalid credentials');
+    if (dto.old_password === dto.new_password) {
+      throw new ForbiddenException('New password cannot be the same as old');
     }
 
     // change the password

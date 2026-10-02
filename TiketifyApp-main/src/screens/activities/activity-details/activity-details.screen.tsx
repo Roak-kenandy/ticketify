@@ -1,207 +1,233 @@
 import moment from 'moment';
 import React from 'react';
 import {
-  Dimensions,
   Image,
   Linking,
   RefreshControl,
-  SafeAreaView,
-  ScrollView as RNScrollView,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import {ScrollView} from 'react-native-gesture-handler';
-import {useDispatch, useSelector} from 'react-redux';
-import BackButton from '../../../components/back-button/BackButton';
-import ItemRender from '../../../components/item-render/item-render';
-import ABadge from '../../../components/ui/badge';
-import PrimaryButton from '../../../components/ui/primary-button';
-import SecondaryButton from '../../../components/ui/secondary-button';
-import ASeperator from '../../../components/ui/seperator';
-import colors from '../../../constants/colors';
-import {ServiceRequest} from '../../../types/service-request.type';
-import AddAttachmentModal from './modals/add-attachment.modal';
-import AddNoteModal from './modals/add-note.modal';
-import ViewImageModal from './modals/view-image.modal';
-import Snackbar from 'react-native-snackbar';
-import ClosingModal from './modals/complete-ticket.modal';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Ionicons';
-import ViewInfoModal from './modals/view-info.modal';
-import ProgressTicketModal from './modals/progress-ticket.modal';
-import ScheduleVisitModal from './modals/schedule-visit.modal';
-import LmHandoffModal from './modals/lm-handoff.modal';
-import BillingWorkflowModal from './modals/billing-workflow.modal';
-import TertiaryButton from '../../../components/ui/tertiary-button';
-import ActivityDetailModal from './modals/activity-details.modal';
-import {API_BASE_URL} from '../../../config/api';
-import {apiGet} from '../../../utils/apiClient';
+import {useDispatch, useSelector} from 'react-redux';
+import StackHeader from '../../../components/layout/stack-header';
+import {ToneBadge} from '../../../components/ui/badge';
+import PrimaryButton from '../../../components/ui/primary-button';
+import {
+  EmptyState,
+  ErrorState,
+  InlineBanner,
+  Skeleton,
+} from '../../../components/ui/state-views';
+import colors from '../../../constants/colors';
+import {radius, shadows, spacing, typography} from '../../../constants/styles';
+import {
+  priorityMeta,
+  ticketStateMeta,
+  Tone,
+} from '../../../constants/ticket-meta';
 import {
   notifyTicketMutation,
   sameTicketId,
 } from '../../../services/ticketsSync';
+import {apiGet, apiPut, fileImageSource} from '../../../utils/apiClient';
 import {
   hasPendingLastMile,
   hasPendingNoResponse,
   lmStatusLabel,
   resolveCrmActivityState,
 } from '../../../utils/crmActivityState';
+import {showError, showInfo, showSuccess} from '../../../utils/notify';
+import ActivityDetailModal from './modals/activity-details.modal';
+import AddAttachmentModal from './modals/add-attachment.modal';
+import AddNoteModal from './modals/add-note.modal';
+import BillingWorkflowModal from './modals/billing-workflow.modal';
+import ClosingModal from './modals/complete-ticket.modal';
+import LmHandoffModal from './modals/lm-handoff.modal';
+import ProgressTicketModal from './modals/progress-ticket.modal';
+import ScheduleVisitModal from './modals/schedule-visit.modal';
+import ViewImageModal from './modals/view-image.modal';
+import ViewInfoModal from './modals/view-info.modal';
 
 type Props = {
   navigation: any;
   route: any;
-  ticket: ServiceRequest;
 };
 
-let {width} = Dimensions.get('window');
+function findNextStage(ticket: any) {
+  const order = ticket?.stage?.order ?? 0;
+  return ticket?.queue_info?.stages?.find(
+    (stage: any) => stage.order === order + 1,
+  );
+}
 
-const ActivityDetailsScreen = (props: Props) => {
+function crmDate(seconds?: number, format = 'DD MMM YYYY') {
+  return seconds ? moment(seconds * 1000).format(format) : '';
+}
+
+const ActivityDetailsScreen = ({navigation, route}: Props) => {
   const dispatch = useDispatch();
+  const insets = useSafeAreaInsets();
   const token = useSelector((state: any) => state.auth?.token);
   const user = useSelector((state: any) => state.auth?.user);
-  const ticket = props.route.params.ticket;
-  let [data, setData] = React.useState<ServiceRequest>();
-  let [loading, setLoading] = React.useState(false);
-  let [attachmentModalVisible, setAttachmentModalVisible] =
-    React.useState(false);
-  let [activityDetailsModalVisible, setActivityDetailsModalVisible] =
-    React.useState(false);
-  let [selectedActivity, setSelectedActivity] = React.useState<any>();
-  let [noteModalVisible, setNoteModalVisible] = React.useState(false);
-  let [viewImageModalVisible, setViewImageModalVisible] = React.useState(false);
-  let [closeModalVisible, setCloseModalVisible] = React.useState(false);
-  let [selectedImage, setSelectedImage] = React.useState<any>();
-  let [viewInfoModalVisible, setViewInfoModalVisible] = React.useState(false);
-  let [nextStage, setNextStage] = React.useState<any>();
-  let [submitted, setSubmitted] = React.useState(false);
-  let [progressTicketModalVisible, setProgressTicketModalVisible] =
-    React.useState(false);
-  let [scheduleModalVisible, setScheduleModalVisible] = React.useState(false);
-  let [lmHandoffVisible, setLmHandoffVisible] = React.useState(false);
-  const [lmPending, setLmPending] = React.useState(false);
-  const [nrPending, setNrPending] = React.useState(false);
-  const [paymentModalVisible, setPaymentModalVisible] = React.useState(false);
-  const [billingWorkflow, setBillingWorkflow] = React.useState<any>(null);
+  const routeTicket = route.params?.ticket;
+  const ticket = React.useMemo(() => routeTicket ?? {}, [routeTicket]);
 
-  const fetchBillingWorkflow = React.useCallback(async () => {
-    if (!token || !ticket?.id) return;
-    try {
-      const data = await apiGet(
-        `/billing/tickets/${ticket.id}/workflow`,
-        token,
-      );
-      setBillingWorkflow(data);
-    } catch {
-      setBillingWorkflow(null);
-    }
-  }, [token, ticket?.id]);
-
+  const [data, setData] = React.useState<any>();
+  const nextStage = React.useMemo(() => findNextStage(data), [data]);
   const [context, setContext] = React.useState<any>(null);
+  const [billingWorkflow, setBillingWorkflow] = React.useState<any>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [refreshing, setRefreshing] = React.useState(false);
+  const [loadError, setLoadError] = React.useState('');
+  const [submitted, setSubmitted] = React.useState(false);
+  const [noResponseBusy, setNoResponseBusy] = React.useState(false);
+
+  const [selectedActivity, setSelectedActivity] = React.useState<any>();
+  const [selectedImage, setSelectedImage] = React.useState<any>();
+  const [modal, setModal] = React.useState<
+    | null
+    | 'activity'
+    | 'attachment'
+    | 'note'
+    | 'image'
+    | 'close'
+    | 'progress'
+    | 'schedule'
+    | 'billing'
+    | 'lm'
+    | 'info'
+  >(null);
+  const modalSetter = (name: NonNullable<typeof modal>) => (value: boolean) =>
+    setModal(value ? name : null);
 
   const storeTicket = useSelector((state: any) =>
     state.global.tickets.find((t: any) => sameTicketId(t.id, ticket?.id)),
   );
 
-  const applyToLocalState = React.useCallback((updated: any) => {
-    if (!updated) {
-      return;
-    }
-    setData(prev => ({...(prev ?? ticket), ...updated}));
-    const stageOrder = updated?.stage?.order ?? 0;
-    setNextStage(
-      updated?.queue_info?.stages?.find(
-        (stage: {order: number}) => stage.order === stageOrder + 1,
-      ),
-    );
-  }, [ticket]);
+  const applyToLocalState = React.useCallback(
+    (updated: any) => {
+      if (!updated) {
+        return;
+      }
+      setData((prev: any) => ({...(prev ?? ticket), ...updated}));
+    },
+    [ticket],
+  );
 
-  const fetchContext = React.useCallback(
-    async (options?: {silent?: boolean}) => {
+  const fetchTicket = React.useCallback(async () => {
+    const ticketData = await apiGet(`/tickets/${ticket.id}`, token);
+    if (ticketData) {
+      setData(ticketData);
+    }
+  }, [ticket?.id, token]);
+
+  const fetchContext = React.useCallback(async () => {
+    try {
+      setContext(
+        await apiGet(`/tickets/${ticket.id}/context`, token, {silent: true}),
+      );
+    } catch {
+      // The context only drives blocking banners; the ticket itself still loads.
+    }
+  }, [ticket?.id, token]);
+
+  const fetchBillingWorkflow = React.useCallback(async () => {
+    try {
+      setBillingWorkflow(
+        await apiGet(`/billing/tickets/${ticket.id}/workflow`, token, {
+          silent: true,
+        }),
+      );
+    } catch {
+      setBillingWorkflow(null);
+    }
+  }, [ticket?.id, token]);
+
+  const loadAll = React.useCallback(
+    async (mode: 'initial' | 'refresh' | 'quiet') => {
       if (!ticket?.id || !token) {
         return;
       }
-      try {
-        const contextData = await apiGet(
-          `/tickets/${ticket.id}/context`,
-          token,
-        );
-        setContext(contextData);
-        setLmPending(Boolean(contextData?.pending_lm));
-        setNrPending(
-          Boolean(contextData?.pending_no_response) ||
-            hasPendingNoResponse(contextData?.no_response_activities),
-        );
-      } catch (error: any) {
-        if (!options?.silent) {
-          Snackbar.show({
-            backgroundColor: colors.primary,
-            textColor: colors.white,
-            text: error?.message || 'Failed to load context',
-            duration: Snackbar.LENGTH_SHORT,
-          });
-        }
+      if (mode === 'refresh') {
+        setRefreshing(true);
       }
-    },
-    [ticket?.id, token],
-  );
-
-  const fetchTicketById = React.useCallback(
-    async (id: number, options?: {silent?: boolean}) => {
-      if (!id || !token) {
-        return;
-      }
-      setLoading(true);
       try {
-        const ticketData = await apiGet(`/tickets/${id}`, token);
-        if (ticketData) {
-          setData(ticketData);
-          setNextStage(
-            ticketData?.queue_info?.stages.find(
-              (stage: {order: number}) =>
-                stage.order === ticketData?.stage?.order + 1,
-            ),
-          );
-        }
+        await Promise.all([
+          fetchTicket(),
+          fetchContext(),
+          fetchBillingWorkflow(),
+        ]);
+        setLoadError('');
       } catch (error: any) {
-        if (!options?.silent) {
-          Snackbar.show({
-            backgroundColor: colors.primary,
-            textColor: colors.white,
-            text: error?.message || 'Failed to load ticket',
-            duration: Snackbar.LENGTH_SHORT,
-          });
+        const message = error?.message || 'Could not load this ticket';
+        setLoadError(message);
+        if (mode === 'refresh') {
+          showError(message);
         }
       } finally {
         setLoading(false);
+        setRefreshing(false);
       }
     },
-    [token],
+    [ticket?.id, token, fetchTicket, fetchContext, fetchBillingWorkflow],
   );
 
-  async function assignUser() {
-    if (lmBlocking) {
-      Snackbar.show({
-        backgroundColor: colors.primary,
-        textColor: colors.white,
-        text: 'Last Mile cabling is still pending. You can assign after LM completes.',
-        duration: Snackbar.LENGTH_SHORT,
-      });
-      return;
+  React.useEffect(() => {
+    loadAll('initial');
+  }, [loadAll]);
+
+  React.useEffect(() => {
+    if (storeTicket) {
+      applyToLocalState(storeTicket);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeTicket?.state, storeTicket?.stage?.order]);
+
+  const refreshAfterChange = React.useCallback(
+    () => loadAll('quiet'),
+    [loadAll],
+  );
+
+  const view = data ?? ticket;
+  const isMine =
+    Boolean(user?.crm_user_id) &&
+    user?.crm_user_id === view?.assigned_to?.user?.id;
+  const isClosed = view?.state === 'CLOSED' || view?.stage?.name === 'Closed';
+  const canEdit = isMine && !isClosed;
+  const activities: any[] = data?.activities?.content ?? [];
+  const notes: any[] = data?.notes?.content ?? [];
+  const attachments: any[] = data?.attachments?.content ?? [];
+  const services: any[] = data?.contact?.services?.content ?? [];
+  const phone: string | undefined = data?.contact?.phone?.number;
+  const customerName: string | undefined =
+    data?.contact?.person_name?.full_name ||
+    data?.contact?.company_name ||
+    data?.contact?.name ||
+    ticket?.contact?.name;
+
+  const lmBlocking =
+    Boolean(context?.pending_lm) || hasPendingLastMile(activities);
+  const noResponseBlocking =
+    Boolean(context?.pending_no_response) ||
+    hasPendingNoResponse(context?.no_response_activities) ||
+    hasPendingNoResponse(activities);
+  const closeStageActive =
+    Boolean(nextStage) && data?.queue_info?.stages?.length === nextStage?.order;
+  const billingBlocksClose =
+    isMine && billingWorkflow?.can_close_ticket === false && closeStageActive;
+
+  async function assignUser() {
     setSubmitted(true);
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/tickets/${ticket?.id}/assign`,
-        {
-          method: 'PUT',
-          headers: {Authorization: 'Bearer ' + token},
-        },
+      const assigned = await apiPut(
+        `/tickets/${ticket.id}/assign`,
+        undefined,
+        token,
       );
-      const assigned = await response.json();
-      if (!response.ok) {
-        throw new Error(assigned?.message || 'Failed to assign ticket');
-      }
       const updated = await notifyTicketMutation(
         dispatch,
         token,
@@ -210,54 +236,26 @@ const ActivityDetailsScreen = (props: Props) => {
         assigned,
       );
       applyToLocalState(updated);
-      Snackbar.show({
-        backgroundColor: 'green',
-        textColor: colors.white,
-        text: 'Ticket was assigned to you',
-        duration: Snackbar.LENGTH_SHORT,
-      });
+      showSuccess('Ticket assigned to you');
     } catch (error: any) {
-      Snackbar.show({
-        backgroundColor: colors.primary,
-        textColor: colors.white,
-        text: error?.message || 'Failed to assign ticket',
-        duration: Snackbar.LENGTH_SHORT,
-      });
+      showError(error?.message || 'Could not assign the ticket');
     } finally {
       setSubmitted(false);
     }
   }
 
   async function startTroubleshooting() {
-    if (lmBlocking) {
-      Snackbar.show({
-        backgroundColor: colors.primary,
-        textColor: colors.white,
-        text: 'Complete Last Mile cabling before starting troubleshooting.',
-        duration: Snackbar.LENGTH_SHORT,
-      });
-      return;
-    }
     setSubmitted(true);
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/tickets/${ticket?.id}/start`,
-        {
-          method: 'PUT',
-          headers: {
-            Authorization: 'Bearer ' + token,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            stage_id: nextStage?.id,
-          }),
-        },
+      const result = await apiPut(
+        `/tickets/${ticket.id}/start`,
+        {stage_id: nextStage?.id},
+        token,
+        {timeoutMs: 30000},
       );
-      const result = await response.json();
-      if (!response.ok || result?.state !== 'IN_PROGRESS') {
+      if (result?.state !== 'IN_PROGRESS') {
         throw new Error(
-          result?.message ||
-            'CRM did not move the ticket to In Progress. Please try again.',
+          'The CRM did not move the ticket to In progress. Please try again.',
         );
       }
       const updated = await notifyTicketMutation(
@@ -265,901 +263,774 @@ const ActivityDetailsScreen = (props: Props) => {
         token,
         ticket.id,
         {state: result.state, stage: result.stage ?? nextStage ?? data?.stage},
-        {...(data ?? ticket), ...result, id: ticket.id},
+        {...view, ...result, id: ticket.id},
       );
       applyToLocalState(updated);
-      Snackbar.show({
-        backgroundColor: 'green',
-        textColor: colors.white,
-        text: 'Troubleshooting started — ticket is In Progress',
-        duration: Snackbar.LENGTH_SHORT,
-      });
+      showSuccess('Work started, ticket is In progress');
     } catch (error: any) {
-      Snackbar.show({
-        backgroundColor: colors.primary,
-        textColor: colors.white,
-        text: error?.message || 'Failed to start troubleshooting',
-        duration: Snackbar.LENGTH_SHORT,
-      });
+      showError(error?.message || 'Could not start the ticket');
     } finally {
       setSubmitted(false);
     }
   }
 
-  function closeTicket() {
-    setCloseModalVisible(true);
+  async function toggleNoResponse() {
+    setNoResponseBusy(true);
+    try {
+      const result = await apiPut(
+        `/tickets/${ticket.id}/no-response`,
+        undefined,
+        token,
+      );
+      showSuccess(result?.message || 'Updated');
+      refreshAfterChange();
+    } catch (error: any) {
+      showError(error?.message || 'Could not update No response');
+    } finally {
+      setNoResponseBusy(false);
+    }
   }
 
-  function progressTicket() {
-    setProgressTicketModalVisible(true);
+  function onPrimaryPress() {
+    if (submitted) {
+      return;
+    }
+    if (lmBlocking) {
+      showInfo('Finish Last Mile cabling before continuing this ticket.');
+      return;
+    }
+    if (!isMine) {
+      assignUser();
+      return;
+    }
+    if (view?.state === 'NEW') {
+      startTroubleshooting();
+      return;
+    }
+    if (closeStageActive) {
+      if (noResponseBlocking) {
+        showInfo('Clear No response before closing this ticket.');
+        return;
+      }
+      if (billingBlocksClose) {
+        showInfo(
+          billingWorkflow?.block_close_reason ??
+            'Complete charges and customer payment before closing.',
+        );
+        setModal('billing');
+        return;
+      }
+      setModal('close');
+      return;
+    }
+    setModal('progress');
   }
 
-  const handleTicketUpdated = React.useCallback(
-    (updated: any) => {
-      applyToLocalState(updated);
-    },
-    [applyToLocalState],
-  );
+  const primaryLabel = lmBlocking
+    ? 'Waiting for Last Mile'
+    : !isMine
+    ? 'Assign to me'
+    : view?.state === 'NEW'
+    ? `Start ${nextStage?.name ?? 'work'}`
+    : closeStageActive
+    ? 'Close ticket'
+    : `Move to ${nextStage?.name ?? 'next stage'}`;
 
-  const refreshAfterChange = React.useCallback(() => {
-    if (ticket?.id) {
-      fetchContext({silent: true});
-      fetchTicketById(ticket.id);
-      fetchBillingWorkflow();
-    }
-  }, [fetchContext, fetchTicketById, fetchBillingWorkflow, ticket?.id]);
+  const stateTone = ticketStateMeta(view?.state);
+  const stageTone: Tone | null = view?.stage?.name
+    ? {
+        label: view.stage.name,
+        color: colors.white,
+        bg: view.stage.colour || colors.primary,
+        icon: '',
+      }
+    : null;
+  const address = [
+    data?.contact?.addresses?.[0]?.address_line_1,
+    data?.contact?.addresses?.[0]?.address_line_2,
+    data?.contact?.addresses?.[0]?.town_city,
+  ]
+    .filter(Boolean)
+    .join(', ');
 
-  const lmBlocking = React.useMemo(
-    () => lmPending || hasPendingLastMile(data?.activities?.content),
-    [lmPending, data?.activities?.content],
-  );
+  const firstLoad = loading && !data;
 
-  const noResponseBlocking = React.useMemo(
-    () =>
-      nrPending ||
-      hasPendingNoResponse(context?.no_response_activities) ||
-      hasPendingNoResponse(data?.activities?.content),
-    [nrPending, context?.no_response_activities, data?.activities?.content],
-  );
-
-  const isAssignedToMe =
-    user?.crm_user_id === data?.assigned_to?.user?.id &&
-    data?.state !== 'CLOSED';
-
-  React.useEffect(() => {
-    if (storeTicket) {
-      applyToLocalState(storeTicket);
-    }
-  }, [storeTicket?.state, storeTicket?.stage?.order, applyToLocalState]);
-
-  React.useEffect(() => {
-    if (ticket?.id) {
-      Promise.all([
-        fetchContext({silent: true}),
-        fetchTicketById(ticket.id, {silent: true}),
-        fetchBillingWorkflow(),
-      ]);
-    }
-  }, [ticket?.id, fetchContext, fetchTicketById, fetchBillingWorkflow]);
-
-  const billingBlocksClose =
-    isAssignedToMe &&
-    billingWorkflow &&
-    billingWorkflow.can_close_ticket === false &&
-    data?.queue_info?.stages?.length == nextStage?.order;
-
-  const closeStageActive =
-    data?.queue_info?.stages?.length == nextStage?.order;
+  if (!data && !loading && loadError) {
+    return (
+      <View style={styles.screen}>
+        <StackHeader
+          title={`#${ticket?.number ?? ''}`}
+          onBack={() => navigation.goBack()}
+        />
+        <ErrorState message={loadError} onRetry={() => loadAll('initial')} />
+      </View>
+    );
+  }
 
   return (
-    <SafeAreaView
-      style={{
-        flex: 1,
+    <View style={styles.screen}>
+      <StackHeader
+        title={view?.number ? `#${view.number}` : 'Ticket'}
+        subtitle={view?.queue?.name ?? view?.queue_info?.name}
+        onBack={() => navigation.goBack()}
+        right={
+          <TouchableOpacity
+            style={styles.headerAction}
+            onPress={() => setModal('info')}
+            disabled={!data}
+            accessibilityLabel="Ticket progress">
+            <Icon name="git-commit-outline" size={22} color={colors.white} />
+          </TouchableOpacity>
+        }
+      />
 
-        backgroundColor: colors.primary,
-      }}>
-      <View style={styles.row}>
-        <BackButton navigation={props.navigation} />
-        <Text style={styles.title}>Ticket Details</Text>
-
-        {/* View Ticket History */}
-        <TouchableOpacity
-          onPress={() => {
-            setViewInfoModalVisible(true);
-          }}>
-          <Icon name="time-outline" size={24} color={colors.white} />
-        </TouchableOpacity>
-      </View>
       <ScrollView
+        style={styles.flex}
+        contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl
-            style={{
-              zIndex: 999,
-            }}
-            refreshing={false}
-              onRefresh={() => {
-              if (ticket?.id) {
-                Promise.all([
-                  fetchContext({silent: false}),
-                  fetchTicketById(ticket.id, {silent: false}),
-                  fetchBillingWorkflow(),
-                ]);
-              }
-            }}
+            refreshing={refreshing}
+            onRefresh={() => loadAll('refresh')}
+            colors={[colors.primary]}
+            tintColor={colors.primary}
           />
-        }
-        contentContainerStyle={{
-          gap: 10,
-          padding: 20,
-          paddingBottom: 50,
-          backgroundColor: colors.gray,
-        }}>
-        <View
-          style={{
-            gap: 10,
-          }}>
-          <View
-            style={{
-              flexDirection: 'row',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-            }}>
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 5,
-                flexWrap: 'wrap',
-              }}>
-              <ABadge
-                title={`${data?.stage?.name}`}
-                color={colors.white}
-                backgroundColor={data?.stage?.colour}
+        }>
+        <View style={styles.card}>
+          <View style={styles.badgeRow}>
+            <ToneBadge tone={stateTone} showIcon />
+            {stageTone ? <ToneBadge tone={stageTone} /> : null}
+            {(data?.categories ?? []).map((tag: any, index: number) => (
+              <ToneBadge
+                key={`${tag?.name}-${index}`}
+                tone={{
+                  label: tag?.name,
+                  color: colors.black,
+                  bg: tag?.colour || colors.surface,
+                  icon: '',
+                }}
+                size="sm"
               />
-              {data?.categories?.map(
-                (tag: {name: string; colour: string}, index: number) => (
-                  <ABadge
-                    key={index}
-                    title={tag.name}
-                    color={colors.black}
-                    backgroundColor={tag.colour}
-                  />
-                ),
-              )}
+            ))}
+          </View>
+          {view?.description ? (
+            <Text style={styles.description}>{view.description}</Text>
+          ) : null}
+          {firstLoad ? (
+            <View style={styles.badgeRow}>
+              <Skeleton width={90} height={22} rounded />
+              <Skeleton width={90} height={22} rounded />
+              <Skeleton width={90} height={22} rounded />
             </View>
-
-            <Text style={{color: colors.primary, fontSize: 12}}>
-              {ticket?.queue?.name}
-            </Text>
-          </View>
-
-          <Text
-            style={[
-              styles.title,
-              {
-                fontSize: 24,
-                color: colors.black,
-              },
-            ]}>
-            {ticket?.number}
-          </Text>
-
-          <Text>{ticket?.description}</Text>
-
-          <View
-            style={{
-              display: 'flex',
-              flexDirection: 'row',
-              width: '100%',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: 10,
-            }}>
-            <ABadge
-              title={`Priority: ${
-                data?.priority_matrix?.priority ?? 'Loading...'
-              }`}
-              color={
-                data?.priority_matrix?.priority == 'URGENT'
-                  ? 'red'
-                  : data?.priority_matrix?.priority == 'MEDIUM'
-                  ? colors.secondary
-                  : colors.tertiary
-              }
-            />
-            <ABadge
-              title={`Urgency: ${
-                data?.priority_matrix?.urgency ?? 'Loading...'
-              }`}
-              color={
-                data?.priority_matrix?.urgency == 'URGENT'
-                  ? 'red'
-                  : data?.priority_matrix?.urgency == 'MEDIUM'
-                  ? colors.secondary
-                  : colors.black
-              }
-            />
-            <ABadge
-              title={`Impact: ${data?.priority_matrix?.impact ?? 'Loading...'}`}
-              color={
-                data?.priority_matrix?.impact == 'URGENT'
-                  ? 'red'
-                  : data?.priority_matrix?.impact == 'MEDIUM'
-                  ? colors.secondary
-                  : colors.black
-              }
-            />
-          </View>
-        </View>
-
-        <ASeperator />
-
-        <View style={{}}>
-          <Text
-            style={{
-              fontWeight: '600',
-            }}>
-            Customer Information
-          </Text>
-          <View
-            style={{
-              gap: 10,
-              paddingTop: 10,
-              flexWrap: 'wrap',
-              flexDirection: 'row',
-              display: 'flex',
-            }}>
-            <ItemRender name="Name" value={ticket?.contact?.name} />
-            <ItemRender
-              name="Phone"
-              value={data?.contact?.phone?.number ?? 'Loading...'}
-            />
-            <ItemRender
-              name="Code"
-              value={data?.contact?.code ?? 'Loading...'}
-            />
-            <ItemRender
-              name="Address"
-              value={`${data?.contact?.addresses?.[0]?.address_line_1 ?? 'No Address'}, ${
-                data?.contact?.addresses?.[0]?.address_line_2 ?? ''
-              } ${data?.contact?.addresses?.[0]?.town_city ?? ''}, ${
-                data?.contact?.addresses?.[0]?.country_code ?? ''
-              }`}
-            />
-            <View
-              style={{
-                gap: 5,
-              }}>
-              <Text
-                style={{
-                  fontSize: 10,
-                }}>
-                Given Services and Devices
-              </Text>
-              {(data?.contact?.services?.content ?? []).length === 0 ? (
-                <Text
-                  style={{
-                    color: colors.black,
-                    fontWeight: '600',
-                    fontSize: 13,
-                  }}>
-                  No Services or Devices
-                </Text>
-              ) : (
-                <RNScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={{gap: 10, paddingVertical: 4}}>
-                  {(data?.contact?.services?.content ?? []).map(
-                    (item: any, index: number) => (
-                      <View
-                        key={String(item?.id ?? index)}
-                        style={{
-                          flexDirection: 'column',
-                          gap: 5,
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          padding: 10,
-                          borderRadius: 10,
-                          borderWidth: 1,
-                          borderColor: colors.bordergray,
-                          width: Dimensions.get('window').width / 2 - 20,
-                        }}>
-                        <Text>{item?.product?.name}</Text>
-                        <ABadge
-                          backgroundColor={
-                            item?.state == 'EFFECTIVE'
-                              ? 'green'
-                              : colors.secondary
-                          }
-                          title={item?.state}
-                          color={colors.white}
-                        />
-                      </View>
-                    ),
-                  )}
-                </RNScrollView>
-              )}
-            </View>
-          </View>
-        </View>
-
-        <ASeperator />
-
-        {/* Images and Attachments */}
-        <View style={{}}>
-          {/* Images */}
-          <Text
-            style={{
-              color: colors.black,
-              fontWeight: '600',
-            }}>
-            Images & Attachments ({data?.attachments?.content?.length})
-          </Text>
-          <View
-            style={{
-              width: '100%',
-              paddingTop: 10,
-              flexDirection: 'row',
-              flexWrap: 'wrap',
-              gap: 5,
-            }}>
-            {(data?.attachments?.content ?? []).length === 0 ? (
-              <Text style={{color: colors.black, fontSize: 16}}>
-                No Images or Attachments
-              </Text>
-            ) : (
-              (data?.attachments?.content ?? []).map(
-                (item: any, index: number) => (
-                  <TouchableOpacity
-                    key={String(item?.id ?? index)}
-                    onPress={() => {
-                      setSelectedImage(item);
-                      setViewImageModalVisible(true);
-                    }}>
-                    <Image
-                      style={{
-                        width: width / 3 - 20,
-                        height: width / 3 - 20,
-                        borderRadius: 10,
-                        backgroundColor: colors.gray,
-                        borderColor: colors.bordergray,
-                        borderWidth: 1,
-                      }}
-                      source={{
-                        uri: `https://app.crm.com/backoffice/v2/files/${item?.file.id}`,
-                        headers: {
-                          api_key: '67225f81-1d60-4401-b6d7-720f9cf68ba3',
-                        },
-                      }}
-                    />
-                  </TouchableOpacity>
-                ),
-              )
-            )}
-          </View>
-
-          <View
-            style={{
-              paddingTop: 10,
-              zIndex: 999,
-            }}>
-            {user?.crm_user_id == data?.assigned_to?.user?.id &&
-              data?.state != 'CLOSED' && (
-                <SecondaryButton
-                  text="+ Add Attachments"
-                  onPress={() => {
-                    setAttachmentModalVisible(true);
-                  }}
-                />
-              )}
-          </View>
-        </View>
-
-        <ASeperator />
-
-        {/* activities */}
-        <View style={{}}>
-          <Text
-            style={{
-              fontWeight: '600',
-              color: colors.black,
-            }}>
-            Activities
-          </Text>
-          <View style={{paddingTop: 10, gap: 10}}>
-            {(data?.activities?.content ?? []).length === 0 ? (
-              <View
-                style={{
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  padding: 20,
-                }}>
-                <Text
-                  style={{
-                    color: colors.black,
-                    fontWeight: '600',
-                    fontSize: 16,
-                  }}>
-                  No activities available
-                </Text>
-              </View>
-            ) : (
-              (data?.activities?.content ?? []).map(
-                (item: any, index: number) => (
-                  <View key={String(item?.id ?? index)}>
-                    <TouchableOpacity
-                      onPress={() => {
-                        setSelectedActivity(item);
-                        setActivityDetailsModalVisible(true);
-                      }}
-                      style={{
-                        gap: 10,
-                        padding: 10,
-                        borderRadius: 20,
-                        borderWidth: 1,
-                        borderColor: colors.bordergray,
-                      }}>
-                      <View
-                        style={{
-                          flexDirection: 'row',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                        }}>
-                        <Text
-                          style={{
-                            fontWeight: '600',
-                            marginRight: 5,
-                            color: colors.black,
-                          }}>
-                          {item?.name}
-                        </Text>
-                        <Text style={{fontSize: 12, color: colors.gray}}>
-                          {moment(
-                            (item?.date ?? item?.activity_date?.date) * 1000,
-                          ).format('DD MMMM YYYY')}
-                        </Text>
-                      </View>
-                      <View
-                        style={{
-                          flexDirection: 'row',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                        }}>
-                        <View
-                          style={{
-                            flexDirection: 'row',
-                            gap: 8,
-                            flexWrap: 'wrap',
-                          }}>
-                          <ABadge
-                            title={item?.type?.name ?? 'Activity'}
-                            color={item?.type?.colour ?? colors.primary}
-                          />
-                          <ABadge
-                            title={lmStatusLabel(
-                              resolveCrmActivityState(item),
-                            )}
-                            color={
-                              resolveCrmActivityState(item) === 'COMPLETED'
-                                ? '#22C55E'
-                                : '#F59E0B'
-                            }
-                          />
-                        </View>
-                      </View>
-                    </TouchableOpacity>
-                    {index <
-                      (data?.activities?.content?.length ?? 0) - 1 && (
-                      <ASeperator />
-                    )}
-                  </View>
-                ),
-              )
-            )}
-          </View>
-          <View
-            style={{
-              paddingTop: 10,
-            }}>
-            {isAssignedToMe && (
-              <>
-                {lmBlocking ? (
-                  <View style={styles.lmBanner}>
-                    <Text style={styles.lmBannerText}>
-                      Last Mile in progress — finish cabling in Transport
-                      Network before continuing this ticket.
-                    </Text>
-                  </View>
-                ) : (
-                  <PrimaryButton
-                    text="Hand over to Last Mile"
-                    onPress={() => setLmHandoffVisible(true)}
-                    style={styles.lmHandoffButton}
+          ) : data?.priority_matrix ? (
+            <View style={styles.matrix}>
+              {(['priority', 'urgency', 'impact'] as const).map(key => (
+                <View key={key} style={styles.matrixCell}>
+                  <Text style={styles.caption}>
+                    {key[0].toUpperCase() + key.slice(1)}
+                  </Text>
+                  <ToneBadge
+                    tone={priorityMeta(data.priority_matrix[key])}
+                    size="sm"
+                    showIcon
                   />
-                )}
-                {data?.state === 'IN_PROGRESS' && billingWorkflow && (
-                  <View style={styles.lmBanner}>
-                    <Text style={styles.lmBannerText}>
-                      {billingWorkflow.payment_status === 'confirmed'
-                        ? `Payment received (${billingWorkflow.confirmed_receipt_number ?? 'receipt'}) — finish work, then close ticket.`
-                        : billingWorkflow.block_close_reason ??
-                          'Complete billing before closing this ticket.'}
-                    </Text>
-                    {billingWorkflow.next_step !== 'complete_work_then_close' &&
-                      billingWorkflow.next_step !== 'close_ticket' && (
-                        <TertiaryButton
-                          text="Open charges & payment"
-                          onPress={() => setPaymentModalVisible(true)}
-                        />
-                      )}
-                  </View>
-                )}
-              </>
-            )}
-          </View>
-        </View>
-
-        <ASeperator />
-
-        {/* Notes */}
-        <View style={{}}>
-          <Text
-            style={{
-              fontWeight: '600',
-              color: colors.black,
-            }}>
-            Notes
-          </Text>
-          <View style={{paddingTop: 10, gap: 10}}>
-            {(data?.notes?.content ?? []).length === 0 ? (
-              <View
-                style={{
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  padding: 20,
-                }}>
-                <Text style={{color: colors.black}}>No Notes available</Text>
-              </View>
-            ) : (
-              (data?.notes?.content ?? []).map((item: any, index: number) => (
-                <View
-                  key={String(item?.id ?? index)}
-                  style={{
-                    gap: 10,
-                    padding: 10,
-                    borderRadius: 20,
-                    borderWidth: 1,
-                    borderColor: colors.bordergray,
-                  }}>
-                  <Text
-                    style={{
-                      fontWeight: '400',
-                      color: colors.black,
-                    }}>
-                    {item?.note ?? 'Loading...'}
-                  </Text>
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      color: colors.black,
-                      textAlign: 'right',
-                    }}>
-                    {moment(item?.created_on * 1000).format(
-                      'DD MMMM YYYY hh:mm a',
-                    )}
-                  </Text>
                 </View>
-              ))
-            )}
-          </View>
-          <View
-            style={{
-              paddingTop: 10,
-            }}>
-            {user?.crm_user_id == data?.assigned_to?.user?.id &&
-              data?.state != 'CLOSED' && (
-                <SecondaryButton
-                  text="+ Add Note"
-                  onPress={() => {
-                    setNoteModalVisible(true);
-                  }}
-                />
-              )}
-          </View>
+              ))}
+            </View>
+          ) : null}
         </View>
 
-        {/* absolue bottom white */}
+        {isMine && lmBlocking ? (
+          <InlineBanner
+            icon="git-network-outline"
+            message="Last Mile cabling is in progress. Continue this ticket once Transport Network completes it."
+          />
+        ) : null}
+        {isMine && noResponseBlocking ? (
+          <InlineBanner
+            tone="info"
+            icon="call-outline"
+            message="Marked as No response. Clear it before closing the ticket."
+          />
+        ) : null}
+        {isMine && view?.state === 'IN_PROGRESS' && billingWorkflow ? (
+          <InlineBanner
+            tone={
+              billingWorkflow.payment_status === 'confirmed'
+                ? 'info'
+                : 'warning'
+            }
+            icon="card-outline"
+            message={
+              billingWorkflow.payment_status === 'confirmed'
+                ? `Payment received (${
+                    billingWorkflow.confirmed_receipt_number ?? 'receipt'
+                  }). Finish the work, then close the ticket.`
+                : billingWorkflow.block_close_reason ??
+                  'Complete billing before closing this ticket.'
+            }
+            actionLabel={
+              billingWorkflow.next_step !== 'complete_work_then_close' &&
+              billingWorkflow.next_step !== 'close_ticket'
+                ? 'Open'
+                : undefined
+            }
+            onAction={() => setModal('billing')}
+          />
+        ) : null}
+
+        <Section title="Customer">
+          <InfoRow icon="person-outline" label="Name" value={customerName} />
+          {firstLoad ? (
+            <>
+              <Skeleton height={16} />
+              <Skeleton height={16} width="70%" />
+            </>
+          ) : (
+            <>
+              <InfoRow
+                icon="call-outline"
+                label="Phone"
+                value={phone}
+                onPress={
+                  phone ? () => Linking.openURL(`tel:${phone}`) : undefined
+                }
+              />
+              <InfoRow
+                icon="barcode-outline"
+                label="Customer code"
+                value={data?.contact?.code}
+              />
+              <InfoRow
+                icon="location-outline"
+                label="Address"
+                value={address || 'No address on file'}
+              />
+            </>
+          )}
+          {services.length > 0 ? (
+            <View style={styles.servicesWrap}>
+              <Text style={styles.caption}>Services and devices</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.servicesRow}>
+                {services.map((item: any, index: number) => (
+                  <View
+                    key={String(item?.id ?? index)}
+                    style={styles.serviceCard}>
+                    <Text style={styles.serviceName} numberOfLines={2}>
+                      {item?.product?.name ?? 'Service'}
+                    </Text>
+                    <ToneBadge
+                      size="sm"
+                      tone={
+                        item?.state === 'EFFECTIVE'
+                          ? {
+                              label: 'Active',
+                              color: colors.success,
+                              bg: colors.successBg,
+                              icon: '',
+                            }
+                          : {
+                              label: item?.state ?? 'Unknown',
+                              color: colors.warning,
+                              bg: colors.warningBg,
+                              icon: '',
+                            }
+                      }
+                    />
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
+          ) : null}
+        </Section>
+
+        <Section
+          title="Photos & attachments"
+          count={attachments.length}
+          actionLabel={canEdit ? 'Add' : undefined}
+          onAction={() => setModal('attachment')}>
+          {firstLoad ? (
+            <View style={styles.thumbGrid}>
+              <Skeleton width={96} height={96} />
+              <Skeleton width={96} height={96} />
+            </View>
+          ) : attachments.length === 0 ? (
+            <Text style={styles.muted}>No attachments yet</Text>
+          ) : (
+            <View style={styles.thumbGrid}>
+              {attachments.map((item: any, index: number) => (
+                <AttachmentThumb
+                  key={String(item?.id ?? index)}
+                  fileId={item?.file?.id}
+                  token={token}
+                  onPress={() => {
+                    setSelectedImage(item);
+                    setModal('image');
+                  }}
+                />
+              ))}
+            </View>
+          )}
+        </Section>
+
+        <Section title="Activities" count={activities.length}>
+          {firstLoad ? (
+            <Skeleton height={56} />
+          ) : activities.length === 0 ? (
+            <Text style={styles.muted}>No activities</Text>
+          ) : (
+            activities.map((item: any, index: number) => {
+              const done = resolveCrmActivityState(item) === 'COMPLETED';
+              return (
+                <TouchableOpacity
+                  key={String(item?.id ?? index)}
+                  style={styles.listItem}
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    setSelectedActivity(item);
+                    setModal('activity');
+                  }}>
+                  <View style={styles.flex}>
+                    <Text style={styles.itemTitle} numberOfLines={1}>
+                      {item?.name ?? 'Activity'}
+                    </Text>
+                    <Text style={styles.caption}>
+                      {[
+                        item?.type?.name,
+                        crmDate(item?.date ?? item?.activity_date?.date),
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </Text>
+                  </View>
+                  <ToneBadge
+                    size="sm"
+                    tone={
+                      done
+                        ? {
+                            label: lmStatusLabel('COMPLETED'),
+                            color: colors.success,
+                            bg: colors.successBg,
+                            icon: '',
+                          }
+                        : {
+                            label: lmStatusLabel(resolveCrmActivityState(item)),
+                            color: colors.warning,
+                            bg: colors.warningBg,
+                            icon: '',
+                          }
+                    }
+                  />
+                  <Icon name="chevron-forward" size={16} color={colors.gray3} />
+                </TouchableOpacity>
+              );
+            })
+          )}
+        </Section>
+
+        <Section
+          title="Notes"
+          count={notes.length}
+          actionLabel={canEdit ? 'Add' : undefined}
+          onAction={() => setModal('note')}>
+          {firstLoad ? (
+            <Skeleton height={56} />
+          ) : notes.length === 0 ? (
+            <Text style={styles.muted}>No notes yet</Text>
+          ) : (
+            notes.map((item: any, index: number) => (
+              <View key={String(item?.id ?? index)} style={styles.note}>
+                <Text style={styles.noteText}>{item?.note}</Text>
+                <Text style={styles.caption}>
+                  {crmDate(item?.created_on, 'DD MMM YYYY, h:mm A')}
+                </Text>
+              </View>
+            ))
+          )}
+        </Section>
+
+        {!firstLoad && !data ? (
+          <EmptyState icon="alert-circle-outline" title="Details unavailable" />
+        ) : null}
       </ScrollView>
 
       <View
-        style={{
-          position: 'absolute',
-          bottom: -10,
-          zIndex: 1999,
-          paddingTop: 20,
-          left: 0,
-          backgroundColor: colors.gray,
-          width: '100%',
-          height: 170,
-          paddingHorizontal: 20,
-          gap: 10,
-        }}>
-        <View
-          style={{
-            display: 'flex',
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 10,
-          }}>
-          {/* if the ticket is assigned to the current user, show the add attachment button */}
-
-          {/* mark as no response if state in_progress */}
-          {!loading && data?.state == 'IN_PROGRESS' && (
-            <TertiaryButton
-              style={{
-                backgroundColor: noResponseBlocking ? colors.gray : colors.white,
-              }}
-              onPress={async () => {
-                try {
-                  const response = await fetch(
-                    `${API_BASE_URL}/tickets/${data?.id}/no-response`,
-                    {
-                      method: 'PUT',
-                      headers: {
-                        Authorization: 'Bearer ' + token,
-                        'Content-Type': 'application/json',
-                      },
-                    },
-                  );
-                  const result = await response.json();
-                  if (!response.ok) {
-                    throw new Error(result?.message || 'No Response failed');
-                  }
-                  Snackbar.show({
-                    backgroundColor: 'green',
-                    textColor: colors.white,
-                    text: result?.message,
-                    duration: Snackbar.LENGTH_SHORT,
-                  });
-                  fetchContext({silent: true});
-                  fetchTicketById(ticket?.id);
-                } catch (error: any) {
-                  Snackbar.show({
-                    backgroundColor: colors.primary,
-                    textColor: colors.white,
-                    text: error?.message || 'No Response failed',
-                    duration: Snackbar.LENGTH_SHORT,
-                  });
-                }
-              }}
-              text={
-                noResponseBlocking
-                  ? 'Remove No Response'
-                  : 'Mark as No Response'
-              }
+        style={[
+          styles.footer,
+          {paddingBottom: Math.max(insets.bottom, spacing.md)},
+        ]}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.chips}>
+          {phone ? (
+            <ActionChip
+              icon="call-outline"
+              label="Call"
+              onPress={() => Linking.openURL(`tel:${phone}`)}
             />
-          )}
-          {/* if the ticket is assigned to the current user, show the close ticket button */}
-          {!loading &&
-            data?.assigned_to?.user?.id == user.crm_user_id &&
-            data?.stage?.name != 'Closed' && (
-              <TertiaryButton
-                text="Schedule visit"
-                onPress={() => setScheduleModalVisible(true)}
-              />
-            )}
-          {!loading &&
-            data?.assigned_to?.user?.id == user.crm_user_id &&
-            data?.state === 'IN_PROGRESS' && (
-              <TertiaryButton
-                text="Charge required"
-                onPress={() => setPaymentModalVisible(true)}
-              />
-            )}
-          {!loading && (
-            <TertiaryButton
-              text="Call Customer"
-              onPress={() => {
-                Linking.openURL(`tel:${data?.contact?.phone?.number}`);
-              }}
+          ) : null}
+          {canEdit ? (
+            <ActionChip
+              icon="calendar-outline"
+              label="Schedule"
+              onPress={() => setModal('schedule')}
             />
-          )}
-        </View>
-        {!loading && data?.stage?.name != 'Closed' && (
+          ) : null}
+          {canEdit && view?.state === 'IN_PROGRESS' ? (
+            <ActionChip
+              icon="card-outline"
+              label="Charges"
+              onPress={() => setModal('billing')}
+            />
+          ) : null}
+          {canEdit && view?.state === 'IN_PROGRESS' ? (
+            <ActionChip
+              icon={noResponseBlocking ? 'call' : 'call-outline'}
+              label={noResponseBlocking ? 'Clear No response' : 'No response'}
+              onPress={toggleNoResponse}
+              busy={noResponseBusy}
+              active={noResponseBlocking}
+            />
+          ) : null}
+          {canEdit && !lmBlocking ? (
+            <ActionChip
+              icon="git-network-outline"
+              label="Last Mile"
+              onPress={() => setModal('lm')}
+            />
+          ) : null}
+        </ScrollView>
+        {!isClosed && data ? (
           <PrimaryButton
-            style={{
-              backgroundColor: nextStage?.colour ?? colors.primary,
-            }}
-            text={
-              submitted
-                ? 'Please wait...'
-                : lmBlocking
-                  ? 'Waiting for Last Mile…'
-                  : data?.assigned_to?.user?.id != user.crm_user_id
-                    ? 'Assign to Me'
-                    : data?.state == 'NEW'
-                      ? `Start ${nextStage?.name ?? 'Troubleshooting'}`
-                      : data?.queue_info?.stages?.length == nextStage?.order
-                        ? 'Close Ticket'
-                        : `Start ${nextStage?.name}`
-            }
+            text={primaryLabel}
+            loading={submitted}
             disabled={
-              submitted ||
-              lmBlocking ||
-              billingBlocksClose ||
-              (noResponseBlocking && closeStageActive)
+              lmBlocking || (isMine && closeStageActive && noResponseBlocking)
             }
-            onPress={() => {
-              if (submitted) {
-                return;
-              }
-              if (
-                lmBlocking &&
-                data?.assigned_to?.user?.id == user.crm_user_id
-              ) {
-                Snackbar.show({
-                  backgroundColor: colors.primary,
-                  textColor: colors.white,
-                  text: 'Complete Last Mile cabling before continuing this ticket.',
-                  duration: Snackbar.LENGTH_SHORT,
-                });
-                return;
-              }
-              if (noResponseBlocking && closeStageActive) {
-                Snackbar.show({
-                  backgroundColor: colors.primary,
-                  textColor: colors.white,
-                  text: 'Clear No Response before closing this ticket.',
-                  duration: Snackbar.LENGTH_SHORT,
-                });
-                return;
-              }
-              if (billingBlocksClose) {
-                Snackbar.show({
-                  backgroundColor: colors.primary,
-                  textColor: colors.white,
-                  text:
-                    billingWorkflow?.block_close_reason ??
-                    'Complete charges and customer payment before closing.',
-                  duration: Snackbar.LENGTH_LONG,
-                });
-                setPaymentModalVisible(true);
-                return;
-              }
-              if (lmBlocking) {
-                Snackbar.show({
-                  backgroundColor: colors.primary,
-                  textColor: colors.white,
-                  text: 'Complete Last Mile cabling before continuing this ticket.',
-                  duration: Snackbar.LENGTH_SHORT,
-                });
-                return;
-              }
-              if (data?.assigned_to?.user?.id != user.crm_user_id) {
-                assignUser();
-              } else if (data?.state == 'NEW') {
-                startTroubleshooting();
-              } else if (data?.queue_info?.stages?.length == nextStage?.order) {
-                closeTicket();
-              } else {
-                progressTicket();
-              }
-            }}
+            onPress={onPrimaryPress}
+            style={
+              isMine && nextStage?.colour && !closeStageActive
+                ? {backgroundColor: nextStage.colour}
+                : closeStageActive && isMine
+                ? {backgroundColor: colors.success}
+                : undefined
+            }
           />
-        )}
+        ) : null}
       </View>
 
       <ActivityDetailModal
-        modalVisible={activityDetailsModalVisible}
-        setModalVisible={setActivityDetailsModalVisible}
+        modalVisible={modal === 'activity'}
+        setModalVisible={modalSetter('activity')}
         activity={selectedActivity}
       />
-
       <AddAttachmentModal
-        ticketId={ticket?.id}
-        navigation={props.navigation}
-        modalVisible={attachmentModalVisible}
-        setModalVisible={setAttachmentModalVisible}
+        ticketId={ticket.id}
+        modalVisible={modal === 'attachment'}
+        setModalVisible={modalSetter('attachment')}
         onSuccess={refreshAfterChange}
       />
       <AddNoteModal
-        modalVisible={noteModalVisible}
-        setModalVisible={setNoteModalVisible}
-        ticketId={ticket?.id}
+        modalVisible={modal === 'note'}
+        setModalVisible={modalSetter('note')}
+        ticketId={ticket.id}
         onSuccess={refreshAfterChange}
       />
       <ViewImageModal
-        modalVisible={viewImageModalVisible}
-        setModalVisible={setViewImageModalVisible}
+        modalVisible={modal === 'image'}
+        setModalVisible={modalSetter('image')}
         image={selectedImage}
       />
       <ClosingModal
-        modalVisible={closeModalVisible}
-        setModalVisible={setCloseModalVisible}
-        ticketId={ticket?.id}
+        modalVisible={modal === 'close'}
+        setModalVisible={modalSetter('close')}
+        ticketId={ticket.id}
         nextStage={nextStage}
-        onSuccess={handleTicketUpdated}
+        onSuccess={applyToLocalState}
       />
       <ScheduleVisitModal
-        modalVisible={scheduleModalVisible}
-        setModalVisible={setScheduleModalVisible}
-        ticketId={ticket?.id}
+        modalVisible={modal === 'schedule'}
+        setModalVisible={modalSetter('schedule')}
+        ticketId={ticket.id}
         onSuccess={refreshAfterChange}
       />
       <BillingWorkflowModal
-        visible={paymentModalVisible}
-        onClose={() => setPaymentModalVisible(false)}
-        ticketId={ticket?.id}
+        visible={modal === 'billing'}
+        onClose={() => setModal(null)}
+        ticketId={ticket.id}
         token={token}
         onUpdated={refreshAfterChange}
       />
       <LmHandoffModal
-        modalVisible={lmHandoffVisible}
-        setModalVisible={setLmHandoffVisible}
-        ticketId={ticket?.id}
+        modalVisible={modal === 'lm'}
+        setModalVisible={modalSetter('lm')}
+        ticketId={ticket.id}
         onSuccess={refreshAfterChange}
       />
-      {progressTicketModalVisible && (
+      {modal === 'progress' ? (
         <ProgressTicketModal
-          modalVisible={progressTicketModalVisible}
-          setModalVisible={setProgressTicketModalVisible}
+          modalVisible
+          setModalVisible={modalSetter('progress')}
           ticket={data}
           setSubmitted={setSubmitted}
           nextStage={nextStage}
           isFirstStart={false}
-          onSuccess={handleTicketUpdated}
+          onSuccess={applyToLocalState}
         />
-      )}
-
-      {viewInfoModalVisible && (
+      ) : null}
+      {modal === 'info' ? (
         <ViewInfoModal
-          modalVisible={viewInfoModalVisible}
-          setModalVisible={setViewInfoModalVisible}
+          modalVisible
+          setModalVisible={modalSetter('info')}
           ticket={data}
         />
-      )}
-    </SafeAreaView>
+      ) : null}
+    </View>
   );
 };
 
 export default ActivityDetailsScreen;
 
+function Section({
+  title,
+  count,
+  actionLabel,
+  onAction,
+  children,
+}: {
+  title: string;
+  count?: number;
+  actionLabel?: string;
+  onAction?: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={styles.card}>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>
+          {title}
+          {typeof count === 'number' && count > 0 ? (
+            <Text style={styles.sectionCount}>{`  ${count}`}</Text>
+          ) : null}
+        </Text>
+        {actionLabel && onAction ? (
+          <TouchableOpacity style={styles.sectionAction} onPress={onAction}>
+            <Icon name="add" size={16} color={colors.primary} />
+            <Text style={styles.sectionActionText}>{actionLabel}</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      {children}
+    </View>
+  );
+}
+
+function InfoRow({
+  icon,
+  label,
+  value,
+  onPress,
+}: {
+  icon: string;
+  label: string;
+  value?: string;
+  onPress?: () => void;
+}) {
+  const body = (
+    <View style={styles.infoRow}>
+      <Icon name={icon} size={18} color={colors.gray2} />
+      <View style={styles.flex}>
+        <Text style={styles.caption}>{label}</Text>
+        <Text style={[styles.infoValue, onPress && styles.link]}>
+          {value || '—'}
+        </Text>
+      </View>
+      {onPress ? <Icon name="call" size={18} color={colors.info} /> : null}
+    </View>
+  );
+  return onPress ? (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.7}>
+      {body}
+    </TouchableOpacity>
+  ) : (
+    body
+  );
+}
+
+function AttachmentThumb({
+  fileId,
+  token,
+  onPress,
+}: {
+  fileId?: string;
+  token?: string;
+  onPress: () => void;
+}) {
+  const [failed, setFailed] = React.useState(false);
+  const source = fileImageSource(fileId, token);
+  return (
+    <TouchableOpacity
+      style={styles.thumb}
+      onPress={onPress}
+      activeOpacity={0.85}>
+      {source && !failed ? (
+        <Image
+          style={styles.thumbImage}
+          source={source}
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <Icon name="document-attach-outline" size={28} color={colors.gray3} />
+      )}
+    </TouchableOpacity>
+  );
+}
+
+function ActionChip({
+  icon,
+  label,
+  onPress,
+  busy,
+  active,
+}: {
+  icon: string;
+  label: string;
+  onPress: () => void;
+  busy?: boolean;
+  active?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.chip, active && styles.chipActive]}
+      onPress={onPress}
+      disabled={busy}
+      activeOpacity={0.8}>
+      <Icon
+        name={icon}
+        size={16}
+        color={active ? colors.white : colors.primary}
+      />
+      <Text style={[styles.chipText, active && styles.chipTextActive]}>
+        {busy ? 'Please wait…' : label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    gap: 20,
-    backgroundColor: colors.primary,
-    position: 'relative',
-  },
-  row: {
-    display: 'flex',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    paddingTop: 10,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: colors.white,
-  },
-  lmBanner: {
-    backgroundColor: '#FEF3C7',
+  screen: {flex: 1, backgroundColor: colors.surface},
+  flex: {flex: 1},
+  content: {padding: spacing.lg, gap: spacing.md},
+  headerAction: {
+    width: 40,
+    height: 40,
     borderRadius: 12,
-    padding: 10,
-    marginBottom: 8,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  lmBannerText: {
-    color: '#92400E',
-    fontSize: 13,
-    fontWeight: '600',
-    textAlign: 'center',
+  card: {
+    backgroundColor: colors.white,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    gap: spacing.md,
+    ...shadows.card,
   },
-  lmHandoffButton: {
-    width: '100%',
-    backgroundColor: colors.primary,
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    alignItems: 'center',
   },
+  description: {...typography.body, lineHeight: 22},
+  matrix: {flexDirection: 'row', gap: spacing.md},
+  matrixCell: {flex: 1, gap: spacing.xs},
+  caption: {...typography.caption},
+  muted: {...typography.bodySm},
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  sectionTitle: {...typography.h3, fontSize: 16},
+  sectionCount: {color: colors.gray3, fontWeight: '600', fontSize: 14},
+  sectionAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: colors.tertiary,
+  },
+  sectionActionText: {color: colors.primary, fontWeight: '700', fontSize: 13},
+  infoRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
+  infoValue: {...typography.body, fontSize: 14, marginTop: 1},
+  link: {color: colors.info, fontWeight: '600'},
+  servicesWrap: {gap: spacing.sm},
+  servicesRow: {gap: spacing.sm},
+  serviceCard: {
+    width: 150,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    gap: spacing.sm,
+  },
+  serviceName: {fontSize: 13, fontWeight: '600', color: colors.black},
+  thumbGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
+  thumb: {
+    width: 96,
+    height: 96,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  thumbImage: {width: '100%', height: '100%'},
+  listItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.borderLight,
+  },
+  itemTitle: {fontSize: 14, fontWeight: '600', color: colors.black},
+  note: {
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    gap: spacing.xs,
+  },
+  noteText: {...typography.body, fontSize: 14, lineHeight: 20},
+  footer: {
+    backgroundColor: colors.white,
+    paddingTop: spacing.md,
+    paddingHorizontal: spacing.lg,
+    gap: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+  },
+  chips: {gap: spacing.sm},
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.bordergray,
+    backgroundColor: colors.white,
+  },
+  chipActive: {backgroundColor: colors.primary, borderColor: colors.primary},
+  chipText: {fontSize: 13, fontWeight: '600', color: colors.primary},
+  chipTextActive: {color: colors.white},
 });

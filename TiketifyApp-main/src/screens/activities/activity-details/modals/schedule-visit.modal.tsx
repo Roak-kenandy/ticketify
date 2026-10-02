@@ -1,21 +1,17 @@
 import React from 'react';
-import {
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableWithoutFeedback,
-  View,
-} from 'react-native';
+import {StyleSheet, Switch, Text, View} from 'react-native';
 import moment from 'moment';
-import colors from '../../../../constants/colors';
-import ModalFooterActions from '../../../../components/ui/modal-footer-actions';
-import Snackbar from 'react-native-snackbar';
 import {useSelector} from 'react-redux';
-import {apiFetch} from '../../../../utils/apiClient';
+import FormModal, {formStyles} from '../../../../components/modal/form-modal';
+import {
+  DateChips,
+  TimeChips,
+  nextSlot,
+} from '../../../../components/ui/date-time-chips';
+import colors from '../../../../constants/colors';
+import {radius, spacing} from '../../../../constants/styles';
+import {apiPut} from '../../../../utils/apiClient';
+import {showError, showSuccess} from '../../../../utils/notify';
 
 type Props = {
   modalVisible: boolean;
@@ -25,178 +21,117 @@ type Props = {
 };
 
 const ScheduleVisitModal = (props: Props) => {
-  const auth = useSelector((state: any) => state.auth);
-  const defaultWhen = moment().add(1, 'hour');
+  const token = useSelector((state: any) => state.auth?.token);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const [dateStr, setDateStr] = React.useState(defaultWhen.format('YYYY-MM-DD'));
-  const [timeStr, setTimeStr] = React.useState(defaultWhen.format('HH:mm'));
+  const [dateStr, setDateStr] = React.useState(() => nextSlot().date);
+  const [timeStr, setTimeStr] = React.useState(() => nextSlot().time);
   const [notifyCustomer, setNotifyCustomer] = React.useState(true);
 
-  async function submitSchedule() {
-    if (!props.ticketId || !auth?.token) {
-      return;
+  React.useEffect(() => {
+    if (props.modalVisible) {
+      const slot = nextSlot();
+      setDateStr(slot.date);
+      setTimeStr(slot.time);
     }
-    const scheduledAt = moment(
-      `${dateStr.trim()} ${timeStr.trim()}`,
-      'YYYY-MM-DD HH:mm',
-      true,
-    );
-    if (!scheduledAt.isValid() || scheduledAt.isBefore(moment())) {
-      Snackbar.show({
-        text: 'Enter a valid future date (YYYY-MM-DD) and time (HH:mm)',
-        duration: Snackbar.LENGTH_SHORT,
-        backgroundColor: 'red',
-        textColor: colors.white,
-      });
-      return;
-    }
+  }, [props.modalVisible]);
 
+  const scheduledAt = moment(`${dateStr} ${timeStr}`, 'YYYY-MM-DD HH:mm', true);
+  const isValid = scheduledAt.isValid() && scheduledAt.isAfter(moment());
+
+  async function submitSchedule() {
+    if (!props.ticketId || !token) {
+      return;
+    }
+    if (!isValid) {
+      showError('Pick a time later than now');
+      return;
+    }
     setIsSubmitting(true);
     try {
-      const {data, response} = await apiFetch(
+      const data = await apiPut(
         `/tickets/${props.ticketId}/schedule`,
-        auth.token,
         {
-          method: 'PUT',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            scheduled_at: scheduledAt.toISOString(),
-            notify_customer: notifyCustomer,
-          }),
+          scheduled_at: scheduledAt.toISOString(),
+          notify_customer: notifyCustomer,
         },
+        token,
       );
-      if (!response.ok) {
-        throw new Error(
-          Array.isArray(data?.message)
-            ? data.message.join(', ')
-            : data?.message || 'Could not schedule visit',
-        );
-      }
-      Snackbar.show({
-        text: data?.sms_sent
-          ? 'Visit scheduled and customer notified'
+      showSuccess(
+        data?.sms_sent
+          ? 'Visit scheduled, customer notified'
           : 'Visit scheduled',
-        duration: Snackbar.LENGTH_SHORT,
-        backgroundColor: colors.primary,
-        textColor: colors.white,
-      });
+      );
       props.setModalVisible(false);
       props.onSuccess?.();
-    } catch (error: any) {
-      Snackbar.show({
-        text: error?.message || 'Schedule failed',
-        duration: Snackbar.LENGTH_SHORT,
-        backgroundColor: 'red',
-        textColor: colors.white,
-      });
+    } catch (err: any) {
+      showError(err?.message || 'Could not schedule the visit');
     } finally {
       setIsSubmitting(false);
     }
   }
 
   return (
-    <Modal visible={props.modalVisible} animationType="slide" transparent>
-      <TouchableWithoutFeedback onPress={() => props.setModalVisible(false)}>
-        <View style={styles.backdrop}>
-          <TouchableWithoutFeedback>
-            <KeyboardAvoidingView
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-              style={styles.sheet}>
-              <Text style={styles.title}>Schedule visit</Text>
-              <Text style={styles.hint}>
-                Adds a CRM note and optionally sends the customer an SMS.
-              </Text>
+    <FormModal
+      visible={props.modalVisible}
+      onClose={() => props.setModalVisible(false)}
+      title="Schedule visit"
+      subtitle="Adds a note to the ticket and can text the customer."
+      loading={isSubmitting}
+      footer={{
+        onSubmit: submitSchedule,
+        submitText: 'Schedule',
+        submitDisabled: !isValid,
+      }}>
+      <View style={formStyles.field}>
+        <Text style={formStyles.label}>Day</Text>
+        <DateChips value={dateStr} onChange={setDateStr} />
+      </View>
+      <View style={formStyles.field}>
+        <Text style={formStyles.label}>Time</Text>
+        <TimeChips value={timeStr} onChange={setTimeStr} date={dateStr} />
+      </View>
 
-              <Text style={styles.label}>Date (YYYY-MM-DD)</Text>
-              <TextInput
-                style={styles.input}
-                value={dateStr}
-                onChangeText={setDateStr}
-                autoCapitalize="none"
-                placeholder="2026-09-26"
-              />
-              <Text style={styles.label}>Time (24h HH:mm)</Text>
-              <TextInput
-                style={styles.input}
-                value={timeStr}
-                onChangeText={setTimeStr}
-                autoCapitalize="none"
-                placeholder="14:30"
-              />
+      <View style={styles.summary}>
+        <Text style={styles.summaryText}>
+          {isValid
+            ? scheduledAt.format('dddd, D MMMM [at] h:mm A')
+            : 'Choose a time later than now'}
+        </Text>
+      </View>
 
-              <View style={styles.row}>
-                <Text style={styles.rowLabel}>Notify customer (SMS)</Text>
-                <Switch
-                  value={notifyCustomer}
-                  onValueChange={setNotifyCustomer}
-                  trackColor={{false: '#94A3B8', true: '#22C55E'}}
-                />
-              </View>
-
-              <ModalFooterActions
-                onSubmit={submitSchedule}
-                onCancel={() => props.setModalVisible(false)}
-                submitText={isSubmitting ? 'Saving…' : 'Schedule'}
-                submitDisabled={isSubmitting}
-                loading={isSubmitting}
-              />
-            </KeyboardAvoidingView>
-          </TouchableWithoutFeedback>
+      <View style={styles.toggleRow}>
+        <View style={styles.flex}>
+          <Text style={formStyles.label}>Notify customer</Text>
+          <Text style={formStyles.hint}>Send the visit time by SMS</Text>
         </View>
-      </TouchableWithoutFeedback>
-    </Modal>
+        <Switch
+          value={notifyCustomer}
+          onValueChange={setNotifyCustomer}
+          trackColor={{false: colors.bordergray, true: colors.primary}}
+          thumbColor={colors.white}
+          disabled={isSubmitting}
+        />
+      </View>
+    </FormModal>
   );
 };
 
 export default ScheduleVisitModal;
 
 const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    justifyContent: 'flex-end',
+  flex: {flex: 1},
+  summary: {
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.infoBg,
   },
-  sheet: {
-    backgroundColor: colors.white,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    padding: 20,
-    gap: 8,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.primary,
-  },
-  hint: {
-    fontSize: 13,
-    color: '#64748B',
-    marginBottom: 8,
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.primary,
-    marginTop: 4,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
-    color: colors.primary,
-  },
-  row: {
+  summaryText: {color: colors.info, fontWeight: '600', fontSize: 14},
+  toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginVertical: 12,
-  },
-  rowLabel: {
-    fontSize: 15,
-    color: colors.primary,
-    fontWeight: '600',
+    gap: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
   },
 });

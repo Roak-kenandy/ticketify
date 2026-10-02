@@ -25,7 +25,7 @@ class EnhancedLocationService {
     successfulUpdates: 0,
     failedUpdates: 0,
     lastSuccessTime: null as string | null,
-    lastFailureTime: null as string | null
+    lastFailureTime: null as string | null,
   };
 
   configure(config: {apiEndpoint: string; authToken: string}): void {
@@ -134,44 +134,58 @@ class EnhancedLocationService {
   }
 
   private getLocationWithFallback(): void {
-    console.log('[EnhancedLocationService] 🎯 Attempting high accuracy location...');
-    
+    console.log(
+      '[EnhancedLocationService] 🎯 Attempting high accuracy location...',
+    );
+
     // First attempt: High accuracy with extended timeout for background
     Geolocation.getCurrentPosition(
-      async (position) => {
+      async position => {
         await this.handleLocationSuccess(position, 'high-accuracy');
       },
-      (error) => {
-        console.warn('[EnhancedLocationService] ⚠️ High accuracy failed:', error.message, 'Code:', error.code);
-        
+      error => {
+        console.warn(
+          '[EnhancedLocationService] ⚠️ High accuracy failed:',
+          error.message,
+          'Code:',
+          error.code,
+        );
+
         if (error.code === 1) {
           // Permission denied - stop service
-          console.warn('[EnhancedLocationService] Location permission denied - stopping background service');
+          console.warn(
+            '[EnhancedLocationService] Location permission denied - stopping background service',
+          );
           this.stop();
           return;
         }
-        
+
         // Fallback to medium accuracy
         this.getLocationMediumAccuracy();
       },
       {
         enableHighAccuracy: true,
-        timeout: 30000,
-        maximumAge: 0,
-      }
+        timeout: 20000,
+        maximumAge: 10000,
+      },
     );
   }
 
   private getLocationMediumAccuracy(): void {
-    console.log('[EnhancedLocationService] 📍 Fallback to medium accuracy location...');
-    
+    console.log(
+      '[EnhancedLocationService] 📍 Fallback to medium accuracy location...',
+    );
+
     Geolocation.getCurrentPosition(
-      async (position) => {
+      async position => {
         await this.handleLocationSuccess(position, 'medium-accuracy');
       },
-      (error) => {
-        console.warn('[EnhancedLocationService] ⚠️ Medium accuracy failed:', error.message);
-        
+      error => {
+        console.warn(
+          '[EnhancedLocationService] ⚠️ Medium accuracy failed:',
+          error.message,
+        );
+
         // Final fallback to network-based location
         this.getLocationNetworkBased();
       },
@@ -179,26 +193,33 @@ class EnhancedLocationService {
         enableHighAccuracy: false,
         timeout: 20000,
         maximumAge: 15000,
-      }
+      },
     );
   }
 
   private getLocationNetworkBased(): void {
-    console.log('[EnhancedLocationService] 🌐 Final fallback to network-based location...');
-    
+    console.log(
+      '[EnhancedLocationService] 🌐 Final fallback to network-based location...',
+    );
+
     Geolocation.getCurrentPosition(
-      async (position) => {
+      async position => {
         await this.handleLocationSuccess(position, 'network-based');
       },
-      (error) => {
-        console.error('[EnhancedLocationService] ❌ All location attempts failed:', {
-          code: error.code,
-          message: error.message,
-        });
-        
+      error => {
+        console.error(
+          '[EnhancedLocationService] ❌ All location attempts failed:',
+          {
+            code: error.code,
+            message: error.message,
+          },
+        );
+
         // Log the failure but don't stop the service - try again next cycle
-        console.log('[EnhancedLocationService] Will retry in next update cycle (15 seconds)');
-        
+        console.log(
+          '[EnhancedLocationService] Will retry in next update cycle (15 seconds)',
+        );
+
         // Track consecutive failures
         this.handleConsecutiveFailures();
       },
@@ -206,11 +227,14 @@ class EnhancedLocationService {
         enableHighAccuracy: false,
         timeout: 15000,
         maximumAge: 30000,
-      }
+      },
     );
   }
 
-  private async handleLocationSuccess(position: any, method: string): Promise<void> {
+  private async handleLocationSuccess(
+    position: any,
+    method: string,
+  ): Promise<void> {
     const locationData: LocationData = {
       latitude: position.coords.latitude,
       longitude: position.coords.longitude,
@@ -218,13 +242,16 @@ class EnhancedLocationService {
       timestamp: new Date().toISOString(),
     };
 
-    console.log(`[EnhancedLocationService] ✅ Location obtained via ${method}:`, {
-      lat: locationData.latitude.toFixed(6),
-      lng: locationData.longitude.toFixed(6),
-      accuracy: locationData.accuracy.toFixed(1) + 'm',
-      timestamp: locationData.timestamp,
-      method: method
-    });
+    console.log(
+      `[EnhancedLocationService] ✅ Location obtained via ${method}:`,
+      {
+        lat: locationData.latitude.toFixed(6),
+        lng: locationData.longitude.toFixed(6),
+        accuracy: locationData.accuracy.toFixed(1) + 'm',
+        timestamp: locationData.timestamp,
+        method: method,
+      },
+    );
 
     // Reset failure counter on success
     this.consecutiveFailures = 0;
@@ -237,14 +264,19 @@ class EnhancedLocationService {
       longitude: locationData.longitude.toFixed(6),
       accuracy: locationData.accuracy.toFixed(1) + 'm',
       method: method,
-      timestamp: locationData.timestamp
+      timestamp: locationData.timestamp,
     });
 
     try {
       await this.sendLocationToServer(locationData);
-      console.log('[EnhancedLocationService] ✅ Background location sent to server successfully');
+      console.log(
+        '[EnhancedLocationService] ✅ Background location sent to server successfully',
+      );
     } catch (error) {
-      console.error('[EnhancedLocationService] ❌ Failed to send background location:', error?.message || error);
+      console.warn(
+        '[EnhancedLocationService] Failed to send background location:',
+        (error as Error)?.message || error,
+      );
       await this.storeLocationOffline(locationData);
     }
   }
@@ -253,44 +285,60 @@ class EnhancedLocationService {
     this.consecutiveFailures++;
     this.backgroundStats.failedUpdates++;
     this.backgroundStats.lastFailureTime = new Date().toISOString();
-    
-    // Store failure stats for debugging
-    AsyncStorage.setItem('background_location_stats', JSON.stringify(this.backgroundStats));
-    
+
+    if (__DEV__) {
+      AsyncStorage.setItem(
+        'background_location_stats',
+        JSON.stringify(this.backgroundStats),
+      ).catch(() => {});
+    }
+
     // Save proof of failure
     this.saveBackgroundProof('failure', {
       consecutiveFailures: this.consecutiveFailures,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
-    
+
     if (this.consecutiveFailures >= this.maxConsecutiveFailures) {
-      console.warn(`[EnhancedLocationService] ⚠️ ${this.consecutiveFailures} consecutive failures. Increasing update interval.`);
+      console.warn(
+        `[EnhancedLocationService] ⚠️ ${this.consecutiveFailures} consecutive failures. Increasing update interval.`,
+      );
       // Temporarily increase the update frequency to reduce battery drain
-      this.locationUpdateFrequency = Math.min(60000, this.locationUpdateFrequency * 1.5); // Max 1 minute
+      this.locationUpdateFrequency = Math.min(
+        60000,
+        this.locationUpdateFrequency * 1.5,
+      ); // Max 1 minute
     }
   }
 
   // Method to save background activity proof (even when console not visible)
-  private async saveBackgroundProof(type: 'attempt' | 'success' | 'failure', data: any): Promise<void> {
+  private async saveBackgroundProof(
+    type: 'attempt' | 'success' | 'failure',
+    data: any,
+  ): Promise<void> {
+    // Debug aid only: a storage read+write every cycle is wasted I/O in release.
+    if (!__DEV__) {
+      return;
+    }
     try {
       const timestamp = new Date().toISOString();
       const proof = {
         timestamp,
         type,
         data,
-        appState: 'background' // We assume background since foreground logs are visible
+        appState: 'background', // We assume background since foreground logs are visible
       };
-      
+
       const existingProofs = await AsyncStorage.getItem('background_proofs');
       const proofs = existingProofs ? JSON.parse(existingProofs) : [];
-      
+
       proofs.push(proof);
-      
+
       // Keep last 20 proofs
       if (proofs.length > 20) {
         proofs.splice(0, proofs.length - 20);
       }
-      
+
       await AsyncStorage.setItem('background_proofs', JSON.stringify(proofs));
     } catch (error) {
       // Silently fail to avoid breaking location service
@@ -317,29 +365,29 @@ class EnhancedLocationService {
   }
 
   private async sendLocationToServer(location: LocationData): Promise<void> {
-    // Debug token info (without exposing full token)
-    console.log('[EnhancedLocationService] 🔐 Token info:', {
-      hasToken: !!this.authToken,
-      tokenLength: this.authToken?.length || 0,
-      tokenPrefix: this.authToken?.substring(0, 10) + '...',
-      endpoint: this.apiEndpoint
-    });
-    
-    const response = await fetch(this.apiEndpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.authToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(location),
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    let response: Response;
+    try {
+      response = await fetch(this.apiEndpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(location),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
       console.error('[EnhancedLocationService] 🚨 API Error Response:', {
         status: response.status,
         statusText: response.statusText,
-        body: errorText
+        body: errorText,
       });
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
@@ -374,7 +422,11 @@ class EnhancedLocationService {
     }
   }
 
-  async syncOfflineLocations(): Promise<void> {
+  async syncOfflineLocations(token: string): Promise<void> {
+    if (!token) {
+      return;
+    }
+    this.authToken = token;
     try {
       const offlineLocationsStr = await AsyncStorage.getItem(
         'offline_locations',
@@ -398,18 +450,26 @@ class EnhancedLocationService {
       );
 
       let successful = 0;
-      let failed = 0;
+      const remaining: LocationData[] = [];
       for (const location of sorted) {
         try {
           await this.sendLocationToServer(location);
           successful += 1;
         } catch {
-          failed += 1;
+          remaining.push(location);
         }
       }
+      const failed = remaining.length;
 
       if (successful > 0) {
-        await AsyncStorage.removeItem('offline_locations');
+        if (remaining.length) {
+          await AsyncStorage.setItem(
+            'offline_locations',
+            JSON.stringify(remaining),
+          );
+        } else {
+          await AsyncStorage.removeItem('offline_locations');
+        }
         console.log(
           `[EnhancedLocationService] ✅ Synced ${successful} offline locations`,
         );

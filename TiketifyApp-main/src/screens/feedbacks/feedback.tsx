@@ -1,99 +1,100 @@
-import {StyleSheet, Text, View} from 'react-native';
-import React from 'react';
-import colors from '../../constants/colors';
-import Icon from 'react-native-vector-icons/Ionicons';
 import moment from 'moment';
-import {TouchableOpacity} from 'react-native-gesture-handler';
+import React from 'react';
+import {Pressable, StyleSheet, Text, View} from 'react-native';
+import Icon from 'react-native-vector-icons/Ionicons';
+import colors from '../../constants/colors';
+import {radius, shadows, spacing} from '../../constants/styles';
 
 type Props = {
   navigation: any;
   data: {
-    feedback: {
-      feedback: string;
-      rating: number;
-      created_at: string;
-    };
-    ticket: {
-      number: string;
-      contact: {
-        person_name: {
-          full_name: string;
-        };
-      };
+    feedback?: {feedback?: string; rating?: number; created_at?: string};
+    ticket?: {
+      id?: string;
+      number?: string;
+      contact?: {person_name?: {full_name?: string}};
     };
   };
 };
 
-const FeedBack = (props: Props) => {
+const FeedBack = ({navigation, data}: Props) => {
+  const rating = Math.max(0, Math.min(5, Number(data?.feedback?.rating) || 0));
+  const ticket = data?.ticket;
+
   return (
-    <View
-      style={{
-        paddingVertical: 10,
-        gap: 10,
-      }}>
-      {/* Stars */}
-      <View
-        style={{
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}>
-        <Text
-          style={{
-            fontWeight: 'bold',
-            fontSize: 16,
-          }}>
-          {props?.data?.ticket?.number ?? 'No Ticket Number'}
-        </Text>
-        <TouchableOpacity
-          onPress={() => {
-            props.navigation.navigate('ActivityDetailsScreen', {
-              ticket: props.data.ticket,
-            });
-          }}>
-          <Icon name="arrow-forward" size={20} />
-        </TouchableOpacity>
-      </View>
-      <View style={{flexDirection: 'row'}}>
-        {/* create an array with the same amount of rating */}
-        {[...Array(5)].map((_, i) => (
-          <Icon
-            key={i}
-            name="star"
-            size={20}
-            color={
-              i < props.data.feedback.rating
-                ? colors.secondary
-                : colors.borderLight
-            }
-          />
-        ))}
-      </View>
-      <Text
-        style={{
-          fontSize: 16,
-          color: 'gray',
-        }}>
-        {props.data.feedback.feedback}
-      </Text>
-      <View
-        style={{
-          gap: 5,
-        }}>
-        <Text
-          style={{
-            fontWeight: '600',
-          }}>
-          {props.data.ticket.contact.person_name.full_name ?? 'Customer Name'}
-        </Text>
-        <Text>
-          {moment(props.data.feedback.created_at).format('MMMM Do YYYY')}
+    <Pressable
+      style={({pressed}) => [styles.card, pressed && styles.pressed]}
+      disabled={!ticket?.id}
+      onPress={() => navigation.navigate('ActivityDetailsScreen', {ticket})}
+      accessibilityRole="button"
+      accessibilityLabel={`${rating} star review for ticket ${
+        ticket?.number ?? ''
+      }`}>
+      <View style={styles.row}>
+        <View style={styles.stars}>
+          {[0, 1, 2, 3, 4].map(i => (
+            <Icon
+              key={i}
+              name={i < rating ? 'star' : 'star-outline'}
+              size={18}
+              color={i < rating ? colors.secondary : colors.bordergray}
+            />
+          ))}
+        </View>
+        <Text style={styles.date}>
+          {data?.feedback?.created_at
+            ? moment(data.feedback.created_at).format('DD MMM YYYY')
+            : ''}
         </Text>
       </View>
-    </View>
+
+      {data?.feedback?.feedback ? (
+        <Text style={styles.review}>“{data.feedback.feedback}”</Text>
+      ) : null}
+
+      <View style={[styles.row, styles.footer]}>
+        <View style={styles.who}>
+          <Icon name="person-outline" size={14} color={colors.gray2} />
+          <Text style={styles.meta} numberOfLines={1}>
+            {ticket?.contact?.person_name?.full_name || 'Customer'}
+          </Text>
+        </View>
+        <View style={styles.who}>
+          <Text style={styles.ticket}>#{ticket?.number ?? '—'}</Text>
+          <Icon name="chevron-forward" size={16} color={colors.gray3} />
+        </View>
+      </View>
+    </Pressable>
   );
 };
 
-export default FeedBack;
+export default React.memo(FeedBack);
 
-const styles = StyleSheet.create({});
+const styles = StyleSheet.create({
+  card: {
+    backgroundColor: colors.white,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    ...shadows.card,
+  },
+  pressed: {opacity: 0.92},
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  stars: {flexDirection: 'row', gap: 2},
+  date: {fontSize: 12, color: colors.gray2},
+  review: {fontSize: 15, color: colors.black, lineHeight: 21},
+  footer: {
+    paddingTop: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.borderLight,
+  },
+  who: {flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1},
+  meta: {fontSize: 13, color: colors.gray2, flexShrink: 1},
+  ticket: {fontSize: 13, fontWeight: '700', color: colors.primary},
+});

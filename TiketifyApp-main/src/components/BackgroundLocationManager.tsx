@@ -4,34 +4,66 @@ import {AppState, AppStateStatus, Alert, Platform} from 'react-native';
 import BackgroundLocationService from '../services/BackgroundLocationService';
 import NativeBackgroundLocationService from '../services/NativeBackgroundLocationService';
 import {useLocationPermissions} from '../hooks/useLocationPermissions';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {API_BASE_URL} from '../config/api';
+import {isOnShift} from '../store/reducers/auth.reducer';
+
+const BATTERY_ALERT_KEY = 'battery_alert_shown_v1';
 
 const BackgroundLocationManager: React.FC = () => {
-  const isOnline = useSelector((state: any) => state.auth?.isOnline);
+  const isOnline = useSelector((state: any) => isOnShift(state.auth));
   const token = useSelector((state: any) => state.auth?.token);
-  const {permissionStatus, requestLocationPermission} =
+  const {permissionStatus, requestLocationPermission, refreshPermissionStatus} =
     useLocationPermissions();
   const hasShownBatteryAlert = useRef(false);
   const activeConfigRef = useRef('');
+  const hasPromptedRef = useRef(false);
   const requestPermissionRef = useRef(requestLocationPermission);
+  const refreshPermissionRef = useRef(refreshPermissionStatus);
 
   requestPermissionRef.current = requestLocationPermission;
+  refreshPermissionRef.current = refreshPermissionStatus;
 
-  const showBatteryOptimizationAlert = () => {
-    if (!hasShownBatteryAlert.current && Platform.OS === 'android') {
-      hasShownBatteryAlert.current = true;
-      Alert.alert(
-        'Battery Optimization',
-        'For reliable background location tracking, please disable battery optimization for Ticketify in your device settings. This ensures location updates continue when the app is closed.',
-        [{text: 'OK', style: 'default'}],
-      );
+  useEffect(() => {
+    if (
+      isOnline &&
+      token &&
+      !hasPromptedRef.current &&
+      (permissionStatus.status === 'denied' ||
+        permissionStatus.status === 'blocked')
+    ) {
+      hasPromptedRef.current = true;
+      requestPermissionRef.current().catch(() => {});
     }
+  }, [isOnline, token, permissionStatus.status]);
+
+  const showBatteryOptimizationAlert = async () => {
+    if (hasShownBatteryAlert.current || Platform.OS !== 'android') {
+      return;
+    }
+    hasShownBatteryAlert.current = true;
+    try {
+      if (await AsyncStorage.getItem(BATTERY_ALERT_KEY)) {
+        return;
+      }
+      await AsyncStorage.setItem(BATTERY_ALERT_KEY, '1');
+    } catch {
+      // Show the hint anyway if storage is unavailable.
+    }
+    Alert.alert(
+      'Keep location sharing reliable',
+      'To keep sharing your location while the app is in the background, turn off battery optimisation for Ticketify in your phone settings.',
+      [{text: 'OK', style: 'default'}],
+    );
   };
 
   useEffect(() => {
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
       if (nextAppState === 'active') {
-        BackgroundLocationService.syncOfflineLocations();
+        refreshPermissionRef.current().catch(() => {});
+        if (token) {
+          BackgroundLocationService.syncOfflineLocations(token);
+        }
         if (isOnline && token) {
           BackgroundLocationService.triggerLocationUpdate().catch(() => {});
         }
@@ -61,7 +93,10 @@ const BackgroundLocationManager: React.FC = () => {
         }
       } catch (error) {
         if (__DEV__) {
-          console.warn('[BackgroundLocationManager] Service check error:', error);
+          console.warn(
+            '[BackgroundLocationManager] Service check error:',
+            error,
+          );
         }
       }
     };
@@ -133,7 +168,13 @@ const BackgroundLocationManager: React.FC = () => {
     };
 
     initializeLocationService();
-  }, [isOnline, token, permissionStatus.granted, permissionStatus.status, permissionStatus.canRequestAgain]);
+  }, [
+    isOnline,
+    token,
+    permissionStatus.granted,
+    permissionStatus.status,
+    permissionStatus.canRequestAgain,
+  ]);
 
   useEffect(() => {
     if (

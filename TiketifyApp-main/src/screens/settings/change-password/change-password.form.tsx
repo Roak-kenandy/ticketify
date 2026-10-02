@@ -1,161 +1,148 @@
 import {Formik} from 'formik';
 import React from 'react';
-import {Alert, Text, TextInput, View} from 'react-native';
-import {useDispatch, useSelector} from 'react-redux';
+import {
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import Icon from 'react-native-vector-icons/Ionicons';
+import {useSelector} from 'react-redux';
 import * as yup from 'yup';
 import PrimaryButton from '../../../components/ui/primary-button';
-import {globalStyles} from '../../../constants/styles';
-import Snackbar from 'react-native-snackbar';
-import {API_BASE_URL} from '../../../config/api';
+import colors from '../../../constants/colors';
+import {globalStyles, spacing} from '../../../constants/styles';
+import {apiPost} from '../../../utils/apiClient';
+import {showError, showSuccess} from '../../../utils/notify';
 
 type Props = {
-  navigation: any;
+  onDone: () => void;
 };
 
-let initialValues: {
-  currentPassword: string;
-  newPassword: string;
-  confirmPassword: string;
-} = {
+const initialValues = {
   currentPassword: '',
   newPassword: '',
   confirmPassword: '',
 };
 
-let validationSchema = yup.object().shape({
-  currentPassword: yup
-    .string()
-    .required('Current Password is required to change password'),
+const validationSchema = yup.object().shape({
+  currentPassword: yup.string().required('Enter your current password'),
   newPassword: yup
     .string()
-    .required('New Password is required to change password')
-    .min(6, 'Password must be 6 characters'),
+    .required('Enter a new password')
+    .min(6, 'Use at least 6 characters')
+    .notOneOf([yup.ref('currentPassword')], 'New password must be different'),
   confirmPassword: yup
     .string()
-    .required('Please confirm your new password to change your password')
-    .min(6, 'Password must be 6 characters')
-    // @ts-ignore
-    .oneOf([yup.ref('newPassword'), null], 'Passwords must match'),
+    .required('Confirm your new password')
+    .oneOf([yup.ref('newPassword')], 'Passwords do not match'),
 });
 
-const ChangePasswordForm = (props: Props) => {
-  let token = useSelector((state: any) => state.auth.token);
+type FieldName = keyof typeof initialValues;
+
+const FIELDS: {name: FieldName; label: string}[] = [
+  {name: 'currentPassword', label: 'Current password'},
+  {name: 'newPassword', label: 'New password'},
+  {name: 'confirmPassword', label: 'Confirm new password'},
+];
+
+const ChangePasswordForm = ({onDone}: Props) => {
+  const token = useSelector((state: any) => state.auth?.token);
+  const [visible, setVisible] = React.useState(false);
 
   return (
-    <View>
-      <Formik
-        initialValues={initialValues}
-        validationSchema={validationSchema}
-        onSubmit={values => {
-          fetch(
-            `${API_BASE_URL}/auth/change-password`,
+    <Formik
+      initialValues={initialValues}
+      validationSchema={validationSchema}
+      onSubmit={async (values, helpers) => {
+        try {
+          const data = await apiPost(
+            '/auth/change-password',
             {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-              },
-              body: JSON.stringify({
-                old_password: values.currentPassword,
-                new_password: values.newPassword,
-              }),
+              old_password: values.currentPassword,
+              new_password: values.newPassword,
             },
-          )
-            .then(response => {
-              return response.json();
-            })
-            .then(data => {
-              console.log(data);
-              Snackbar.show({
-                backgroundColor: data.statusCode === 403 ? 'red' : 'green',
-                text: data.message,
-                duration: Snackbar.LENGTH_SHORT,
-              });
-              if (data.statusCode != 403) {
-                props.navigation.navigate('LoginScreen');
-              }
-            })
-            .catch(error => {
-              console.error('Error:', error);
-              Snackbar.show({
-                backgroundColor: 'red',
-                textColor: 'white',
-                text: error?.message,
-                duration: Snackbar.LENGTH_SHORT,
-              });
-            });
-        }}>
-        {({
-          handleChange,
-          handleBlur,
-          handleSubmit,
-          values,
-          errors,
-          touched,
-        }) => (
-          <View style={globalStyles.container}>
-            {/* Password */}
-            <View style={globalStyles.inputWrapper}>
-              <View style={globalStyles.inputContainer}>
-                <Text style={globalStyles.label}>Current Password</Text>
+            token,
+          );
+          showSuccess(data?.message || 'Password changed');
+          helpers.resetForm();
+          onDone();
+        } catch (err: any) {
+          showError(err?.message || 'Could not change password');
+        }
+      }}>
+      {({
+        handleChange,
+        handleBlur,
+        handleSubmit,
+        values,
+        errors,
+        touched,
+        isSubmitting,
+      }) => (
+        <View style={styles.form}>
+          {FIELDS.map((field, index) => (
+            <View key={field.name} style={globalStyles.inputContainer}>
+              <Text style={globalStyles.label}>{field.label}</Text>
+              <View>
                 <TextInput
-                  secureTextEntry
-                  style={globalStyles.input}
-                  onChangeText={handleChange('currentPassword')}
-                  onBlur={handleBlur('currentPassword')}
-                  value={values.currentPassword}
-                  autoFocus
+                  secureTextEntry={!visible}
+                  style={[globalStyles.input, styles.inputWithIcon]}
+                  onChangeText={handleChange(field.name)}
+                  onBlur={handleBlur(field.name)}
+                  value={values[field.name]}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  textContentType={index === 0 ? 'password' : 'newPassword'}
+                  editable={!isSubmitting}
+                  autoFocus={index === 0}
                 />
+                {index === 0 ? (
+                  <TouchableOpacity
+                    style={styles.eye}
+                    onPress={() => setVisible(v => !v)}
+                    accessibilityLabel={
+                      visible ? 'Hide passwords' : 'Show passwords'
+                    }>
+                    <Icon
+                      name={visible ? 'eye-off-outline' : 'eye-outline'}
+                      size={20}
+                      color={colors.gray2}
+                    />
+                  </TouchableOpacity>
+                ) : null}
               </View>
-              {errors.currentPassword && touched.currentPassword && (
-                <Text style={globalStyles.error}>{errors.currentPassword}</Text>
-              )}
+              {errors[field.name] && touched[field.name] ? (
+                <Text style={globalStyles.error}>{errors[field.name]}</Text>
+              ) : null}
             </View>
-            <View style={globalStyles.inputWrapper}>
-              <View style={globalStyles.inputContainer}>
-                <Text style={globalStyles.label}>New Password</Text>
-                <TextInput
-                  secureTextEntry
-                  style={globalStyles.input}
-                  onChangeText={handleChange('newPassword')}
-                  onBlur={handleBlur('newPassword')}
-                  value={values.newPassword}
-                />
-              </View>
-              {errors.newPassword && touched.newPassword && (
-                <Text style={globalStyles.error}>{errors.newPassword}</Text>
-              )}
-            </View>
-            <View style={globalStyles.inputWrapper}>
-              <View style={globalStyles.inputContainer}>
-                <Text style={globalStyles.label}>Confirm New Password</Text>
-                <TextInput
-                  secureTextEntry
-                  style={globalStyles.input}
-                  onChangeText={handleChange('confirmPassword')}
-                  onBlur={handleBlur('confirmPassword')}
-                  value={values.confirmPassword}
-                />
-              </View>
-              {errors.confirmPassword && touched.confirmPassword && (
-                <Text style={globalStyles.error}>{errors.confirmPassword}</Text>
-              )}
-            </View>
-            <View
-              style={{
-                flexDirection: 'column',
-                justifyContent: 'space-between',
-                paddingBottom: 10,
-                paddingTop: 20,
-                width: '100%',
-              }}>
-              <PrimaryButton text="Submit" onPress={handleSubmit} />
-            </View>
-          </View>
-        )}
-      </Formik>
-    </View>
+          ))}
+          <PrimaryButton
+            text="Update password"
+            onPress={() => handleSubmit()}
+            loading={isSubmitting}
+            style={styles.submit}
+          />
+        </View>
+      )}
+    </Formik>
   );
 };
 
 export default ChangePasswordForm;
+
+const styles = StyleSheet.create({
+  form: {gap: spacing.lg},
+  inputWithIcon: {paddingRight: 48},
+  eye: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  submit: {marginTop: spacing.sm},
+});

@@ -12,41 +12,16 @@ import {useDispatch, useSelector} from 'react-redux';
 import {apiFetch, normalizeAvailability} from '../../../../utils/apiClient';
 import {showError} from '../../../../utils/notify';
 import {spacing} from '../../../../constants/styles';
+import {
+  initials as getInitials,
+  Presence,
+  PRESENCE_META,
+  presenceFromUser,
+} from '../../../../constants/ticket-meta';
 import PresenceBusyModal from './presence-busy.modal';
-
-type Presence = 'ONLINE' | 'BUSY' | 'OFFLINE';
 
 type Props = {
   navigation: any;
-};
-
-function getInitials(name?: string) {
-  if (!name) {
-    return '?';
-  }
-  return name
-    .split(' ')
-    .map(part => part[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
-}
-
-function presenceFromUser(user: any, isOnline: boolean): Presence {
-  const p = user?.presence;
-  if (p === 'ONLINE' || p === 'BUSY' || p === 'OFFLINE') {
-    return p;
-  }
-  return isOnline ? 'ONLINE' : 'OFFLINE';
-}
-
-const PRESENCE_META: Record<
-  Presence,
-  {label: string; color: string; ring: string}
-> = {
-  ONLINE: {label: 'Green', color: '#22C55E', ring: '#86EFAC'},
-  BUSY: {label: 'Yellow', color: '#EAB308', ring: '#FDE047'},
-  OFFLINE: {label: 'Red', color: '#EF4444', ring: '#FCA5A5'},
 };
 
 const ProfileCard = (props: Props) => {
@@ -173,15 +148,18 @@ const ProfileCard = (props: Props) => {
               return (
                 <TouchableOpacity
                   key={key}
-                  accessibilityLabel={meta.label}
+                  accessibilityRole="radio"
+                  accessibilityState={{selected: active, disabled: submitting}}
+                  accessibilityLabel={`${meta.label}: ${meta.description}`}
                   onPress={() => onSelectPresence(key)}
+                  hitSlop={6}
                   style={[
                     styles.presenceDot,
                     {
                       backgroundColor: meta.color,
-                      borderColor: active ? meta.ring : 'transparent',
+                      borderColor: active ? colors.white : 'transparent',
                     },
-                    active && styles.presenceDotActive,
+                    !active && styles.presenceDotIdle,
                   ]}
                 />
               );
@@ -280,14 +258,12 @@ const styles = StyleSheet.create({
     borderRadius: 11,
     borderWidth: 3,
   },
-  presenceDotActive: {
-    transform: [{scale: 1.12}],
+  presenceDotIdle: {
+    opacity: 0.45,
   },
   statusLabel: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
     color: '#F8FAFC',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
   },
 });

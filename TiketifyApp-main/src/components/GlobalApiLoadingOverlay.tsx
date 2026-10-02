@@ -1,59 +1,104 @@
 import React from 'react';
 import {
-  ActivityIndicator,
-  Modal,
+  Animated,
+  Easing,
   StyleSheet,
-  Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import colors from '../constants/colors';
 import {subscribeApiLoading} from '../utils/apiLoading';
 
+const SHOW_DELAY_MS = 300;
+const BAR_WIDTH_RATIO = 0.35;
+
+/**
+ * Thin, non-blocking activity bar pinned to the top of the screen. Screens own
+ * their loading states; this only signals that network work is in flight, and
+ * never intercepts touches.
+ */
 export default function GlobalApiLoadingOverlay() {
   const [visible, setVisible] = React.useState(false);
+  const progress = React.useRef(new Animated.Value(0)).current;
+  const {width} = useWindowDimensions();
+  const insets = useSafeAreaInsets();
 
   React.useEffect(() => {
-    return subscribeApiLoading(active => setVisible(active));
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = subscribeApiLoading(active => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (active) {
+        timer = setTimeout(() => setVisible(true), SHOW_DELAY_MS);
+      } else {
+        setVisible(false);
+      }
+    });
+    return () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      unsubscribe();
+    };
   }, []);
+
+  React.useEffect(() => {
+    if (!visible) {
+      progress.stopAnimation();
+      progress.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.timing(progress, {
+        toValue: 1,
+        duration: 1100,
+        easing: Easing.inOut(Easing.quad),
+        useNativeDriver: true,
+      }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [progress, visible]);
 
   if (!visible) {
     return null;
   }
 
+  const barWidth = width * BAR_WIDTH_RATIO;
+  const translateX = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-barWidth, width],
+  });
+
   return (
-    <Modal transparent visible animationType="fade" statusBarTranslucent>
-      <View style={styles.backdrop}>
-        <View style={styles.box}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.text}>Loading…</Text>
-        </View>
-      </View>
-    </Modal>
+    <View
+      pointerEvents="none"
+      style={[styles.track, {top: insets.top}]}
+      accessibilityRole="progressbar"
+      accessibilityLabel="Loading">
+      <Animated.View
+        style={[styles.bar, {width: barWidth, transform: [{translateX}]}]}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.25)',
-    alignItems: 'center',
-    justifyContent: 'center',
+  track: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 3,
+    overflow: 'hidden',
+    zIndex: 1000,
+    elevation: 1000,
   },
-  box: {
-    backgroundColor: colors.white,
-    paddingVertical: 24,
-    paddingHorizontal: 32,
-    borderRadius: 12,
-    alignItems: 'center',
-    minWidth: 140,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  text: {
-    marginTop: 12,
-    fontSize: 15,
-    color: colors.gray,
+  bar: {
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: colors.secondary,
   },
 });

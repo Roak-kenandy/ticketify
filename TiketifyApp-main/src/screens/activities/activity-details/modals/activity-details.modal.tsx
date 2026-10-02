@@ -1,21 +1,13 @@
 import React from 'react';
-import {
-  Alert,
-  Dimensions,
-  Modal,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-  ScrollView,
-} from 'react-native';
-import Icon from 'react-native-vector-icons/Ionicons';
-import colors from '../../../../constants/colors';
+import {StyleSheet, Text, View} from 'react-native';
 import {useSelector} from 'react-redux';
 import moment from 'moment';
-import ABadge from '../../../../components/ui/badge';
-import ASeperator from '../../../../components/ui/seperator';
-import {API_BASE_URL} from '../../../../config/api';
+import FormModal from '../../../../components/modal/form-modal';
+import {ToneBadge} from '../../../../components/ui/badge';
+import {ErrorState, Skeleton} from '../../../../components/ui/state-views';
+import colors from '../../../../constants/colors';
+import {radius, spacing, typography} from '../../../../constants/styles';
+import {apiGet} from '../../../../utils/apiClient';
 import {
   lmStatusLabel,
   resolveCrmActivityState,
@@ -27,426 +19,209 @@ type Props = {
   setModalVisible: (value: boolean) => void;
 };
 
-let {width, height} = Dimensions.get('window');
-
 const ActivityDetailModal = (props: Props) => {
-  let auth = useSelector((state: any) => state.auth);
-  const [activityDetails, setActivityDetails] = React.useState<any>(null);
+  const token = useSelector((state: any) => state.auth?.token);
+  const [details, setDetails] = React.useState<any>(null);
+  const [error, setError] = React.useState('');
+  const activityId = props.activity?.id;
 
-  const fetchActivityDetails = async () => {
-    try {
-      console.log('Fetching activity details for ID:', props.activity?.id);
-
-      const response = await fetch(
-        `${API_BASE_URL}/activities/${props.activity?.id}`,
-        {
-          method: 'GET',
-          headers: {
-            Authorization: 'Bearer ' + auth?.token,
-            'Content-Type': 'application/json',
-          },
-        },
-      );
-
-      console.log('Response status:', response.status);
-      console.log('Response ok:', response.ok);
-
-      // Check if response is ok
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      // Get response text first to debug
-      const responseText = await response.text();
-
-      // Check if response is empty
-      if (!responseText || responseText.trim() === '') {
-        throw new Error('Empty response from server');
-      }
-
-      // Try to parse as JSON
-      let data;
-      try {
-        data = JSON.parse(responseText);
-      } catch (parseError) {
-        console.error('JSON parse error:', parseError);
-        console.error(
-          'Failed to parse response:',
-          responseText.substring(0, 200),
-        );
-        throw new Error(
-          `Server returned invalid JSON. Response: ${responseText.substring(
-            0,
-            100,
-          )}${responseText.length > 100 ? '...' : ''}`,
-        );
-      }
-
-      setActivityDetails(data);
-    } catch (error: any) {
-      console.error('Error fetching activity details:', error);
-      setActivityDetails({error: error?.message || 'Failed to load details'});
+  const load = React.useCallback(async () => {
+    if (!activityId) {
+      return;
     }
-  };
+    setDetails(null);
+    setError('');
+    try {
+      setDetails(await apiGet(`/activities/${activityId}`, token));
+    } catch (err: any) {
+      setError(err?.message || 'Could not load the activity');
+    }
+  }, [activityId, token]);
 
   React.useEffect(() => {
-    if (props.modalVisible && props.activity?.id) {
-      setActivityDetails(null);
-      fetchActivityDetails();
+    if (props.modalVisible) {
+      load();
     }
-  }, [props.modalVisible, props.activity?.id]);
+  }, [props.modalVisible, load]);
+
+  const state = details ? resolveCrmActivityState(details) : null;
+  const latestState = details?.states?.length
+    ? [...details.states].sort(
+        (a: {date: number}, b: {date: number}) => b.date - a.date,
+      )[0]
+    : null;
 
   return (
-    <View style={styles.centeredView}>
-      <Modal
-        style={{backgroundColor: 'rgba(0, 0, 0, 0.5)'}}
-        animationType="fade"
-        transparent={true}
-        statusBarTranslucent={true}
-        presentationStyle="overFullScreen"
-        visible={props.modalVisible}
-        onRequestClose={() => {
-          Alert.alert('Modal has been closed.');
-          props.setModalVisible(!props.modalVisible);
-        }}>
-        <View
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          }}></View>
-        <View style={styles.centeredView}>
-          <View style={styles.modalView}>
-            {/* Header */}
-            <View style={styles.header}>
-              <Text style={styles.title}>Activity Details</Text>
-              <TouchableOpacity
-                onPress={() => props.setModalVisible(false)}
-                style={styles.closeButton}>
-                <Icon name="close" size={24} color={colors.black} />
-              </TouchableOpacity>
-            </View>
-
-            <ASeperator />
-
-            {/* Content */}
-
-            {activityDetails ? (
-              <View style={styles.contentContainer}>
-                {/* Activity Name and Type */}
-
-                {/* Description */}
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Description</Text>
-                  <Text style={styles.sectionContent}>
-                    {activityDetails.description}
-                  </Text>
-                </View>
-
-                {/* Date and Time */}
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Scheduled Date</Text>
-                  <Text style={styles.sectionContent}>
-                    {moment(activityDetails.date * 1000).format(
-                      'DD MMMM YYYY, dddd',
-                    )}
-                  </Text>
-                  <Text style={styles.dateNote}>
-                    Created:{' '}
-                    {moment(activityDetails.created_date * 1000).format(
-                      'DD MMM YYYY, hh:mm A',
-                    )}
-                  </Text>
-                </View>
-
-                {/* Assignment */}
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Assignment</Text>
-                  <View style={styles.assignmentContainer}>
-                    <Text style={styles.sectionContent}>
-                      Team:{' '}
-                      {activityDetails.assigned_to?.team?.name ||
-                        'Not assigned'}
-                    </Text>
-                    {activityDetails.assigned_to?.user ? (
-                      <Text style={styles.sectionContent}>
-                        User: {activityDetails.assigned_to.user.name}
-                      </Text>
-                    ) : (
-                      <Text style={styles.noAssignmentText}>
-                        No user assigned
-                      </Text>
-                    )}
-                  </View>
-                </View>
-
-                {/* Contact Information */}
-                {activityDetails.contact && (
-                  <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Contact</Text>
-                    <View style={styles.contactContainer}>
-                      <Text style={styles.contactName}>
-                        {activityDetails.contact.name}
-                      </Text>
-                      <Text style={styles.contactDetail}>
-                        Code: {activityDetails.contact.code}
-                      </Text>
-                      {activityDetails.contact.phone && (
-                        <Text style={styles.contactDetail}>
-                          Phone: {activityDetails.contact.phone.number} (
-                          {activityDetails.contact.phone.country_code})
-                        </Text>
-                      )}
-                      {activityDetails.contact.primary_address && (
-                        <Text style={styles.contactDetail}>
-                          Address:{' '}
-                          {
-                            activityDetails.contact.primary_address
-                              .address_line_1
-                          }
-                          , {activityDetails.contact.primary_address.town_city}
-                        </Text>
-                      )}
-                    </View>
-                  </View>
-                )}
-
-                {/* Service Request */}
-                {activityDetails.service_request && (
-                  <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>
-                      Linked Service Request
-                    </Text>
-                    <Text style={styles.serviceRequestNumber}>
-                      #{activityDetails.service_request.number}
-                    </Text>
-                    <Text style={styles.serviceRequestId}>
-                      ID: {activityDetails.service_request.id}
-                    </Text>
-                  </View>
-                )}
-
-                {/* Status */}
-                {!activityDetails.error && (
-                  <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Status</Text>
-                    <View style={styles.statusContainer}>
-                      <ABadge
-                        title={lmStatusLabel(
-                          resolveCrmActivityState(activityDetails),
-                        )}
-                        color={
-                          resolveCrmActivityState(activityDetails) ===
-                          'COMPLETED'
-                            ? '#22C55E'
-                            : colors.primary
-                        }
-                      />
-                      {activityDetails.states?.length > 0 && (
-                        <Text style={styles.statusDate}>
-                          Since:{' '}
-                          {moment(
-                            [...activityDetails.states].sort(
-                              (a: {date: number}, b: {date: number}) =>
-                                b.date - a.date,
-                            )[0].date * 1000,
-                          ).format('DD MMM YYYY, hh:mm A')}
-                        </Text>
-                      )}
-                    </View>
-                  </View>
-                )}
-
-                {/* Custom Fields */}
-                {activityDetails.custom_fields &&
-                  activityDetails.custom_fields.length > 0 && (
-                    <View style={styles.section}>
-                      <Text style={styles.sectionTitle}>Custom Fields</Text>
-                      {activityDetails.custom_fields.map((field, index) => (
-                        <View key={index} style={styles.customFieldContainer}>
-                          <Text style={styles.customFieldLabel}>
-                            {field.label}:
-                          </Text>
-                          <Text style={styles.customFieldValue}>
-                            {field.value}
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-                  )}
-              </View>
-            ) : (
-              <View style={styles.loadingContainer}>
-                {activityDetails?.error ? (
-                  <View style={styles.errorContainer}>
-                    <Text style={styles.errorText}>
-                      Error: {activityDetails.error}
-                    </Text>
-                  </View>
-                ) : (
-                  <Text style={styles.loadingText}>Loading...</Text>
-                )}
-              </View>
-            )}
-          </View>
+    <FormModal
+      visible={props.modalVisible}
+      onClose={() => props.setModalVisible(false)}
+      title={props.activity?.name || 'Activity'}
+      subtitle={props.activity?.type?.name}>
+      {error ? (
+        <ErrorState message={error} onRetry={load} compact />
+      ) : !details ? (
+        <View style={styles.skeleton}>
+          <Skeleton width="40%" />
+          <Skeleton height={44} />
+          <Skeleton width="60%" />
+          <Skeleton height={64} />
         </View>
-      </Modal>
-    </View>
+      ) : (
+        <>
+          {state ? (
+            <View style={styles.statusRow}>
+              <ToneBadge
+                tone={
+                  state === 'COMPLETED'
+                    ? {
+                        label: lmStatusLabel(state),
+                        color: colors.success,
+                        bg: colors.successBg,
+                        icon: 'checkmark-circle-outline',
+                      }
+                    : {
+                        label: lmStatusLabel(state),
+                        color: colors.info,
+                        bg: colors.infoBg,
+                        icon: 'time-outline',
+                      }
+                }
+                showIcon
+              />
+              {latestState ? (
+                <Text style={styles.muted}>
+                  since{' '}
+                  {moment(latestState.date * 1000).format('DD MMM, hh:mm A')}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {details.description ? (
+            <Section title="Description">
+              <Text style={styles.body}>{details.description}</Text>
+            </Section>
+          ) : null}
+
+          <Section title="Schedule">
+            <Text style={styles.body}>
+              {details.date
+                ? moment(details.date * 1000).format('dddd, DD MMMM YYYY')
+                : 'Not scheduled'}
+            </Text>
+            {details.created_date ? (
+              <Text style={styles.muted}>
+                Created{' '}
+                {moment(details.created_date * 1000).format(
+                  'DD MMM YYYY, hh:mm A',
+                )}
+              </Text>
+            ) : null}
+          </Section>
+
+          <Section title="Assigned to">
+            <Text style={styles.body}>
+              {details.assigned_to?.user?.name ||
+                details.assigned_to?.team?.name ||
+                'Unassigned'}
+            </Text>
+            {details.assigned_to?.user && details.assigned_to?.team?.name ? (
+              <Text style={styles.muted}>{details.assigned_to.team.name}</Text>
+            ) : null}
+          </Section>
+
+          {details.contact ? (
+            <Section title="Customer">
+              <View style={styles.card}>
+                <Text style={styles.strong}>{details.contact.name}</Text>
+                {details.contact.code ? (
+                  <Text style={styles.muted}>Code {details.contact.code}</Text>
+                ) : null}
+                {details.contact.phone?.number ? (
+                  <Text style={styles.body}>
+                    {details.contact.phone.number}
+                  </Text>
+                ) : null}
+                {details.contact.primary_address ? (
+                  <Text style={styles.body}>
+                    {[
+                      details.contact.primary_address.address_line_1,
+                      details.contact.primary_address.town_city,
+                    ]
+                      .filter(Boolean)
+                      .join(', ')}
+                  </Text>
+                ) : null}
+              </View>
+            </Section>
+          ) : null}
+
+          {Array.isArray(details.custom_fields) &&
+          details.custom_fields.length > 0 ? (
+            <Section title="Details">
+              {details.custom_fields.map(
+                (field: {label?: string; value?: unknown}, index: number) => (
+                  <View key={`${field.label}-${index}`} style={styles.fieldRow}>
+                    <Text style={styles.muted}>{field.label}</Text>
+                    <Text style={styles.fieldValue}>
+                      {String(field.value ?? '—')}
+                    </Text>
+                  </View>
+                ),
+              )}
+            </Section>
+          ) : null}
+        </>
+      )}
+    </FormModal>
   );
 };
+
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {children}
+    </View>
+  );
+}
 
 export default ActivityDetailModal;
 
 const styles = StyleSheet.create({
-  centeredView: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-  },
-  modalView: {
-    width: '100%',
-    maxHeight: '85%',
-    backgroundColor: 'white',
-    borderRadius: 20,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    width: '100%',
-    marginBottom: 10,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.black,
-  },
-  closeButton: {
-    padding: 5,
-    borderRadius: 10,
-  },
-  scrollContainer: {
-    width: '100%',
-    flex: 1,
-  },
-  contentContainer: {
-    width: '100%',
-    paddingBottom: 20,
-  },
-  section: {
-    marginBottom: 20,
-    width: '100%',
-  },
+  skeleton: {gap: spacing.md},
+  statusRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
+  section: {gap: 4},
   sectionTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.black,
-    marginBottom: 8,
+    ...typography.caption,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  sectionContent: {
-    fontSize: 14,
-    color: colors.black,
-    lineHeight: 20,
+  body: {fontSize: 14, color: colors.black, lineHeight: 20},
+  strong: {fontSize: 15, fontWeight: '600', color: colors.black},
+  muted: {fontSize: 12, color: colors.gray2},
+  card: {
+    gap: 2,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
   },
-  activityName: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: colors.black,
-    marginBottom: 10,
-  },
-  dateNote: {
-    fontSize: 12,
-    color: colors.gray2,
-    marginTop: 4,
-    fontStyle: 'italic',
-  },
-  assignmentContainer: {
-    gap: 4,
-  },
-  noAssignmentText: {
-    fontSize: 14,
-    color: colors.gray2,
-    fontStyle: 'italic',
-  },
-  contactContainer: {
-    backgroundColor: colors.gray + '30',
-    padding: 12,
-    borderRadius: 8,
-    gap: 4,
-  },
-  contactName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.black,
-  },
-  contactDetail: {
-    fontSize: 14,
-    color: colors.black,
-  },
-  serviceRequestNumber: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.primary,
-  },
-  serviceRequestId: {
-    fontSize: 12,
-    color: colors.gray2,
-    marginTop: 2,
-  },
-  statusContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  statusDate: {
-    fontSize: 12,
-    color: colors.gray2,
-  },
-  customFieldContainer: {
+  fieldRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    gap: spacing.md,
     paddingVertical: 4,
   },
-  customFieldLabel: {
-    fontSize: 14,
-    fontWeight: '500',
+  fieldValue: {
+    fontSize: 13,
     color: colors.black,
-  },
-  customFieldValue: {
-    fontSize: 14,
-    color: colors.black,
-  },
-  loadingContainer: {
-    padding: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  loadingText: {
-    fontSize: 16,
-    color: colors.gray2,
-  },
-  errorContainer: {
-    padding: 20,
-    backgroundColor: '#ffebee',
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  errorText: {
-    fontSize: 14,
-    color: '#c62828',
-    textAlign: 'center',
+    flexShrink: 1,
+    textAlign: 'right',
   },
 });

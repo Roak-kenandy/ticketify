@@ -1,16 +1,20 @@
 import React from 'react';
 import {
-  Alert,
-  Dimensions,
+  ActivityIndicator,
   Image,
   Modal,
+  Pressable,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
+import {useSelector} from 'react-redux';
 import colors from '../../../../constants/colors';
+import {radius, spacing} from '../../../../constants/styles';
+import {fileImageSource} from '../../../../utils/apiClient';
 
 type Props = {
   image: any;
@@ -18,114 +22,108 @@ type Props = {
   setModalVisible: (value: boolean) => void;
 };
 
-let {width, height} = Dimensions.get('window');
-
 const ViewImageModal = (props: Props) => {
-  return (
-    <View style={styles.centeredView}>
-      <Modal
-        style={{backgroundColor: 'rgba(0, 0, 0, 0.5)'}}
-        animationType="fade"
-        transparent={true}
-        statusBarTranslucent={true}
-        presentationStyle="overFullScreen"
-        visible={props.modalVisible}
-        onRequestClose={() => {
-          Alert.alert('Modal has been closed.');
-          props.setModalVisible(!props.modalVisible);
-        }}>
-        <View
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          }}></View>
-        <View style={styles.centeredView}>
-          <View style={styles.modalView}>
-            <View
-              style={{
-                alignSelf: 'flex-end',
-                gap: 10,
-                flexDirection: 'row',
-              }}>
-              <TouchableOpacity
-                onPress={() => props.setModalVisible(false)}
-                style={{
-                  padding: 5,
-                  borderRadius: 10,
-                }}>
-                <Icon name="close" size={20} color={colors.black} />
-              </TouchableOpacity>
-            </View>
+  const token = useSelector((state: any) => state.auth?.token);
+  const {width, height} = useWindowDimensions();
+  const [loading, setLoading] = React.useState(true);
+  const [failed, setFailed] = React.useState(false);
+  const source = fileImageSource(props.image?.file?.id, token);
 
+  React.useEffect(() => {
+    setLoading(true);
+    setFailed(false);
+  }, [props.image?.file?.id]);
+
+  const close = () => props.setModalVisible(false);
+
+  return (
+    <Modal
+      animationType="fade"
+      transparent
+      statusBarTranslucent
+      visible={props.modalVisible}
+      onRequestClose={close}>
+      <Pressable style={styles.backdrop} onPress={close}>
+        <TouchableOpacity
+          style={styles.closeBtn}
+          onPress={close}
+          accessibilityLabel="Close image">
+          <Icon name="close" size={24} color={colors.white} />
+        </TouchableOpacity>
+        <View style={[styles.frame, {width: width - 24, height: height * 0.7}]}>
+          {source && !failed ? (
             <Image
-              style={{
-                width: '100%',
-                height: width - 10,
-                borderRadius: 20,
-                objectFit: 'contain',
-              }}
-              alt={props.image?.file_url}
-              source={{
-                uri: `https://app.crm.com/backoffice/v2/files/${props.image?.file?.id}`,
-                headers: {
-                  api_key: '67225f81-1d60-4401-b6d7-720f9cf68ba3',
-                },
+              style={styles.image}
+              resizeMode="contain"
+              source={source}
+              onLoadEnd={() => setLoading(false)}
+              onError={() => {
+                setLoading(false);
+                setFailed(true);
               }}
             />
-            <Text
-              style={{
-                fontSize: 14,
-                color: colors.black,
-                paddingVertical: 10,
-                alignContent: 'center',
-                width: '100%',
-                textAlign: 'center',
-              }}>
-              {props.image?.description}
-            </Text>
-          </View>
+          ) : null}
+          {loading && !failed ? (
+            <ActivityIndicator
+              style={StyleSheet.absoluteFill}
+              color={colors.white}
+              size="large"
+            />
+          ) : null}
+          {failed || !source ? (
+            <View style={styles.fallback}>
+              <Icon
+                name="image-outline"
+                size={40}
+                color="rgba(255,255,255,0.7)"
+              />
+              <Text style={styles.fallbackText}>Couldn't load this image</Text>
+            </View>
+          ) : null}
         </View>
-      </Modal>
-    </View>
+        {props.image?.description ? (
+          <Text style={styles.caption}>{props.image.description}</Text>
+        ) : null}
+      </Pressable>
+    </Modal>
   );
 };
 
 export default ViewImageModal;
 
 const styles = StyleSheet.create({
-  centeredView: {
+  backdrop: {
     flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.lg,
+  },
+  closeBtn: {
+    position: 'absolute',
+    top: 48,
+    right: spacing.lg,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  frame: {
+    borderRadius: radius.lg,
+    overflow: 'hidden',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 22,
   },
-  modalView: {
-    width: '95%',
-    gap: 5,
-    backgroundColor: 'white',
-    borderRadius: 20,
-    padding: 15,
-    alignItems: 'flex-start',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
-  },
-  textStyle: {
-    color: 'white',
-    fontWeight: 'bold',
+  image: {width: '100%', height: '100%'},
+  fallback: {alignItems: 'center', gap: spacing.sm},
+  fallbackText: {color: 'rgba(255,255,255,0.8)', fontSize: 14},
+  caption: {
+    color: colors.white,
+    fontSize: 14,
     textAlign: 'center',
-  },
-  modalText: {
-    marginBottom: 15,
-    textAlign: 'center',
+    paddingHorizontal: spacing.xl,
   },
 });

@@ -5,6 +5,13 @@ import NotificationService from 'src/shared/one-signal/notification/notification
 import { TicketsService } from 'src/tickets/tickets.service';
 import { UserService } from 'src/user/user.service';
 
+type TicketSummary = {
+  id: string;
+  number: string;
+  contact: { person_name: { full_name: string } };
+  resolved: boolean;
+};
+
 @Injectable()
 export class FeedbackService {
   constructor(
@@ -48,9 +55,7 @@ export class FeedbackService {
       //   throw new Error('Ticket not found');
       // }
       let user = await this.user.findOneByCrmId(user_id);
-      console.log(user);
       let exisingFeedback = await this.findOne(ticket_id, user.id);
-      console.log(exisingFeedback);
       if (exisingFeedback) {
         throw new ForbiddenException('Feedback already submitted');
       }
@@ -69,13 +74,12 @@ export class FeedbackService {
       await this.notification.publishNotification(
         {
           title: 'New Feedback',
-          body: `You have received a new feedback from the customer}`,
+          body: `You received a ${rating}-star review from a customer`,
         },
         [user_id],
       );
 
       if (feedback) {
-        console.log('Feedback submitted');
         return feedback;
       } else {
         throw new Error('Failed to submit feedback');
@@ -85,14 +89,31 @@ export class FeedbackService {
     }
   }
 
+  /** Ticket number and customer name never change, so summaries are cached for the process lifetime. */
+  private readonly summaryCache = new Map<string, TicketSummary>();
+
+  private async ticketSummaryForFeedbackList(
+    ticketId: string,
+  ): Promise<TicketSummary> {
+    const cached = this.summaryCache.get(ticketId);
+    if (cached) return cached;
+    const summary = await this.loadTicketSummary(ticketId);
+    if (summary.resolved) {
+      if (this.summaryCache.size >= 5000) this.summaryCache.clear();
+      this.summaryCache.set(ticketId, summary);
+    }
+    return summary;
+  }
+
   /** Lightweight ticket shape for feedback list (avoids full crmFindServiceRequest per row). */
-  private async ticketSummaryForFeedbackList(ticketId: string) {
-    const crmResult = await this.crm.getServiceRequest(ticketId);
-    if (!crmResult.ok) {
+  private async loadTicketSummary(ticketId: string): Promise<TicketSummary> {
+    const crmResult = await this.crm.getServiceRequest(ticketId).catch(() => null);
+    if (!crmResult?.ok) {
       return {
         id: ticketId,
         number: ticketId,
         contact: { person_name: { full_name: 'Customer' } },
+        resolved: false,
       };
     }
 
@@ -113,6 +134,7 @@ export class FeedbackService {
       contact: {
         person_name: { full_name: fullName ?? 'Customer' },
       },
+      resolved: true,
     };
   }
 
@@ -120,18 +142,24 @@ export class FeedbackService {
     const feedbacks = await this.prisma.userFeedback.findMany({
       where: { user_id },
       orderBy: { created_at: 'desc' },
+      take: 100,
     });
 
-    if (!feedbacks.length) {
-      return [];
-    }
-
-    return Promise.all(
-      feedbacks.map(async feedback => ({
-        feedback,
-        ticket: await this.ticketSummaryForFeedbackList(feedback.ticket_id),
-      })),
+    const results = new Array(feedbacks.length);
+    const CONCURRENCY = 6;
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, feedbacks.length) }, async () => {
+        while (next < feedbacks.length) {
+          const index = next++;
+          const feedback = feedbacks[index];
+          const { resolved: _resolved, ...ticket } =
+            await this.ticketSummaryForFeedbackList(feedback.ticket_id);
+          results[index] = { feedback, ticket };
+        }
+      }),
     );
+    return results;
   }
 
   async findOneByTicketId(ticket_id: string) {

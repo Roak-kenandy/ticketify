@@ -45,19 +45,8 @@ export const useLocationPermissions = () => {
       };
     }
 
-    // Check background location for Android 10+
-    if (typeof Platform.Version === 'number' && Platform.Version >= 29) {
-      const backgroundLocationGranted = await PermissionsAndroid.check(
-        PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION
-      );
-
-      return {
-        granted: backgroundLocationGranted,
-        canRequestAgain: true,
-        status: backgroundLocationGranted ? 'granted' : 'denied',
-      };
-    }
-
+    // The foreground service keeps reporting with "While using the app";
+    // background access is requested but not required.
     return {
       granted: true,
       canRequestAgain: true,
@@ -143,24 +132,21 @@ export const useLocationPermissions = () => {
       };
     }
 
-    // For Android 10+, also request background location
     if (typeof Platform.Version === 'number' && Platform.Version >= 29) {
-      const backgroundLocationResult = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
-        {
-          title: 'Background Location Permission',
-          message: 'To track your location when the app is closed, please allow "Allow all the time" in the next screen.',
-          buttonPositive: 'Continue',
-          buttonNegative: 'Skip',
-        }
+      const hasBackground = await PermissionsAndroid.check(
+        PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION
       );
-
-      const backgroundGranted = backgroundLocationResult === PermissionsAndroid.RESULTS.GRANTED;
-      return {
-        granted: backgroundGranted,
-        canRequestAgain: true,
-        status: backgroundGranted ? 'granted' : 'denied',
-      };
+      if (!hasBackground) {
+        await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
+          {
+            title: 'Background Location Permission',
+            message: 'To keep sharing your location when the app is closed, choose "Allow all the time" on the next screen.',
+            buttonPositive: 'Continue',
+            buttonNegative: 'Skip',
+          }
+        ).catch(() => undefined);
+      }
     }
 
     return {
@@ -255,8 +241,8 @@ export const useLocationPermissions = () => {
       );
     } else if (status.status === 'denied' && Platform.OS === 'android') {
       Alert.alert(
-        'Background Location Permission',
-        'To track your location when the app is in background, please allow "Allow all the time" in your location settings.',
+        'Location Permission Required',
+        'Ticketify needs location access while you are on shift so dispatch can see you on the live map.',
         [
           {
             text: 'Cancel',

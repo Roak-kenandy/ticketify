@@ -13,7 +13,11 @@ type Props = {
 const SecondaryButton = (props: Props) => {
   return (
     <TouchableOpacity
-      style={[styles.button, props.disabled && styles.buttonDisabled, props.style]}
+      style={[
+        styles.button,
+        props.disabled && styles.buttonDisabled,
+        props.style,
+      ]}
       onPress={props.onPress}
       disabled={props.disabled}
       activeOpacity={0.85}>
@@ -25,7 +29,9 @@ const SecondaryButton = (props: Props) => {
 const styles = StyleSheet.create({
   button: {
     borderRadius: 12,
-    backgroundColor: colors.gray,
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.bordergray,
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 16,

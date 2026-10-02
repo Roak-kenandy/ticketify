@@ -1,13 +1,35 @@
 import {NavigationContainer} from '@react-navigation/native';
 import React, {useEffect} from 'react';
-import {Appearance} from 'react-native';
+import {Appearance, StatusBar, StyleSheet} from 'react-native';
 import {LogLevel, OneSignal} from 'react-native-onesignal';
 import {GestureHandlerRootView} from 'react-native-gesture-handler';
-import {Provider as StoreProvider} from 'react-redux';
+import {SafeAreaProvider} from 'react-native-safe-area-context';
+import {Provider as StoreProvider, useDispatch} from 'react-redux';
 import store from './src/store/store';
 import BackgroundLocationManager from './src/components/BackgroundLocationManager';
 import GlobalApiLoadingOverlay from './src/components/GlobalApiLoadingOverlay';
 import RootNavigation from './src/screens/navigation/RootNavigation';
+import colors from './src/constants/colors';
+import {subscribeUnauthorized} from './src/utils/apiClient';
+import {handleSessionExpired} from './src/utils/session';
+import {showInfo} from './src/utils/notify';
+
+function SessionWatcher() {
+  const dispatch = useDispatch();
+  useEffect(
+    () =>
+      subscribeUnauthorized(() => {
+        if (!store.getState().auth?.isLoggedIn) {
+          return;
+        }
+        handleSessionExpired(dispatch).then(() =>
+          showInfo('Your session expired. Please sign in again.'),
+        );
+      }),
+    [dispatch],
+  );
+  return null;
+}
 
 function App(): JSX.Element {
   useEffect(() => {
@@ -27,15 +49,26 @@ function App(): JSX.Element {
 
   return (
     <StoreProvider store={store}>
-      <GestureHandlerRootView style={{flex: 1}}>
-        <NavigationContainer>
-          <RootNavigation />
-          <GlobalApiLoadingOverlay />
-          <BackgroundLocationManager />
-        </NavigationContainer>
-      </GestureHandlerRootView>
+      <SafeAreaProvider>
+        <GestureHandlerRootView style={styles.root}>
+          <StatusBar
+            barStyle="light-content"
+            backgroundColor={colors.primary}
+          />
+          <NavigationContainer>
+            <SessionWatcher />
+            <RootNavigation />
+            <GlobalApiLoadingOverlay />
+            <BackgroundLocationManager />
+          </NavigationContainer>
+        </GestureHandlerRootView>
+      </SafeAreaProvider>
     </StoreProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  root: {flex: 1},
+});
 
 export default App;

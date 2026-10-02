@@ -6,7 +6,7 @@ import {
   hasPendingTicketMutations,
   syncAllTickets,
 } from '../services/ticketsSync';
-import {clearStoredSession} from '../utils/session';
+import {handleSessionExpired} from '../utils/session';
 
 const SYNC_COOLDOWN_MS = 45000;
 
@@ -24,7 +24,7 @@ export function useAppData(screenKey: string) {
   const mountedRef = useRef(true);
 
   const handleUnauthorized = useCallback(async () => {
-    await clearStoredSession(dispatch);
+    await handleSessionExpired(dispatch);
   }, [dispatch]);
 
   const refreshAllData = useCallback(

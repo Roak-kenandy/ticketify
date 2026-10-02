@@ -1,414 +1,270 @@
 import React from 'react';
 import {
-  Alert,
-  Dimensions,
   Image,
-  Keyboard,
-  Modal,
+  PermissionsAndroid,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  TouchableWithoutFeedback,
   View,
 } from 'react-native';
-import {KeyboardAvoidingView, Platform} from 'react-native';
-import ASeperator from '../../../../components/ui/seperator';
-import colors from '../../../../constants/colors';
-import ModalFooterActions from '../../../../components/ui/modal-footer-actions';
 import Icon from 'react-native-vector-icons/Ionicons';
-import {launchImageLibrary} from 'react-native-image-picker';
+import {
+  Asset,
+  ImageLibraryOptions,
+  launchCamera,
+  launchImageLibrary,
+} from 'react-native-image-picker';
 import {useSelector} from 'react-redux';
-import Snackbar from 'react-native-snackbar';
-import {API_BASE_URL} from '../../../../config/api';
-
-let {width} = Dimensions.get('window');
+import FormModal, {formStyles} from '../../../../components/modal/form-modal';
+import colors from '../../../../constants/colors';
+import {radius, spacing} from '../../../../constants/styles';
+import {apiRequest} from '../../../../utils/apiClient';
+import {showError, showSuccess} from '../../../../utils/notify';
 
 type Props = {
-  navigation: any;
+  navigation?: any;
   modalVisible: boolean;
   setModalVisible: (value: boolean) => void;
-  ticketId: number;
-  onSuccess?: () => void; // Callback to refresh parent data
+  ticketId: number | string;
+  onSuccess?: () => void;
+};
+
+// Resize on device: full-resolution camera photos are 4-8 MB and make uploads
+// over mobile data slow or time out.
+const PICKER_OPTIONS: ImageLibraryOptions = {
+  mediaType: 'photo',
+  maxWidth: 1600,
+  maxHeight: 1600,
+  quality: 0.8,
+  selectionLimit: 1,
 };
 
 const AddAttachmentModal = (props: Props) => {
-  let auth = useSelector((state: any) => state.auth);
-  let [keyboardVisible, setKeyboardVisible] = React.useState(false);
-  let [isSubmitting, setIsSubmitting] = React.useState(false);
-  let [selectedImage, setSelectedImage] = React.useState<{
-    uri: string;
-    name: string;
-    originalName: string;
-  }>({
-    uri: '',
-    name: '',
-    originalName: '',
-  });
-  let [description, setDescription] = React.useState('');
+  const token = useSelector((state: any) => state.auth?.token);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [asset, setAsset] = React.useState<Asset | null>(null);
+  const [description, setDescription] = React.useState('');
+  const [error, setError] = React.useState('');
 
-  const ImagePicker = () => {
-    launchImageLibrary(
-      {
-        mediaType: 'photo',
-      },
-      response => {
-        console.log('Response = ', response.assets?.[0]?.uri);
-        console.log('Image Captured', response?.assets?.[0]?.uri);
-        if (response.assets?.[0]?.uri === undefined) {
-        } else {
-          setSelectedImage({
-            uri: response.assets?.[0]?.uri as string,
-            name: response.assets?.[0]?.fileName as string,
-            originalName: response.assets?.[0]?.fileName as string,
-          });
-        }
+  const reset = () => {
+    setAsset(null);
+    setDescription('');
+    setError('');
+  };
 
-        if (response.didCancel) {
-          console.log('User cancelled image picker');
-        } else if (response.errorCode) {
-          console.log('ImagePicker Error: ', response.errorMessage);
-        } else if (response.errorMessage) {
-          console.log('User tapped custom button: ');
-        }
-      },
-    );
+  const close = () => {
+    setError('');
+    props.setModalVisible(false);
+  };
+
+  const handlePicked = (response: {
+    assets?: Asset[];
+    didCancel?: boolean;
+    errorCode?: string;
+    errorMessage?: string;
+  }) => {
+    if (response.didCancel) {
+      return;
+    }
+    if (response.errorCode) {
+      showError(
+        response.errorCode === 'camera_unavailable'
+          ? 'Camera is not available on this device'
+          : response.errorCode === 'permission'
+          ? 'Allow camera and photo access in Settings to attach photos'
+          : response.errorMessage || 'Could not open the photo',
+      );
+      return;
+    }
+    const picked = response.assets?.[0];
+    if (picked?.uri) {
+      setAsset(picked);
+      setError('');
+    }
   };
 
   async function submitAttachment() {
+    if (!asset?.uri) {
+      setError('Choose or take a photo first.');
+      return;
+    }
+    if (!description.trim()) {
+      setError('Add a short description.');
+      return;
+    }
     setIsSubmitting(true);
-    let formData = new FormData();
-
-    if (selectedImage.uri === '') {
+    setError('');
+    try {
+      const form = new FormData();
+      form.append('description', description.trim());
+      form.append('file', {
+        uri: asset.uri,
+        name: asset.fileName || `photo-${Date.now()}.jpg`,
+        type: asset.type || 'image/jpeg',
+      } as any);
+      await apiRequest(
+        'POST',
+        `/tickets/${props.ticketId}/attachments`,
+        token,
+        form,
+        {timeoutMs: 90000},
+      );
+      showSuccess('Photo attached');
+      reset();
+      props.setModalVisible(false);
+      props.onSuccess?.();
+    } catch (err: any) {
+      showError(err?.message || 'Could not upload the photo');
+    } finally {
       setIsSubmitting(false);
-      Alert.alert('Error', 'Please select an image');
-      return;
     }
-    if (description === '') {
-      setIsSubmitting(false);
-      Alert.alert('Error', 'Please enter description');
-      return;
-    }
-    formData.append('description', description);
-    formData.append('file', {
-      uri: selectedImage.uri,
-      name: selectedImage.name,
-
-      type: 'image/jpeg',
-    });
-
-    let file = await fetch('https://app.crm.com/backoffice/v2/upload/files', {
-      method: 'POST',
-      headers: {
-        api_key: '67225f81-1d60-4401-b6d7-720f9cf68ba3',
-      },
-      body: formData,
-    })
-      .then(response => response.json())
-
-      .then(async data => {
-        if (data?.status == 400) {
-          console.error('Error:', data);
-          setIsSubmitting(false);
-          Snackbar.show({
-            backgroundColor: colors.primary,
-            textColor: colors.white,
-            text: data?.message || 'Error uploading file',
-            duration: Snackbar.LENGTH_SHORT,
-          });
-          return;
-        }
-
-        console.log('File ID', data.id);
-        fetch(
-          `${API_BASE_URL}/tickets/${props.ticketId}/attachments`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: 'Bearer ' + auth?.token,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              file_id: data.id,
-              description: description,
-              link: null,
-            }),
-          },
-        )
-          .then(response => response.json())
-          .then(data => {
-            console.log(data);
-            Snackbar.show({
-              backgroundColor: colors.primary,
-              textColor: colors.white,
-              text: data.message,
-              duration: Snackbar.LENGTH_SHORT,
-            });
-            
-            // Clear form
-            setSelectedImage({
-              uri: '',
-              name: '',
-              originalName: '',
-            });
-            setDescription('');
-            
-            props.setModalVisible(false);
-            setIsSubmitting(false);
-            
-            // Call success callback to refresh parent data
-            if (props.onSuccess) {
-              props.onSuccess();
-            }
-          })
-          .catch(error => {
-            console.error('Error:', error);
-            Snackbar.show({
-              backgroundColor: colors.primary,
-              textColor: colors.white,
-              text: error?.message,
-              duration: Snackbar.LENGTH_SHORT,
-            });
-            setIsSubmitting(false);
-          });
-      })
-      .catch(error => {
-        console.error('Error:', error);
-        Snackbar.show({
-          backgroundColor: colors.primary,
-          textColor: colors.white,
-          text: error?.message,
-          duration: Snackbar.LENGTH_SHORT,
-        });
-        Alert.alert('Error', error?.message);
-        setIsSubmitting(false);
-      });
   }
 
   return (
-    <View style={styles.centeredView}>
-      <Modal
-        style={{backgroundColor: 'rgba(0, 0, 0, 0.5)'}}
-        animationType="fade"
-        transparent={true}
-        statusBarTranslucent={true}
-        presentationStyle="overFullScreen"
-        visible={props.modalVisible}
-        onRequestClose={() => {
-          Alert.alert('Modal has been closed.');
-          props.setModalVisible(!props.modalVisible);
-        }}>
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: 'rgba(0,0,0,0.5)',
-              justifyContent: 'center',
-              alignItems: 'center',
-            }}>
-            <KeyboardAvoidingView
-              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-              style={{width: '100%', alignItems: 'center'}}>
-              <View style={styles.modalView}>
-                <Text
-                  style={{
-                    fontSize: 18,
-                    fontWeight: '600',
-                    color: colors.black,
-                  }}>
-                  Add Attachment
-                </Text>
-                <ASeperator />
-                <View
-                  style={{
-                    display: 'flex',
-                    width: '100%',
-                    gap: 10,
-                    paddingBottom: 10,
-                  }}>
-                  <View>
-                    <Text style={{fontSize: 14, color: colors.black}}>
-                      Add Media
-                    </Text>
-                    <Text style={{fontSize: 12, color: colors.gray2}}>
-                      Upload from your device or take a photo
-                    </Text>
-                    {selectedImage.uri === '' ? (
-                      <View
-                        style={{
-                          flexDirection: 'row',
-                          width: Dimensions.get('window').width - 100,
-                          gap: 10,
-                          paddingVertical: 10,
-                        }}>
-                        <TouchableOpacity
-                          onPress={ImagePicker}
-                          style={{
-                            backgroundColor: colors.gray,
-                            padding: 10,
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            borderRadius: 5,
-                            width: Dimensions.get('window').width - 60,
-                          }}>
-                          <Icon name="images" size={25} color={colors.black} />
-                          <Text
-                            style={{
-                              fontSize: 10,
-                              color: colors.black,
-                              textAlign: 'center',
-                            }}>
-                            Import from device
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    ) : (
-                      <View
-                        style={{
-                          justifyContent: 'center',
-                          alignItems: 'center',
-                          width: '100%',
-                          gap: 10,
-                          paddingVertical: 10,
-                        }}>
-                        <Image
-                          source={{uri: selectedImage.uri}}
-                          style={{width: 200, height: 200}}
-                        />
-                        <Text style={{fontSize: 12, color: colors.gray2}}>
-                          {selectedImage.originalName}
-                        </Text>
-                        <TouchableOpacity
-                          onPress={() =>
-                            setSelectedImage({
-                              uri: '',
-                              name: '',
-                              originalName: '',
-                            })
-                          }
-                          style={{
-                            padding: 10,
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            borderRadius: 5,
-                            width: Dimensions.get('window').width / 2.3,
-                          }}>
-                          <Icon name="trash" size={25} color={colors.black} />
-                          <Text
-                            style={{
-                              fontSize: 10,
-                              color: colors.black,
-                              textAlign: 'center',
-                            }}>
-                            Remove
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-                  </View>
-
-                  {/* when keyboard visible show */}
-                  {keyboardVisible ? (
-                    <TouchableWithoutFeedback
-                      onPress={() => {
-                        Keyboard.dismiss();
-                        setKeyboardVisible(false);
-                      }}>
-                      <View
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                        }}></View>
-                    </TouchableWithoutFeedback>
-                  ) : null}
-
-                  <View
-                    style={{
-                      gap: 10,
-                    }}>
-                    <Text style={{fontSize: 14, color: colors.black}}>
-                      Description
-                    </Text>
-                    <TextInput
-                      onPress={() => {
-                        setKeyboardVisible(true);
-                      }}
-                      multiline
-                      returnKeyType="none"
-                      numberOfLines={4}
-                      onChange={e => setDescription(e.nativeEvent.text)}
-                      style={{
-                        backgroundColor: colors.gray,
-                        padding: 10,
-                        borderRadius: 5,
-                        width: '100%',
-                        height: 100,
-                      }}
-                      placeholder="Enter description"
-                      placeholderTextColor={colors.gray2}
-                    />
-                  </View>
-                </View>
-
-                <ModalFooterActions
-                  onCancel={() => props.setModalVisible(false)}
-                  onSubmit={submitAttachment}
-                  submitText="Submit"
-                  loading={isSubmitting}
-                />
-              </View>
-            </KeyboardAvoidingView>
+    <FormModal
+      visible={props.modalVisible}
+      onClose={close}
+      title="Add attachment"
+      subtitle="Attach a site photo to this ticket."
+      loading={isSubmitting}
+      footer={{onSubmit: submitAttachment, submitText: 'Upload'}}>
+      {asset?.uri ? (
+        <View style={styles.preview}>
+          <Image source={{uri: asset.uri}} style={styles.previewImage} />
+          <View style={styles.previewMeta}>
+            <Text style={styles.fileName} numberOfLines={1}>
+              {asset.fileName || 'Photo'}
+            </Text>
+            {asset.fileSize ? (
+              <Text style={formStyles.hint}>
+                {(asset.fileSize / (1024 * 1024)).toFixed(1)} MB
+              </Text>
+            ) : null}
           </View>
-        </TouchableWithoutFeedback>
-      </Modal>
-    </View>
+          <TouchableOpacity
+            onPress={() => setAsset(null)}
+            disabled={isSubmitting}
+            style={styles.removeBtn}
+            accessibilityLabel="Remove photo">
+            <Icon name="trash-outline" size={18} color={colors.error} />
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={styles.pickRow}>
+          <PickButton
+            icon="camera-outline"
+            label="Take photo"
+            onPress={async () => {
+              if (!(await ensureCameraPermission())) {
+                showError('Allow camera access in Settings to take photos');
+                return;
+              }
+              launchCamera(
+                {...PICKER_OPTIONS, saveToPhotos: false},
+                handlePicked,
+              );
+            }}
+          />
+          <PickButton
+            icon="images-outline"
+            label="From gallery"
+            onPress={() => launchImageLibrary(PICKER_OPTIONS, handlePicked)}
+          />
+        </View>
+      )}
+
+      <View style={formStyles.field}>
+        <Text style={formStyles.label}>Description</Text>
+        <TextInput
+          multiline
+          value={description}
+          onChangeText={value => {
+            setDescription(value);
+            if (error) {
+              setError('');
+            }
+          }}
+          style={formStyles.textArea}
+          placeholder="e.g. ONT installed on the living room wall"
+          placeholderTextColor={colors.gray3}
+          editable={!isSubmitting}
+        />
+      </View>
+      {error ? <Text style={formStyles.error}>{error}</Text> : null}
+    </FormModal>
   );
 };
+
+async function ensureCameraPermission(): Promise<boolean> {
+  if (Platform.OS !== 'android') {
+    return true;
+  }
+  try {
+    const result = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.CAMERA,
+    );
+    return result === PermissionsAndroid.RESULTS.GRANTED;
+  } catch {
+    return false;
+  }
+}
+
+function PickButton({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: string;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={styles.pickBtn}
+      onPress={onPress}
+      activeOpacity={0.8}>
+      <Icon name={icon} size={26} color={colors.primary} />
+      <Text style={styles.pickLabel}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
 
 export default AddAttachmentModal;
 
 const styles = StyleSheet.create({
-  centeredView: {
+  pickRow: {flexDirection: 'row', gap: spacing.md},
+  pickBtn: {
     flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 22,
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.xl,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.tertiary,
+    backgroundColor: colors.surface,
   },
-  modalView: {
-    width: '95%',
-    gap: 5,
-    backgroundColor: 'white',
-    borderRadius: 20,
-    padding: 15,
-    alignItems: 'flex-start',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
+  pickLabel: {fontSize: 13, fontWeight: '600', color: colors.primary},
+  preview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
   },
-  textStyle: {
-    color: 'white',
-    fontWeight: 'bold',
-    textAlign: 'center',
-  },
-  modalText: {
-    marginBottom: 15,
-    textAlign: 'center',
-  },
-  modalContainer: {
-    padding: 15,
-    rowGap: 15,
-    borderWidth: 0.4,
-    width: width / 1 - 40,
-    borderRadius: 20,
-    borderColor: colors.bordergray,
-    backgroundColor: colors.gray,
+  previewImage: {width: 64, height: 64, borderRadius: radius.sm},
+  previewMeta: {flex: 1, gap: 2},
+  fileName: {fontSize: 14, fontWeight: '600', color: colors.black},
+  removeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.errorBg,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

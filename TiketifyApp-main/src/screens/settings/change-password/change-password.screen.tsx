@@ -1,64 +1,45 @@
 import React from 'react';
-import {SafeAreaView, Text, View, PixelRatio} from 'react-native';
-
-import BackButton from '../../../components/buttons/back-button/BackButton';
-import HeadCard from '../../../components/head-card/head-card';
-import ASwitch from '../../../components/ui/switch';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
+import StackHeader from '../../../components/layout/stack-header';
+import colors from '../../../constants/colors';
+import {globalStyles, spacing} from '../../../constants/styles';
 import ChangePasswordForm from './change-password.form';
 
 type Props = {
   navigation: any;
-  route: any;
 };
 
-const SettingsChangePasswordScreen = ({navigation, route}: Props) => {
-  let [isEnabled, setIsEnabled] = React.useState(true);
-  let [isNewletterEnabled, setIsNewletterEnabled] = React.useState(false);
-
-  const fontScale = PixelRatio.getFontScale();
-  const getFontSize = (size: number) => {
-    return size / fontScale;
-  };
-
-  return (
-    <SafeAreaView
-      style={{
-        gap: 10,
-        backgroundColor: '#fff',
-        flex: 1,
-      }}>
-      <View
-        style={{
-          paddingTop: 20,
-          paddingHorizontal: 20,
-        }}>
-        <BackButton navigation={navigation} />
-      </View>
-      <View
-        style={{
-          padding: 20,
-          gap: 20,
-        }}>
-        {/* blue background absolute */}
-        <Text
-          style={{color: '#000', fontWeight: '700', fontSize: getFontSize(28)}}>
-          Change Password
-        </Text>
-        <View>
-          {/* absolute blue back */}
-          <Text
-            style={{
-              color: '#000',
-              fontSize: getFontSize(14),
-            }}>
-            Change your password here to keep your account secure
-          </Text>
+const SettingsChangePasswordScreen = ({navigation}: Props) => (
+  <View style={styles.screen}>
+    <StackHeader
+      title="Change password"
+      subtitle="Keep your account secure"
+      onBack={() => navigation.goBack()}
+    />
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled">
+        <View style={globalStyles.card}>
+          <ChangePasswordForm onDone={() => navigation.goBack()} />
         </View>
-
-        <ChangePasswordForm navigation={navigation} />
-      </View>
-    </SafeAreaView>
-  );
-};
+      </ScrollView>
+    </KeyboardAvoidingView>
+  </View>
+);
 
 export default SettingsChangePasswordScreen;
+
+const styles = StyleSheet.create({
+  screen: {flex: 1, backgroundColor: colors.surface},
+  flex: {flex: 1},
+  content: {padding: spacing.lg},
+});

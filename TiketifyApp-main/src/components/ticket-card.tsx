@@ -4,90 +4,86 @@ import colors from '../constants/colors';
 import {radius, shadows, spacing} from '../constants/styles';
 import Icon from 'react-native-vector-icons/Ionicons';
 import moment from 'moment';
+import {priorityMeta, ticketStateMeta} from '../constants/ticket-meta';
+import {ToneBadge} from './ui/badge';
 
 type Props = {
   navigation: any;
   ticket: any;
-};
-
-const stateMeta = (state: string) => {
-  if (state === 'IN_PROGRESS') {
-    return {label: 'In Progress', color: colors.success, bg: colors.successBg};
-  }
-  if (state === 'CLOSED') {
-    return {label: 'Completed', color: colors.warning, bg: colors.warningBg};
-  }
-  return {label: 'Assigned', color: colors.primary, bg: colors.tertiary};
-};
-
-const priorityMeta = (priority: string) => {
-  if (priority === 'URGENT') {
-    return {color: colors.error, bg: colors.errorBg};
-  }
-  if (priority === 'MEDIUM') {
-    return {color: colors.warning, bg: colors.warningBg};
-  }
-  return {color: colors.info, bg: colors.infoBg};
+  /** Hide the state pill where the list is already grouped by state. */
+  hideState?: boolean;
 };
 
 const TicketCard = (props: Props) => {
-  const state = stateMeta(props.ticket.state);
-  const priority = priorityMeta(props.ticket.priority);
+  const {ticket} = props;
+  const state = ticketStateMeta(ticket.state);
+  const priority = priorityMeta(ticket.priority);
+  const created = ticket.creation_date
+    ? moment(ticket.creation_date * 1000)
+    : null;
 
   return (
     <Pressable
       onPress={() =>
-        props.navigation.navigate('ActivityDetailsScreen', {
-          ticket: props.ticket,
-        })
+        props.navigation.navigate('ActivityDetailsScreen', {ticket})
       }
+      accessibilityRole="button"
+      accessibilityLabel={`Ticket ${ticket.number ?? ''}, ${state.label}`}
       style={({pressed}) => [styles.card, pressed && styles.cardPressed]}>
       <View style={styles.topRow}>
-        <View style={styles.iconWrap}>
-          <Icon name="document-text-outline" size={22} color={colors.primary} />
+        <View style={[styles.iconWrap, {backgroundColor: state.bg}]}>
+          <Icon name={state.icon} size={20} color={state.color} />
         </View>
         <View style={styles.main}>
           <View style={styles.titleRow}>
-            <Text style={styles.number}>{props.ticket.number}</Text>
+            <Text style={styles.number} numberOfLines={1}>
+              {ticket.number ? `#${ticket.number}` : 'Ticket'}
+            </Text>
             <Icon name="chevron-forward" size={18} color={colors.gray3} />
           </View>
           <Text style={styles.queue} numberOfLines={1}>
-            {props.ticket.queue?.name || 'No queue'}
+            {ticket.queue?.name || 'No queue'}
           </Text>
         </View>
       </View>
 
-      <Text style={styles.description} numberOfLines={2}>
-        {props.ticket.description || 'No description'}
-      </Text>
+      {ticket.description ? (
+        <Text style={styles.description} numberOfLines={2}>
+          {ticket.description}
+        </Text>
+      ) : null}
 
       <View style={styles.badges}>
-        <View style={[styles.badge, {backgroundColor: priority.bg}]}>
-          <Text style={[styles.badgeText, {color: priority.color}]}>
-            {props.ticket.priority}
-          </Text>
-        </View>
-        <View style={[styles.badge, {backgroundColor: state.bg}]}>
-          <Text style={[styles.badgeText, {color: state.color}]}>
-            {state.label}
-          </Text>
-        </View>
-        {props.ticket.stage?.name ? (
-          <View style={[styles.badge, styles.stageBadge]}>
-            <Text style={[styles.badgeText, {color: colors.primary}]}>
-              {props.ticket.stage.name}
-            </Text>
-          </View>
+        <ToneBadge tone={priority} size="sm" showIcon />
+        {!props.hideState ? <ToneBadge tone={state} size="sm" /> : null}
+        {ticket.stage?.name ? (
+          <ToneBadge
+            tone={{
+              label: ticket.stage.name,
+              color: colors.primary,
+              bg: colors.surface,
+              icon: 'flag-outline',
+            }}
+            size="sm"
+          />
         ) : null}
       </View>
 
       <View style={styles.footer}>
-        <Text style={styles.meta} numberOfLines={1}>
-          {props.ticket.contact?.name || 'No contact'}
-        </Text>
-        <Text style={styles.meta}>
-          {moment(props.ticket.creation_date * 1000).format('DD MMM YYYY')}
-        </Text>
+        <View style={styles.metaItem}>
+          <Icon name="person-outline" size={13} color={colors.gray3} />
+          <Text style={styles.meta} numberOfLines={1}>
+            {ticket.contact?.name || 'No contact'}
+          </Text>
+        </View>
+        {created ? (
+          <View style={styles.metaItemRight}>
+            <Icon name="calendar-outline" size={13} color={colors.gray3} />
+            <Text style={styles.metaRight}>
+              {created.format('DD MMM YYYY')}
+            </Text>
+          </View>
+        ) : null}
       </View>
     </Pressable>
   );
@@ -108,10 +104,9 @@ const styles = StyleSheet.create({
   cardPressed: {opacity: 0.92, transform: [{scale: 0.995}]},
   topRow: {flexDirection: 'row', gap: spacing.md, alignItems: 'center'},
   iconWrap: {
-    width: 44,
-    height: 44,
+    width: 42,
+    height: 42,
     borderRadius: 12,
-    backgroundColor: colors.tertiary,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -121,49 +116,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  number: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: colors.black,
-  },
-  queue: {
-    fontSize: 12,
-    color: colors.gray2,
-    marginTop: 2,
-  },
-  description: {
-    fontSize: 14,
-    color: colors.black,
-    lineHeight: 20,
-  },
-  badges: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
-  },
-  badge: {
-    borderRadius: radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  stageBadge: {
-    backgroundColor: colors.surface,
-  },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
-  },
+  number: {fontSize: 16, fontWeight: '700', color: colors.black, flex: 1},
+  queue: {fontSize: 12, color: colors.gray2, marginTop: 2},
+  description: {fontSize: 14, color: colors.black, lineHeight: 20},
+  badges: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs},
   footer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginTop: spacing.xs,
+    paddingTop: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.borderLight,
     gap: spacing.sm,
   },
-  meta: {
-    fontSize: 12,
-    color: colors.gray2,
-    flex: 1,
-  },
+  metaItem: {flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1},
+  metaItemRight: {flexDirection: 'row', alignItems: 'center', gap: 4},
+  meta: {fontSize: 12, color: colors.gray2, flex: 1},
+  metaRight: {fontSize: 12, color: colors.gray2},
 });

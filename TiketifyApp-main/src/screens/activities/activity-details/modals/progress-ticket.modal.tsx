@@ -1,24 +1,12 @@
 import React from 'react';
-import {
-  Alert,
-  Keyboard,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableWithoutFeedback,
-  View,
-} from 'react-native';
-import Snackbar from 'react-native-snackbar';
+import {StyleSheet, Switch, Text, TextInput, View} from 'react-native';
 import {useDispatch, useSelector} from 'react-redux';
-import ModalFooterActions from '../../../../components/ui/modal-footer-actions';
-import ASeperator from '../../../../components/ui/seperator';
+import FormModal, {formStyles} from '../../../../components/modal/form-modal';
 import colors from '../../../../constants/colors';
-import {API_BASE_URL} from '../../../../config/api';
+import {radius, spacing} from '../../../../constants/styles';
+import {apiPut} from '../../../../utils/apiClient';
 import {notifyTicketMutation} from '../../../../services/ticketsSync';
+import {showError, showSuccess} from '../../../../utils/notify';
 
 type Props = {
   modalVisible: boolean;
@@ -35,36 +23,44 @@ const ProgressTicketModal = (props: Props) => {
   const token = useSelector((state: any) => state.auth?.token);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [note, setNote] = React.useState('');
+  const [error, setError] = React.useState('');
   const [shouldNotifyCustomer, setShouldNotifyCustomer] = React.useState(true);
 
-  async function submitProgress() {
+  async function submit() {
+    if (isSubmitting) {
+      return;
+    }
+    if (!props.isFirstStart && !note.trim()) {
+      setError('Add a short comment about this step.');
+      return;
+    }
+    setError('');
+    setIsSubmitting(true);
     props.setSubmitted(true);
 
     try {
-      const endpoint = props.isFirstStart
-        ? `${API_BASE_URL}/tickets/${props.ticket.id}/start`
-        : `${API_BASE_URL}/tickets/${
-            props.ticket.id
-          }/progress?smsNotification=${shouldNotifyCustomer ? 'true' : 'false'}`;
-
-      const response = await fetch(endpoint, {
-        method: 'PUT',
-        headers: {
-          Authorization: 'Bearer ' + token,
-          'Content-Type': 'application/json',
-        },
-        body: props.isFirstStart
-          ? JSON.stringify({stage_id: props.nextStage?.id})
-          : JSON.stringify({
-              comment: note || 'No comment',
+      const data = props.isFirstStart
+        ? await apiPut(
+            `/tickets/${props.ticket.id}/start`,
+            {stage_id: props.nextStage?.id},
+            token,
+            {timeoutMs: 45000},
+          )
+        : await apiPut(
+            `/tickets/${props.ticket.id}/progress?smsNotification=${
+              shouldNotifyCustomer ? 'true' : 'false'
+            }`,
+            {
+              comment: note.trim(),
               stage_id: props.nextStage?.id,
               stage_name: props.nextStage?.name,
-            }),
-      });
+            },
+            token,
+            {timeoutMs: 45000},
+          );
 
-      const data = await response.json();
-      if (!response.ok || (props.isFirstStart && data?.state !== 'IN_PROGRESS')) {
-        throw new Error(data?.message || 'Failed to update ticket');
+      if (props.isFirstStart && data?.state && data.state !== 'IN_PROGRESS') {
+        throw new Error(data?.message || 'The CRM did not start the ticket');
       }
 
       const updated = await notifyTicketMutation(
@@ -78,169 +74,90 @@ const ProgressTicketModal = (props: Props) => {
         {...props.ticket, ...data, id: props.ticket.id},
       );
 
-      Snackbar.show({
-        backgroundColor: 'green',
-        textColor: colors.white,
-        text: props.isFirstStart
-          ? 'Troubleshooting started'
-          : 'Ticket progressed',
-        duration: Snackbar.LENGTH_SHORT,
-      });
-
+      showSuccess(props.isFirstStart ? 'Job started' : 'Moved to next step');
+      setNote('');
       props.setModalVisible(false);
       props.onSuccess?.(updated);
-    } catch (error: any) {
-      Snackbar.show({
-        backgroundColor: colors.primary,
-        textColor: colors.white,
-        text: error?.message || 'Failed to update ticket',
-        duration: Snackbar.LENGTH_SHORT,
-      });
+    } catch (err: any) {
+      showError(err?.message || 'Could not update the ticket');
     } finally {
       setIsSubmitting(false);
       props.setSubmitted(false);
     }
   }
 
-  async function submitNote() {
-    if (isSubmitting) {
-      return;
-    }
-    if (!props.isFirstStart && !note.trim()) {
-      Snackbar.show({
-        text: 'Please enter a note',
-        duration: Snackbar.LENGTH_SHORT,
-        backgroundColor: 'red',
-        textColor: colors.white,
-      });
-      return;
-    }
-
-    setIsSubmitting(true);
-    await submitProgress();
-  }
-
   return (
-    <Modal
-      animationType="fade"
-      transparent={true}
-      statusBarTranslucent={true}
-      presentationStyle="overFullScreen"
+    <FormModal
       visible={props.modalVisible}
-      onRequestClose={() => {
-        Alert.alert('Modal has been closed.');
+      onClose={() => {
+        setError('');
         props.setModalVisible(false);
+      }}
+      title={props.isFirstStart ? 'Start job' : 'Move to next step'}
+      subtitle={
+        props.isFirstStart
+          ? 'Marks the ticket In Progress and lets the customer know you are on it.'
+          : props.nextStage?.name
+          ? `Next step: ${props.nextStage.name}`
+          : undefined
+      }
+      loading={isSubmitting}
+      footer={{
+        onSubmit: submit,
+        submitText: props.isFirstStart ? 'Start job' : 'Confirm',
       }}>
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <View style={styles.overlay}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={styles.centeredView}>
-            <View style={styles.modalView}>
-              <Text
-                style={{
-                  fontSize: 18,
-                  fontWeight: '600',
-                  color: colors.black,
-                }}>
-                {props.isFirstStart ? 'Start Troubleshooting' : 'Review'}
-              </Text>
-              <ASeperator />
+      {!props.isFirstStart ? (
+        <>
+          <View style={formStyles.field}>
+            <Text style={formStyles.label}>Comment</Text>
+            <TextInput
+              multiline
+              value={note}
+              onChangeText={value => {
+                setNote(value);
+                if (error) {
+                  setError('');
+                }
+              }}
+              style={formStyles.textArea}
+              placeholder="What was done in this step?"
+              placeholderTextColor={colors.gray3}
+              editable={!isSubmitting}
+            />
+            {error ? <Text style={formStyles.error}>{error}</Text> : null}
+          </View>
 
-              {!props.isFirstStart && (
-                <>
-                  <View style={{gap: 10, width: '100%'}}>
-                    <Text style={{fontSize: 14, color: colors.black}}>
-                      Comment
-                    </Text>
-                    <TextInput
-                      multiline
-                      onChangeText={setNote}
-                      value={note}
-                      numberOfLines={4}
-                      style={{
-                        backgroundColor: colors.gray,
-                        padding: 10,
-                        borderRadius: 5,
-                        width: '100%',
-                        height: 100,
-                      }}
-                      placeholder="Enter description"
-                      placeholderTextColor={colors.gray2}
-                    />
-                  </View>
-
-                  <View
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 10,
-                      justifyContent: 'space-between',
-                      width: '100%',
-                    }}>
-                    <Text style={{fontSize: 14, color: colors.black}}>
-                      Notify customer
-                    </Text>
-                    <Switch
-                      trackColor={{false: colors.gray, true: colors.primary}}
-                      thumbColor={
-                        shouldNotifyCustomer ? colors.white : colors.gray2
-                      }
-                      ios_backgroundColor={colors.gray}
-                      onValueChange={() =>
-                        setShouldNotifyCustomer(!shouldNotifyCustomer)
-                      }
-                      value={shouldNotifyCustomer}
-                    />
-                  </View>
-                </>
-              )}
-
-              {props.isFirstStart && (
-                <Text style={{fontSize: 14, color: colors.black}}>
-                  This will mark the ticket as In Progress and notify the
-                  customer.
-                </Text>
-              )}
-
-              <ModalFooterActions
-                onCancel={() => props.setModalVisible(false)}
-                onSubmit={submitNote}
-                submitText={props.isFirstStart ? 'Start' : 'Submit'}
-                loading={isSubmitting}
-              />
+          <View style={styles.toggleRow}>
+            <View style={styles.toggleText}>
+              <Text style={formStyles.label}>Notify customer</Text>
+              <Text style={formStyles.hint}>Send an SMS update</Text>
             </View>
-          </KeyboardAvoidingView>
-        </View>
-      </TouchableWithoutFeedback>
-    </Modal>
+            <Switch
+              trackColor={{false: colors.bordergray, true: colors.primary}}
+              thumbColor={colors.white}
+              ios_backgroundColor={colors.bordergray}
+              onValueChange={setShouldNotifyCustomer}
+              value={shouldNotifyCustomer}
+              disabled={isSubmitting}
+            />
+          </View>
+        </>
+      ) : null}
+    </FormModal>
   );
 };
 
 export default ProgressTicketModal;
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-  },
-  centeredView: {
-    flex: 1,
-    justifyContent: 'center',
+  toggleRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 22,
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
   },
-  modalView: {
-    width: '95%',
-    gap: 10,
-    backgroundColor: 'white',
-    borderRadius: 20,
-    padding: 15,
-    alignItems: 'flex-start',
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
-  },
+  toggleText: {flex: 1, gap: 2},
 });

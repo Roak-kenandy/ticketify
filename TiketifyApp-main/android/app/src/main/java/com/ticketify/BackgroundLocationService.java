@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.Call;
@@ -189,7 +190,8 @@ public class BackgroundLocationService extends Service {
         try {
             // Create location JSON
             SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
-            String timestamp = dateFormat.format(new Date());
+            dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
+            String timestamp = dateFormat.format(new Date(location.getTime()));
             
             String json = String.format(Locale.US,
                 "{\"latitude\":%.6f,\"longitude\":%.6f,\"accuracy\":%.1f,\"timestamp\":\"%s\"}",
