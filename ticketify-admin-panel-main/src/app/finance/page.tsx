@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import moment from "moment";
-import { ArrowRight, Clock, FileText, Receipt, RefreshCw, Wallet } from "lucide-react";
+import { ArrowRight, CalendarDays, Landmark, Receipt, RefreshCw, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -23,19 +23,21 @@ import { formatMvr } from "@/lib/format";
 
 type RecentPayment = {
   invoice_no: string;
+  receipt_no: string;
   bml_reference_id: string;
   ticket_no: string;
-  product_amount: string;
-  issued_date: string;
+  amount_paid: string;
+  paid_date: string;
   issued_by: string;
 };
 
 type FinanceSummary = {
-  invoices: number;
-  payments: number;
-  confirmed: number;
-  pending: number;
-  total_amount: string;
+  paid_count: number;
+  total_collected: string;
+  gst_collected: string;
+  net_collected: string;
+  month_count: number;
+  month_collected: string;
   recent: RecentPayment[];
 };
 
@@ -58,16 +60,11 @@ export default function FinanceDashboardPage() {
     load();
   }, [load]);
 
-  const confirmedRate =
-    summary && summary.payments > 0
-      ? Math.round((summary.confirmed / summary.payments) * 100)
-      : null;
-
   return (
     <>
       <PageHeader
         title="Finance overview"
-        description="Invoices and payment requests issued from Ticketify."
+        description="Payments received from customers and confirmed by Bank of Maldives."
         actions={
           <>
             <Button variant="outline" onClick={load} disabled={loading}>
@@ -76,7 +73,7 @@ export default function FinanceDashboardPage() {
             </Button>
             <Button asChild>
               <Link href="/finance/reports">
-                Payments report
+                Paid payments report
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>
@@ -97,39 +94,44 @@ export default function FinanceDashboardPage() {
         <div className="space-y-6">
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard
-              label="Total billed"
-              value={summary ? formatMvr(summary.total_amount) : "—"}
+              label="Total collected"
+              value={summary ? formatMvr(summary.total_collected) : "—"}
               icon={Wallet}
               tone="brand"
               loading={loading}
+              hint={summary ? `${formatMvr(summary.net_collected)} excl. GST` : undefined}
             />
             <StatCard
-              label="Invoices"
-              value={summary?.invoices ?? 0}
-              icon={FileText}
+              label="GST collected"
+              value={summary ? formatMvr(summary.gst_collected) : "—"}
+              icon={Landmark}
               tone="info"
               loading={loading}
             />
             <StatCard
-              label="Confirmed payments"
-              value={summary?.confirmed ?? 0}
-              icon={Receipt}
+              label="Collected this month"
+              value={summary ? formatMvr(summary.month_collected) : "—"}
+              icon={CalendarDays}
               tone="success"
               loading={loading}
-              hint={confirmedRate !== null ? `${confirmedRate}% of payment requests` : undefined}
+              hint={
+                summary
+                  ? `${summary.month_count} ${summary.month_count === 1 ? "payment" : "payments"}`
+                  : undefined
+              }
             />
             <StatCard
-              label="Awaiting payment"
-              value={summary?.pending ?? 0}
-              icon={Clock}
-              tone="warning"
+              label="Paid payments"
+              value={summary?.paid_count ?? 0}
+              icon={Receipt}
+              tone="success"
               loading={loading}
             />
           </div>
 
           <Card className="overflow-hidden">
             <CardHeader className="flex-row items-center justify-between space-y-0 border-b py-4">
-              <CardTitle>Recent payment requests</CardTitle>
+              <CardTitle>Recent payments received</CardTitle>
               <Button variant="ghost" size="sm" asChild>
                 <Link href="/finance/reports">
                   View all
@@ -140,37 +142,39 @@ export default function FinanceDashboardPage() {
             {!loading && (summary?.recent.length ?? 0) === 0 ? (
               <EmptyState
                 icon={Receipt}
-                title="No payment requests yet"
-                description="Requests appear here when technicians bill a customer from the app."
+                title="No payments received yet"
+                description="Payments appear here once a customer pays and Bank of Maldives confirms it."
               />
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
+                    <TableHead>Receipt</TableHead>
                     <TableHead>Invoice</TableHead>
                     <TableHead>Ticket</TableHead>
                     <TableHead className="hidden md:table-cell">BML reference</TableHead>
-                    <TableHead className="text-right">Amount</TableHead>
-                    <TableHead className="hidden sm:table-cell">Issued</TableHead>
+                    <TableHead className="text-right">Amount paid</TableHead>
+                    <TableHead className="hidden sm:table-cell">Paid</TableHead>
                     <TableHead className="hidden lg:table-cell">Issued by</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loading ? (
-                    <TableSkeletonRows columns={6} rows={5} />
+                    <TableSkeletonRows columns={7} rows={5} />
                   ) : (
                     summary?.recent.map((row, index) => (
-                      <TableRow key={`${row.invoice_no}-${index}`}>
-                        <TableCell className="font-medium">{row.invoice_no || "—"}</TableCell>
+                      <TableRow key={`${row.receipt_no || row.invoice_no}-${index}`}>
+                        <TableCell className="font-medium">{row.receipt_no || "—"}</TableCell>
+                        <TableCell>{row.invoice_no || "—"}</TableCell>
                         <TableCell className="tabular-nums">{row.ticket_no || "—"}</TableCell>
                         <TableCell className="hidden font-mono text-xs text-muted-foreground md:table-cell">
                           {row.bml_reference_id || "—"}
                         </TableCell>
                         <TableCell className="text-right font-medium tabular-nums">
-                          {formatMvr(row.product_amount)}
+                          {formatMvr(row.amount_paid)}
                         </TableCell>
                         <TableCell className="hidden whitespace-nowrap text-muted-foreground sm:table-cell">
-                          {row.issued_date ? moment(row.issued_date).format("DD MMM YYYY") : "—"}
+                          {row.paid_date ? moment(row.paid_date).format("DD MMM YYYY, HH:mm") : "—"}
                         </TableCell>
                         <TableCell className="hidden text-muted-foreground lg:table-cell">
                           {row.issued_by || "—"}

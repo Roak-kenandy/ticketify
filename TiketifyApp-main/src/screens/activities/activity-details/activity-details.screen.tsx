@@ -452,7 +452,10 @@ const ActivityDetailsScreen = ({navigation, route}: Props) => {
             message="Marked as No response. Clear it before closing the ticket."
           />
         ) : null}
-        {isMine && view?.state === 'IN_PROGRESS' && billingWorkflow ? (
+        {isMine &&
+        view?.state === 'IN_PROGRESS' &&
+        (billingWorkflow?.payment_status === 'pending' ||
+          billingWorkflow?.payment_status === 'confirmed') ? (
           <InlineBanner
             tone={
               billingWorkflow.payment_status === 'confirmed'
@@ -465,14 +468,10 @@ const ActivityDetailsScreen = ({navigation, route}: Props) => {
                 ? `Payment received (${
                     billingWorkflow.confirmed_receipt_number ?? 'receipt'
                   }). Finish the work, then close the ticket.`
-                : billingWorkflow.block_close_reason ??
-                  'Complete billing before closing this ticket.'
+                : 'Waiting for the customer to pay the link that was sent.'
             }
             actionLabel={
-              billingWorkflow.next_step !== 'complete_work_then_close' &&
-              billingWorkflow.next_step !== 'close_ticket'
-                ? 'Open'
-                : undefined
+              billingWorkflow.payment_status === 'pending' ? 'Open' : undefined
             }
             onAction={() => setModal('billing')}
           />

@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { BmlPaymentService } from './bml-payment.service';
 import { TicketPaymentService } from './ticket-payment.service';
+import { PaymentReconcilerService } from './payment-reconciler.service';
 import { PaymentsController } from './payments.controller';
 import { IntegrationAuditModule } from 'src/infrastructure/audit/integration-audit.module';
 import { CrmApiModule } from 'src/infrastructure/crm/crm-api.module';
@@ -21,7 +22,11 @@ import { NotificationTemplateModule } from 'src/notifications/notification-templ
     forwardRef(() => FinanceModule),
   ],
   controllers: [PaymentsController],
-  providers: [BmlPaymentService, TicketPaymentService],
+  providers: [
+    BmlPaymentService,
+    TicketPaymentService,
+    PaymentReconcilerService,
+  ],
   exports: [BmlPaymentService, TicketPaymentService],
 })
 export class PaymentsModule {}

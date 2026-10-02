@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-} from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import {
   TicketBillingDecision,
   TicketInvoiceStatus,
@@ -119,38 +115,20 @@ export class TicketBillingService {
       payment_status = 'failed';
     }
 
-    const payment_required = state.decision === TicketBillingDecision.CHARGEABLE;
+    // Charging is opt-in: the technician uses the Charges action when a job needs
+    // it. Closing is only held back while a sent payment link is still unpaid.
+    const payment_required = payment_status === 'pending';
     let can_close_ticket = true;
     let block_close_reason: string | null = null;
     let next_step: BillingWorkflowView['next_step'] = 'close_ticket';
 
-    if (state.decision === TicketBillingDecision.UNDECIDED) {
-      next_step = 'decide_if_chargeable';
+    if (payment_status === 'pending') {
+      next_step = 'await_customer_payment';
       can_close_ticket = false;
       block_close_reason =
-        'Confirm whether this job is chargeable (materials/extra work) before closing.';
-    } else if (state.decision === TicketBillingDecision.NOT_CHARGEABLE) {
+        'A payment link was sent and the customer has not paid yet. Wait for the payment before closing.';
+    } else if (payment_status === 'confirmed') {
       next_step = 'complete_work_then_close';
-      can_close_ticket = true;
-    } else if (payment_required) {
-      if (!openInvoice && !confirmedPayment) {
-        next_step = 'select_charges_and_pay';
-        can_close_ticket = false;
-        block_close_reason =
-          'Select charges and send the customer a payment link.';
-      } else if (payment_status === 'pending') {
-        next_step = 'await_customer_payment';
-        can_close_ticket = false;
-        block_close_reason =
-          'Waiting for customer payment. Use “Check payment” after they pay.';
-      } else if (payment_status !== 'confirmed') {
-        next_step = 'select_charges_and_pay';
-        can_close_ticket = false;
-        block_close_reason = 'Customer payment is not confirmed yet.';
-      } else {
-        next_step = 'complete_work_then_close';
-        can_close_ticket = true;
-      }
     }
 
     return {
@@ -182,12 +160,7 @@ export class TicketBillingService {
 
   async markChargeableAfterPaymentInit(crmTicketId: string, userId: string) {
     const state = await this.getOrCreate(crmTicketId);
-    if (state.decision === TicketBillingDecision.NOT_CHARGEABLE) {
-      throw new BadRequestException(
-        'Ticket was marked as not chargeable. Reset billing decision first.',
-      );
-    }
-    if (state.decision === TicketBillingDecision.UNDECIDED) {
+    if (state.decision !== TicketBillingDecision.CHARGEABLE) {
       await this.setDecision(crmTicketId, true, userId);
     }
   }

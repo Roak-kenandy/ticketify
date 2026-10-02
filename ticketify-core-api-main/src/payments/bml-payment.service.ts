@@ -9,6 +9,8 @@ import { consumeWebhookNonce } from './webhook-nonce.store';
 
 const CONFIRMED_STATES = new Set(['CONFIRMED']);
 const FAILED_STATES = new Set(['FAILED', 'CANCELLED', 'EXPIRED', 'VOIDED']);
+/** States after which the BML transaction can never be paid. */
+const CLOSED_STATES = new Set(['CANCELLED', 'EXPIRED', 'VOIDED']);
 const WEBHOOK_TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000;
 
 export type BmlTransactionView = {
@@ -20,7 +22,22 @@ export type BmlTransactionView = {
   qrImageUrl: string | null;
   amount: number | null;
   currency: string | null;
+  allowRetry: boolean | null;
+  expiresAt: string | null;
+  /** Full gateway payload. Contains card/token data — never persist or return it. */
   raw: unknown;
+};
+
+/** The only BML fields Ticketify stores; everything else (card, token, IP) is dropped. */
+export type StoredBmlTransaction = {
+  id: string | null;
+  local_id: string | null;
+  state: string;
+  amount_minor: number | null;
+  currency: string | null;
+  pay_url: string | null;
+  expires_at: string | null;
+  checked_at: string;
 };
 
 function timingSafeEqual(a: string, b: string): boolean {
@@ -78,7 +95,10 @@ export class BmlPaymentService {
     const signString = `amount=${amountMinor}&currency=${currency}&apiKey=${apiKey}`;
 
     if (signMethod === 'md5') {
-      return crypto.createHash('md5').update(signString, 'utf8').digest('base64');
+      return crypto
+        .createHash('md5')
+        .update(signString, 'utf8')
+        .digest('base64');
     }
 
     return crypto.createHash('sha1').update(signString, 'utf8').digest('hex');
@@ -151,6 +171,36 @@ export class BmlPaymentService {
   }
 
   /**
+   * True when the customer can no longer pay this BML transaction. A FAILED card
+   * attempt is retryable on the same link unless BML says otherwise.
+   */
+  isTerminalFailure(
+    view: Pick<BmlTransactionView, 'state' | 'allowRetry'>,
+  ): boolean {
+    const state = String(view.state || '').toUpperCase();
+    if (CLOSED_STATES.has(state)) return true;
+    return state === 'FAILED' && view.allowRetry === false;
+  }
+
+  isClosedState(state: string | null | undefined): boolean {
+    return CLOSED_STATES.has(String(state || '').toUpperCase());
+  }
+
+  toStored(view: BmlTransactionView): StoredBmlTransaction {
+    return {
+      id: view.id,
+      local_id: view.localId,
+      state: view.state,
+      amount_minor:
+        view.amount != null ? Math.round(Number(view.amount)) : null,
+      currency: view.currency,
+      pay_url: this.pickPayUrl(view),
+      expires_at: view.expiresAt,
+      checked_at: new Date().toISOString(),
+    };
+  }
+
+  /**
    * Same as medianet-voucher: raw JWT or API key in Authorization — do not prepend Bearer.
    * BML returns 401 (PP-C-004) if Bearer is added to a JWT.
    */
@@ -169,7 +219,9 @@ export class BmlPaymentService {
   buildRedirectUrl(localReference: string): string {
     const base = this.config.get<string>('BML_REDIRECT_URL')?.trim();
     if (!base) {
-      throw new ServiceUnavailableException('BML redirect URL is not configured');
+      throw new ServiceUnavailableException(
+        'BML redirect URL is not configured',
+      );
     }
     const url = new URL(base);
     url.searchParams.set('reference', localReference);
@@ -202,17 +254,31 @@ export class BmlPaymentService {
     }
 
     const url = `${apiBaseUrl.replace(/\/$/, '')}${path}`;
-    const timeoutMs = Number(this.config.get('BML_REQUEST_TIMEOUT_MS') ?? 60000);
+    const timeoutMs = Number(
+      this.config.get('BML_REQUEST_TIMEOUT_MS') ?? 30000,
+    );
+    // Only reads are retried; retrying a create could open a second transaction.
+    const attempts = method === 'GET' ? 2 : 1;
 
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method,
-        headers,
-        body: body != null ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-    } catch {
+    let response: Response | null = null;
+    for (let attempt = 1; attempt <= attempts && !response; attempt++) {
+      try {
+        response = await fetch(url, {
+          method,
+          headers,
+          body: body != null ? JSON.stringify(body) : undefined,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch {
+        if (attempt === attempts) {
+          throw new ServiceUnavailableException(
+            'Unable to reach the payment gateway',
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+    if (!response) {
       throw new ServiceUnavailableException(
         'Unable to reach the payment gateway',
       );
@@ -237,6 +303,11 @@ export class BmlPaymentService {
     }
 
     if (!response.ok) {
+      if (response.status >= 500 || response.status === 429) {
+        throw new ServiceUnavailableException(
+          `Payment gateway is temporarily unavailable (${response.status})`,
+        );
+      }
       throw new BadRequestException(
         (data.message as string) ||
           `BML payment request failed (${response.status})`,
@@ -287,12 +358,18 @@ export class BmlPaymentService {
         null,
       qrImageUrl: qr?.url ?? null,
       amount: (nested.amount as number) ?? (data.amount as number) ?? null,
-      currency: (nested.currency as string) || (data.currency as string) || null,
+      currency:
+        (nested.currency as string) || (data.currency as string) || null,
+      allowRetry:
+        typeof nested.allowRetry === 'boolean' ? nested.allowRetry : null,
+      expiresAt: (nested.expires as string) || null,
       raw: data,
     };
   }
 
-  async getPaymentTransaction(transactionId: string): Promise<BmlTransactionView> {
+  async getPaymentTransaction(
+    transactionId: string,
+  ): Promise<BmlTransactionView> {
     const data = (await this.bmlRequest(
       'GET',
       `/public/transactions/${encodeURIComponent(transactionId)}`,
@@ -314,15 +391,18 @@ export class BmlPaymentService {
 
     const currency = input.currency ?? 'MVR';
     const amountMinor = this.toMinorUnits(input.amountMvr);
-    const redirect =
-      input.redirectUrl ?? this.buildRedirectUrl(input.localId);
+    const redirect = input.redirectUrl ?? this.buildRedirectUrl(input.localId);
     if (!redirect?.trim()) {
-      throw new ServiceUnavailableException('BML redirect URL is not configured');
+      throw new ServiceUnavailableException(
+        'BML redirect URL is not configured',
+      );
     }
 
     const apiMode = this.config.get<string>('BML_API_MODE') ?? 'v1';
     const webhook =
-      input.webhookUrl ?? this.config.get<string>('BML_WEBHOOK_URL') ?? undefined;
+      input.webhookUrl ??
+      this.config.get<string>('BML_WEBHOOK_URL') ??
+      undefined;
     const customerRef =
       input.customerReference ?? `Ticketify payment ${input.localId}`;
 
@@ -356,8 +436,7 @@ export class BmlPaymentService {
       amount: amountMinor,
       currency,
       redirectUrl: redirect,
-      appVersion:
-        this.config.get<string>('BML_APP_VERSION') ?? 'ticketify/1.0',
+      appVersion: this.config.get<string>('BML_APP_VERSION') ?? 'ticketify/1.0',
       apiVersion: '2.0',
       deviceId: this.config.get<string>('BML_DEVICE_ID') ?? 'ticketify-api',
     };

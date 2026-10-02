@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import React, { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { AlertCircle, Loader2, Lock } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Loader2, Lock } from 'lucide-react';
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:3333/api/v1';
@@ -11,7 +11,9 @@ const API_BASE_URL =
 type Summary = {
   reference: string;
   status: string;
+  paid?: boolean;
   invoice_number: string | null;
+  receipt_number?: string | null;
   subtotal_mvr: number;
   tax_mvr: number;
   amount_mvr: number;
@@ -41,11 +43,21 @@ function CheckoutBody() {
       setLoading(false);
       return;
     }
-    fetch(
-      `${API_BASE_URL}/payments/public/${encodeURIComponent(reference)}/summary`,
-    )
+    const ref = encodeURIComponent(reference);
+    // Ask the bank first so a customer reopening the link after paying sees
+    // "Paid" instead of being offered to pay again.
+    fetch(`${API_BASE_URL}/payments/public/${ref}/verify`, {
+      method: 'POST',
+      cache: 'no-store',
+    })
+      .catch(() => undefined)
+      .then(() =>
+        fetch(`${API_BASE_URL}/payments/public/${ref}/summary`, {
+          cache: 'no-store',
+        }),
+      )
       .then(async r => {
-        const body = await r.json();
+        const body = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(body.message || 'Could not load payment');
         setData(body);
       })
@@ -55,14 +67,51 @@ function CheckoutBody() {
 
   const [redirecting, setRedirecting] = useState(false);
 
+  useEffect(() => {
+    // Returning via the back button restores the page from cache with the
+    // spinner still showing; re-enable the button.
+    const onShow = (e: PageTransitionEvent) => {
+      if (e.persisted) setRedirecting(false);
+    };
+    window.addEventListener('pageshow', onShow);
+    return () => window.removeEventListener('pageshow', onShow);
+  }, []);
+
   function payNow() {
-    if (!data?.can_pay || !terms) return;
+    if (!data?.can_pay || !terms || redirecting) return;
     setRedirecting(true);
-    window.location.href = data.bml_checkout_url;
+    window.location.assign(data.bml_checkout_url);
   }
 
   if (loading) {
     return <PageLoading label="Loading payment…" />;
+  }
+
+  if (data && (data.paid || data.status === 'CONFIRMED')) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center px-4">
+        <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-md">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+            <CheckCircle2 className="h-7 w-7" />
+          </div>
+          <h1 className="text-xl font-bold text-slate-900">Already paid</h1>
+          <p className="mt-3 text-sm text-slate-600">
+            {data.currency}{' '}
+            {data.amount_mvr.toLocaleString('en-US', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
+            {data.invoice_number ? ` for invoice ${data.invoice_number}` : ''} has
+            been received. No further payment is needed.
+          </p>
+          {data.receipt_number && (
+            <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 font-mono text-xs text-slate-600">
+              Receipt {data.receipt_number}
+            </p>
+          )}
+        </div>
+      </div>
+    );
   }
 
   if (error || !data) {
@@ -234,7 +283,8 @@ function CheckoutBody() {
 
           {data.status !== 'PENDING' && (
             <p className="text-center text-xs text-amber-700">
-              This payment is no longer pending ({data.status}).
+              This payment link is no longer active. Ask your technician to send
+              a new one.
             </p>
           )}
 

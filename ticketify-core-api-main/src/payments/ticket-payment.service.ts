@@ -2,24 +2,80 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { TicketPaymentStatus } from '@prisma/client';
+import {
+  Prisma,
+  TicketInvoiceStatus,
+  TicketPaymentStatus,
+} from '@prisma/client';
+import type { TicketPayment } from '@prisma/client';
+import * as crypto from 'crypto';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { IntegrationAuditService } from 'src/infrastructure/audit/integration-audit.service';
 import { CrmApiClient } from 'src/infrastructure/crm/crm-api.client';
 import { TicketInvoiceService } from 'src/finance/ticket-invoice.service';
 import { TicketReceiptService } from 'src/finance/ticket-receipt.service';
 import { TicketBillingService } from 'src/finance/ticket-billing.service';
-import { BmlPaymentService } from './bml-payment.service';
-import { ChargeCatalogService, ChargeLineInput } from 'src/charges/charge-catalog.service';
+import {
+  BmlPaymentService,
+  BmlTransactionView,
+  StoredBmlTransaction,
+} from './bml-payment.service';
+import {
+  ChargeCatalogService,
+  ChargeLineInput,
+} from 'src/charges/charge-catalog.service';
 import SMSService from 'src/shared/ooredoo-sms/sms.service';
 import { NotificationTemplateService } from 'src/notifications/notification-template.service';
 import { CreateTicketPaymentDto } from './dto/create-ticket-payment.dto';
 
+type PaymentMetadata = {
+  payment_phone?: string;
+  awaiting_payment?: boolean;
+  gateway_mode?: 'bml' | 'invoice_only';
+  sms_link?: string;
+  bml_pay_url?: string;
+  bml?: StoredBmlTransaction | Record<string, unknown>;
+  superseded_by?: string;
+  review_required?: boolean;
+  review_reason?: string;
+  last_bml_check_at?: string;
+  error?: string;
+};
+
+export type SyncSource =
+  | 'webhook'
+  | 'return_page'
+  | 'reconciler'
+  | 'staff'
+  | 'supersede';
+
+export type PublicPaymentStatus = {
+  reference: string;
+  status: TicketPaymentStatus;
+  paid: boolean;
+  final: boolean;
+  invoice_number: string | null;
+  receipt_number: string | null;
+  amount_mvr: number;
+  currency: string;
+  confirmed_at: Date | null;
+};
+
+const PUBLIC_VERIFY_COOLDOWN_MS = 4000;
+
 @Injectable()
 export class TicketPaymentService {
+  private readonly logger = new Logger(TicketPaymentService.name);
+  private readonly publicVerifyCache = new Map<
+    string,
+    { at: number; result: Promise<PublicPaymentStatus> }
+  >();
+
   constructor(
     private prisma: PrismaService,
     private bml: BmlPaymentService,
@@ -34,8 +90,21 @@ export class TicketPaymentService {
     private templates: NotificationTemplateService,
   ) {}
 
+  /** Unguessable: the reference is the only key protecting the public pay pages. */
   private buildReference(): string {
-    return `TKT-PAY-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const random = crypto.randomBytes(9).toString('base64url');
+    return `TKT-PAY-${Date.now().toString(36).toUpperCase()}-${random}`;
+  }
+
+  private meta(payment: { metadata: unknown }): PaymentMetadata {
+    return (payment.metadata as PaymentMetadata | null) ?? {};
+  }
+
+  private maskPhone(phone: string | null | undefined): string | null {
+    const digits = String(phone ?? '').trim();
+    if (!digits) return null;
+    if (digits.length <= 4) return '••••';
+    return `${digits.slice(0, 3)}${'•'.repeat(Math.max(2, digits.length - 5))}${digits.slice(-2)}`;
   }
 
   private allowLocalhostPaymentLinks(): boolean {
@@ -87,10 +156,12 @@ export class TicketPaymentService {
     }
   }
 
+  private isLocalUrl(url: string): boolean {
+    return /localhost|127\.0\.0\.1|10\.0\.2\.2|0\.0\.0\.0/i.test(url);
+  }
+
   private assertSmsLinkReachable(url: string): void {
-    const local =
-      /localhost|127\.0\.0\.1|10\.0\.2\.2|0\.0\.0\.0/i.test(url);
-    if (local && !this.allowLocalhostPaymentLinks()) {
+    if (this.isLocalUrl(url) && !this.allowLocalhostPaymentLinks()) {
       throw new BadRequestException(
         'Payment link would use localhost — customers cannot open it. Set PAYMENT_SMS_LINK_BASE or PUBLIC_API_BASE_URL to your public HTTPS API (e.g. ngrok tunnel to port 3333).',
       );
@@ -103,16 +174,18 @@ export class TicketPaymentService {
     return this.normalizeSmsPaymentUrl(raw);
   }
 
-  private isMerchantReturnUrl(url: string | null | undefined): boolean {
-    if (!url?.trim()) return false;
-    return /\/payments\/return|wallet\/payment\/return/i.test(url);
-  }
-
   private isBmlHostedPayUrl(url: string | null | undefined): boolean {
     if (!url?.trim()) return false;
-    return /pay\.bml\.com\.mv|transaction\.merchants\.bankofmaldives\.com\.mv/i.test(
-      url,
-    );
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      return (
+        host === 'pay.bml.com.mv' ||
+        host.endsWith('.pay.bml.com.mv') ||
+        host === 'transaction.merchants.bankofmaldives.com.mv'
+      );
+    } catch {
+      return false;
+    }
   }
 
   /** Customer checkout (Ticketify UI) before redirect to BML — no coupon/referral. */
@@ -145,35 +218,129 @@ export class TicketPaymentService {
     return this.customerOpenUrl(input.reference);
   }
 
+  private webhookUrl(): string | undefined {
+    const configured = this.config.get<string>('BML_WEBHOOK_URL');
+    if (configured?.trim()) return configured.trim();
+    const publicBase = this.config.get<string>('PUBLIC_API_BASE_URL');
+    if (publicBase?.trim()) {
+      const base = publicBase.trim().replace(/\/$/, '');
+      return base.endsWith('/api/v1')
+        ? `${base}/payments/webhooks/bml`
+        : `${base}/api/v1/payments/webhooks/bml`;
+    }
+    return undefined;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Public (customer) endpoints — keyed only by the unguessable reference.
+  // ---------------------------------------------------------------------------
+
   async getPublicCheckoutSummary(reference: string) {
     const payment = await this.prisma.ticketPayment.findUnique({
       where: { reference },
-      include: { invoice: true },
+      include: { invoice: true, receipt: true },
     });
     if (!payment) {
       throw new NotFoundException('Payment not found');
     }
-    const meta = payment.metadata as { payment_phone?: string } | null;
+    const meta = this.meta(payment);
     const lines = Array.isArray(payment.line_items)
-      ? (payment.line_items as Array<{
-          label?: string;
-          code?: string;
-          quantity?: number;
-          line_total_mvr?: string | number;
-        }>)
+      ? (
+          payment.line_items as Array<{
+            label?: string;
+            code?: string;
+            quantity?: number;
+            line_total_mvr?: string | number;
+          }>
+        ).map((l) => ({
+          label: l.label,
+          code: l.code,
+          quantity: l.quantity,
+          line_total_mvr: l.line_total_mvr,
+        }))
       : [];
     return {
       reference: payment.reference,
       status: payment.status,
+      paid: payment.status === TicketPaymentStatus.CONFIRMED,
       invoice_number: payment.invoice?.invoice_number ?? null,
-      subtotal_mvr: Number(payment.subtotal_mvr),
-      tax_mvr: Number(payment.tax_mvr),
+      receipt_number: payment.receipt?.receipt_number ?? null,
+      subtotal_mvr: Number(payment.subtotal_mvr ?? 0),
+      tax_mvr: Number(payment.tax_mvr ?? 0),
       amount_mvr: Number(payment.amount_mvr),
       currency: payment.currency,
-      payment_phone: meta?.payment_phone ?? null,
+      payment_phone: this.maskPhone(meta.payment_phone),
       line_items: lines,
       can_pay: payment.status === TicketPaymentStatus.PENDING,
       bml_checkout_url: `${this.customerLinkBase()}/payments/public/${encodeURIComponent(reference)}/bml`,
+    };
+  }
+
+  /**
+   * Called by the return page after BML redirects the customer back. Never trusts
+   * the redirect's query string: always re-reads the transaction from BML.
+   * Concurrent/rapid polls for the same reference share one gateway call.
+   */
+  verifyPublic(reference: string): Promise<PublicPaymentStatus> {
+    const now = Date.now();
+    const cached = this.publicVerifyCache.get(reference);
+    if (cached && now - cached.at < PUBLIC_VERIFY_COOLDOWN_MS) {
+      return cached.result;
+    }
+    if (this.publicVerifyCache.size > 5000) {
+      this.publicVerifyCache.clear();
+    }
+    const result = this.verifyPublicUncached(reference);
+    this.publicVerifyCache.set(reference, { at: now, result });
+    result.catch(() => this.publicVerifyCache.delete(reference));
+    return result;
+  }
+
+  private async verifyPublicUncached(
+    reference: string,
+  ): Promise<PublicPaymentStatus> {
+    const payment = await this.prisma.ticketPayment.findUnique({
+      where: { reference },
+    });
+    if (!payment) {
+      throw new NotFoundException('Payment not found');
+    }
+    if (
+      payment.status !== TicketPaymentStatus.CONFIRMED &&
+      payment.bml_transaction_id &&
+      this.bml.canUseGateway()
+    ) {
+      try {
+        await this.syncPayment(payment.id, 'return_page');
+      } catch (err) {
+        // The customer still sees the last known status; the reconciler retries.
+        this.logger.warn(
+          `Return-page verify failed for ${reference}: ${(err as Error).message}`,
+        );
+      }
+    }
+    return this.publicStatus(reference);
+  }
+
+  private async publicStatus(reference: string): Promise<PublicPaymentStatus> {
+    const payment = await this.prisma.ticketPayment.findUnique({
+      where: { reference },
+      include: { invoice: true, receipt: true },
+    });
+    if (!payment) {
+      throw new NotFoundException('Payment not found');
+    }
+    const paid = payment.status === TicketPaymentStatus.CONFIRMED;
+    return {
+      reference: payment.reference,
+      status: payment.status,
+      paid,
+      final: payment.status !== TicketPaymentStatus.PENDING,
+      invoice_number: payment.invoice?.invoice_number ?? null,
+      receipt_number: payment.receipt?.receipt_number ?? null,
+      amount_mvr: Number(payment.amount_mvr),
+      currency: payment.currency,
+      confirmed_at: payment.confirmed_at,
     };
   }
 
@@ -181,14 +348,16 @@ export class TicketPaymentService {
     const url = await this.ensureBmlCheckoutUrl(reference);
     if (!url || !this.isBmlHostedPayUrl(url)) {
       throw new BadRequestException(
-        'Unable to start Bank of Maldives payment. Ask your technician to resend the link.',
+        'This payment link is no longer active. Ask your technician to resend it.',
       );
     }
     return url;
   }
 
   /**
-   * Create or refresh BML checkout for a pending payment (SMS + public open link).
+   * Returns a payable BML URL for a pending payment. Reuses the existing BML
+   * transaction while it is still payable; only opens a new one when BML says the
+   * old one is closed. A gateway outage throws instead of creating a duplicate.
    */
   async ensureBmlCheckoutUrl(reference: string): Promise<string | null> {
     if (!this.bml.canUseGateway()) {
@@ -203,51 +372,30 @@ export class TicketPaymentService {
       return null;
     }
 
-    const meta = payment.metadata as { bml_pay_url?: string } | null;
-    if (
-      meta?.bml_pay_url &&
-      !this.isPublicOpenLink(meta.bml_pay_url) &&
-      !this.isMerchantReturnUrl(meta.bml_pay_url) &&
-      this.isBmlHostedPayUrl(meta.bml_pay_url)
-    ) {
-      return meta.bml_pay_url;
-    }
-
-    const stored = payment.payment_url?.trim();
-    if (
-      stored &&
-      !this.isPublicOpenLink(stored) &&
-      !this.isMerchantReturnUrl(stored) &&
-      this.isBmlHostedPayUrl(stored)
-    ) {
-      return stored;
-    }
-
     if (payment.bml_transaction_id) {
-      try {
-        const existing = await this.bml.getPaymentTransaction(
-          payment.bml_transaction_id,
-        );
-        const existingUrl = this.bml.pickPayUrl(existing);
-        if (existingUrl) {
-          await this.persistBmlCheckout(payment.id, existing, existingUrl);
-          return existingUrl;
+      const existing = await this.bml.getPaymentTransaction(
+        payment.bml_transaction_id,
+      );
+      if (this.bml.isPaymentConfirmed(existing.state)) {
+        await this.applyBmlTransaction(payment, existing, 'return_page');
+        return null;
+      }
+      if (!this.bml.isTerminalFailure(existing)) {
+        const url = this.bml.pickPayUrl(existing) ?? payment.payment_url;
+        if (url && this.isBmlHostedPayUrl(url)) {
+          await this.persistBmlCheckout(payment.id, existing, url);
+          return url;
         }
-      } catch {
-        // fall through to create
       }
     }
 
-    const amountMvr = Number(payment.amount_mvr);
     const invNo = payment.invoice?.invoice_number;
-    const customerRef = invNo
-      ? `Invoice ${invNo} — ${reference}`
-      : `Ticketify payment ${reference}`;
-
     const bmlTxn = await this.bml.createPaymentTransaction({
       localId: reference,
-      amountMvr,
-      customerReference: customerRef,
+      amountMvr: Number(payment.amount_mvr),
+      customerReference: invNo
+        ? `Invoice ${invNo} — ${reference}`
+        : `Ticketify payment ${reference}`,
       webhookUrl: this.webhookUrl(),
     });
     const payUrl = this.bml.pickPayUrl(bmlTxn);
@@ -260,11 +408,7 @@ export class TicketPaymentService {
 
   private async persistBmlCheckout(
     paymentId: string,
-    bmlTxn: {
-      id: string | null;
-      state: string;
-      raw: unknown;
-    },
+    bmlTxn: BmlTransactionView,
     payUrl: string,
   ) {
     const current = await this.prisma.ticketPayment.findUnique({
@@ -278,19 +422,14 @@ export class TicketPaymentService {
         bml_state: bmlTxn.state,
         payment_url: payUrl,
         metadata: {
-          ...((current?.metadata as object) ?? {}),
+          ...this.meta({ metadata: current?.metadata }),
           gateway_mode: 'bml',
           bml_pay_url: payUrl,
           awaiting_payment: true,
-          ...(bmlTxn.raw != null ? { bml: bmlTxn.raw as object } : {}),
-        },
+          bml: this.bml.toStored(bmlTxn),
+        } as Prisma.InputJsonValue,
       },
     });
-  }
-
-  private isPublicOpenLink(url: string | null | undefined): boolean {
-    if (!url?.trim()) return false;
-    return url.includes('/payments/public/') && url.includes('/open');
   }
 
   private escapeHtml(value: string): string {
@@ -298,7 +437,8 @@ export class TicketPaymentService {
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   private buildCustomerPayHtml(payment: {
@@ -310,6 +450,7 @@ export class TicketPaymentService {
   }): string {
     const inv = payment.invoice?.invoice_number ?? payment.reference;
     const total = Number(payment.amount_mvr).toFixed(2);
+    const paid = payment.status === TicketPaymentStatus.CONFIRMED;
     const lines = Array.isArray(payment.line_items)
       ? (payment.line_items as Array<{
           label?: string;
@@ -319,44 +460,47 @@ export class TicketPaymentService {
         }>)
       : [];
     const rows = lines
-      .map(l => {
-        const label = this.escapeHtml(l.label ?? l.code ?? 'Item');
-        const qty = l.quantity ?? 1;
-        const amt =
-          l.line_total_mvr != null
-            ? String(l.line_total_mvr)
-            : '—';
+      .map((l) => {
+        const label = this.escapeHtml(String(l.label ?? l.code ?? 'Item'));
+        const qty = this.escapeHtml(String(l.quantity ?? 1));
+        const amt = l.line_total_mvr != null ? String(l.line_total_mvr) : '—';
         return `<tr><td>${label}</td><td>${qty}</td><td style="text-align:right">${this.escapeHtml(amt)} MVR</td></tr>`;
       })
       .join('');
-    const status = this.escapeHtml(payment.status);
+    const tag = paid ? 'Paid' : 'Awaiting payment';
+    const note = paid
+      ? 'This invoice has been paid. Thank you.'
+      : 'Complete payment via the secure Bank of Maldives link sent to your mobile. If the link expired, ask your technician to resend it from Ticketify.';
     return `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="robots" content="noindex,nofollow"/>
 <title>Medianet payment — ${this.escapeHtml(inv)}</title>
 <style>
   body{font-family:system-ui,-apple-system,sans-serif;margin:0;background:#f4f6f8;color:#1a1a1a}
   .wrap{max-width:480px;margin:0 auto;padding:24px 16px}
   .card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.08)}
   h1{font-size:1.25rem;margin:0 0 4px}
-  .tag{color:#c62828;font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+  .tag{color:${paid ? '#2e7d32' : '#c62828'};font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
   table{width:100%;border-collapse:collapse;margin:16px 0;font-size:.9rem}
   td{padding:8px 0;border-bottom:1px solid #eee}
   .total{font-size:1.15rem;font-weight:700;margin-top:12px}
   .muted{color:#666;font-size:.85rem;line-height:1.45}
 </style></head><body><div class="wrap"><div class="card">
-<p class="tag">Awaiting payment</p>
+<p class="tag">${tag}</p>
 <h1>Invoice ${this.escapeHtml(inv)}</h1>
-<p class="muted">Reference ${this.escapeHtml(payment.reference)} · Status ${status}</p>
+<p class="muted">Reference ${this.escapeHtml(payment.reference)}</p>
 <table><tbody>${rows || '<tr><td colspan="3">Charge details on your SMS</td></tr>'}</tbody></table>
-<p class="total">Total due: ${total} MVR</p>
-<p class="muted">Complete payment via the secure Bank of Maldives link sent to your mobile. If the link expired, ask your technician to resend it from Ticketify.</p>
+<p class="total">${paid ? 'Total paid' : 'Total due'}: ${total} MVR</p>
+<p class="muted">${note}</p>
 </div></div></body></html>`;
   }
 
   async resolveCustomerPaymentOpen(
     reference: string,
-  ): Promise<{ kind: 'redirect'; url: string } | { kind: 'html'; html: string }> {
+  ): Promise<
+    { kind: 'redirect'; url: string } | { kind: 'html'; html: string }
+  > {
     const payment = await this.prisma.ticketPayment.findUnique({
       where: { reference },
       include: { invoice: true },
@@ -379,55 +523,50 @@ export class TicketPaymentService {
       if (bmlCheckout && this.isBmlHostedPayUrl(bmlCheckout)) {
         return { kind: 'redirect', url: bmlCheckout };
       }
-    }
-
-    const meta = payment.metadata as {
-      bml_pay_url?: string;
-      bml?: { url?: string; shortUrl?: string };
-    } | null;
-    const fromMeta =
-      meta?.bml_pay_url ||
-      meta?.bml?.shortUrl ||
-      meta?.bml?.url ||
-      null;
-    if (
-      fromMeta &&
-      !this.isPublicOpenLink(fromMeta) &&
-      !this.isMerchantReturnUrl(fromMeta) &&
-      this.isBmlHostedPayUrl(fromMeta)
-    ) {
-      return { kind: 'redirect', url: fromMeta };
-    }
-
-    const direct = payment.payment_url?.trim();
-    if (
-      direct &&
-      !this.isPublicOpenLink(direct) &&
-      !this.isMerchantReturnUrl(direct) &&
-      this.isBmlHostedPayUrl(direct)
-    ) {
-      return { kind: 'redirect', url: direct };
+      const refreshed = await this.prisma.ticketPayment.findUnique({
+        where: { reference },
+        include: { invoice: true },
+      });
+      return {
+        kind: 'html',
+        html: this.buildCustomerPayHtml(refreshed ?? payment),
+      };
     }
 
     return { kind: 'html', html: this.buildCustomerPayHtml(payment) };
   }
 
-  private webhookUrl(): string | undefined {
-    const configured = this.config.get<string>('BML_WEBHOOK_URL');
-    if (configured?.trim()) return configured.trim();
-    const publicBase = this.config.get<string>('PUBLIC_API_BASE_URL');
-    if (publicBase?.trim()) {
-      return `${publicBase.replace(/\/$/, '')}/api/v1/payments/webhooks/bml`;
+  // ---------------------------------------------------------------------------
+  // Staff endpoints
+  // ---------------------------------------------------------------------------
+
+  /** Strips gateway payloads before payment rows leave the API. */
+  private toStaffView<T extends { metadata: unknown }>(payment: T): T {
+    const meta = { ...this.meta(payment) };
+    if (meta.bml && !('checked_at' in meta.bml)) {
+      delete meta.bml;
     }
-    return undefined;
+    return { ...payment, metadata: meta };
   }
 
   async listForTicket(crmTicketId: string) {
-    return this.prisma.ticketPayment.findMany({
+    const rows = await this.prisma.ticketPayment.findMany({
       where: { crm_ticket_id: crmTicketId },
       orderBy: { created_at: 'desc' },
       include: { receipt: true, invoice: true },
     });
+    return rows.map((row) => this.toStaffView(row));
+  }
+
+  async getByReference(reference: string) {
+    const payment = await this.prisma.ticketPayment.findUnique({
+      where: { reference },
+      include: { invoice: true, receipt: true },
+    });
+    if (!payment) {
+      throw new NotFoundException('Payment not found');
+    }
+    return this.toStaffView(payment);
   }
 
   private defaultPhoneFromSr(srData: {
@@ -451,7 +590,11 @@ export class TicketPaymentService {
       }
       return defaultPhone;
     }
-    if (defaultPhone && requested !== defaultPhone && !dto.phone_override_confirmed) {
+    if (
+      defaultPhone &&
+      requested !== defaultPhone &&
+      !dto.phone_override_confirmed
+    ) {
       throw new BadRequestException(
         'Confirm override when using a different payment mobile number',
       );
@@ -461,29 +604,151 @@ export class TicketPaymentService {
 
   private lineItemsFromDto(dto: CreateTicketPaymentDto): ChargeLineInput[] {
     if (dto.items?.length) {
-      return dto.items.map(i => ({ code: i.code, quantity: i.quantity }));
+      return dto.items.map((i) => ({ code: i.code, quantity: i.quantity }));
     }
     if (dto.charge_codes?.length) {
-      return dto.charge_codes.map(code => ({ code, quantity: 1 }));
+      return dto.charge_codes.map((code) => ({ code, quantity: 1 }));
     }
     return [];
   }
 
-  private async postCrmChargeNote(crmTicketId: string, note: string) {
+  /** Resolves true only when the CRM accepted the note. */
+  private async postCrmChargeNote(
+    crmTicketId: string,
+    note: string,
+  ): Promise<boolean> {
     const base = this.config.get<string>('CRM_BACKOFFICE_API_URL') ?? '';
+    if (!base) return false;
     try {
-      await fetch(`${base.replace(/\/$/, '')}/service_requests/${crmTicketId}/notes`, {
-        method: 'POST',
-        headers: {
-          api_key: this.config.get('CRM_API_KEY') ?? '',
-          accept: 'application/json',
-          'Content-Type': 'application/json',
+      const res = await fetch(
+        `${base.replace(/\/$/, '')}/service_requests/${encodeURIComponent(crmTicketId)}/notes`,
+        {
+          method: 'POST',
+          headers: {
+            api_key: this.config.get('CRM_API_KEY') ?? '',
+            accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ note, pinned: false }),
+          signal: AbortSignal.timeout(15000),
         },
-        body: JSON.stringify({ note, pinned: false }),
-      });
-    } catch {
-      // CRM note is best-effort; invoice remains in Ticketify
+      );
+      if (!res.ok) {
+        this.logger.warn(
+          `CRM note for ${crmTicketId} rejected (${res.status})`,
+        );
+      }
+      return res.ok;
+    } catch (err) {
+      this.logger.warn(
+        `CRM note for ${crmTicketId} failed: ${(err as Error).message}`,
+      );
+      return false;
     }
+  }
+
+  private formatMvr(value: unknown): string {
+    return `MVR ${Number(value ?? 0).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+
+  private buildPaymentReceivedNote(payment: {
+    reference: string;
+    amount_mvr: unknown;
+    subtotal_mvr: unknown;
+    tax_mvr: unknown;
+    line_items: unknown;
+    confirmed_at: Date | null;
+    invoice?: { invoice_number: string } | null;
+    receipt?: { receipt_number: string } | null;
+  }): string {
+    const lines = Array.isArray(payment.line_items)
+      ? (payment.line_items as Array<{
+          label?: string;
+          code?: string;
+          quantity?: number;
+          line_total_mvr?: string | number;
+        }>)
+      : [];
+    const items = lines.length
+      ? lines
+          .map((l) => {
+            const name = l.label ?? l.code ?? 'Item';
+            const total =
+              l.line_total_mvr != null
+                ? ` (${this.formatMvr(l.line_total_mvr)})`
+                : '';
+            return `${name} × ${l.quantity ?? 1}${total}`;
+          })
+          .join(', ')
+      : 'See invoice';
+    const paidAt = (payment.confirmed_at ?? new Date()).toLocaleString(
+      'en-GB',
+      {
+        timeZone: 'Indian/Maldives',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      },
+    );
+
+    return [
+      `Ticketify payment received — customer paid ${this.formatMvr(payment.amount_mvr)} via Bank of Maldives.`,
+      `Items: ${items}.`,
+      `Subtotal ${this.formatMvr(payment.subtotal_mvr)} + GST ${this.formatMvr(payment.tax_mvr)} = Total ${this.formatMvr(payment.amount_mvr)}.`,
+      [
+        payment.invoice ? `Invoice ${payment.invoice.invoice_number}` : null,
+        payment.receipt ? `Receipt ${payment.receipt.receipt_number}` : null,
+        `Paid ${paidAt}`,
+        `Ref ${payment.reference}`,
+      ]
+        .filter(Boolean)
+        .join(' · ') + '.',
+    ].join(' ');
+  }
+
+  /**
+   * Posts the "customer paid" note on the CRM ticket once. Marked as posted only
+   * after the CRM accepts it, so the reconciler can retry failures.
+   */
+  async postPaymentReceivedNote(paymentId: string): Promise<boolean> {
+    const payment = await this.prisma.ticketPayment.findUnique({
+      where: { id: paymentId },
+      include: { invoice: true, receipt: true },
+    });
+    if (!payment || payment.status !== TicketPaymentStatus.CONFIRMED)
+      return false;
+    if (
+      (payment.metadata as { crm_paid_note_at?: string } | null)
+        ?.crm_paid_note_at
+    ) {
+      return true;
+    }
+
+    const ok = await this.postCrmChargeNote(
+      payment.crm_ticket_id,
+      this.buildPaymentReceivedNote(payment),
+    );
+    if (!ok) return false;
+
+    const fresh = await this.prisma.ticketPayment.findUnique({
+      where: { id: paymentId },
+      select: { metadata: true },
+    });
+    await this.prisma.ticketPayment.update({
+      where: { id: paymentId },
+      data: {
+        metadata: {
+          ...this.meta({ metadata: fresh?.metadata }),
+          crm_paid_note_at: new Date().toISOString(),
+        } as Prisma.InputJsonValue,
+      },
+    });
+    return true;
   }
 
   private async sendPaymentSms(input: {
@@ -509,6 +774,82 @@ export class TicketPaymentService {
     await this.sms.publishSMS({ phone: input.phone, message });
   }
 
+  /**
+   * Before a new charge is issued, every open link for the ticket is checked
+   * with BML. A paid one blocks the new charge (no double billing); unpaid ones
+   * are retired. Retired links stay under reconciler watch until BML expires
+   * them, so a late payment on an old link is still recorded.
+   */
+  private async supersedePendingPayments(
+    crmTicketId: string,
+    keepInvoiceId: string | undefined,
+    actorUserId: string | undefined,
+  ) {
+    const pending = await this.prisma.ticketPayment.findMany({
+      where: {
+        crm_ticket_id: crmTicketId,
+        status: TicketPaymentStatus.PENDING,
+      },
+      include: { invoice: true },
+    });
+
+    for (const old of pending) {
+      if (old.bml_transaction_id && this.bml.canUseGateway()) {
+        let synced: TicketPayment | null;
+        try {
+          synced = await this.syncPayment(old.id, 'supersede', actorUserId);
+        } catch {
+          throw new ServiceUnavailableException(
+            'Could not confirm the earlier payment link with the bank. Try again in a moment.',
+          );
+        }
+        if (synced?.status === TicketPaymentStatus.CONFIRMED) {
+          throw new BadRequestException(
+            `The customer has already paid invoice ${old.invoice?.invoice_number ?? old.reference}. Refresh billing.`,
+          );
+        }
+      }
+
+      const claimed = await this.prisma.ticketPayment.updateMany({
+        where: { id: old.id, status: TicketPaymentStatus.PENDING },
+        data: {
+          status: TicketPaymentStatus.CANCELLED,
+          metadata: {
+            ...this.meta(old),
+            awaiting_payment: false,
+            superseded_at: new Date().toISOString(),
+          } as Prisma.InputJsonValue,
+        },
+      });
+      if (claimed.count === 0) continue;
+
+      if (
+        old.invoice_id &&
+        old.invoice_id !== keepInvoiceId &&
+        old.invoice?.status !== TicketInvoiceStatus.PAID
+      ) {
+        await this.prisma.ticketInvoice.updateMany({
+          where: {
+            id: old.invoice_id,
+            status: { not: TicketInvoiceStatus.PAID },
+          },
+          data: { status: TicketInvoiceStatus.VOID },
+        });
+      }
+
+      void this.audit
+        .log({
+          entity_type: 'ticket_payment',
+          entity_id: old.id,
+          action: 'PAYMENT_SUPERSEDED',
+          actor_user_id: actorUserId,
+          new_state: { reference: old.reference },
+          crm_sync_ok: true,
+        })
+        .catch(() => undefined);
+    }
+  }
+
   async initiateForTicket(
     crmTicketId: string,
     dto: CreateTicketPaymentDto,
@@ -524,7 +865,12 @@ export class TicketPaymentService {
     };
 
     if (dto.resend_sms) {
-      return this.resendPendingPaymentSms(crmTicketId, dto, createdByUserId, srData);
+      return this.resendPendingPaymentSms(
+        crmTicketId,
+        dto,
+        createdByUserId,
+        srData,
+      );
     }
 
     if (!this.bml.canUseGateway() && !this.bml.allowInvoiceWithoutGateway()) {
@@ -533,12 +879,20 @@ export class TicketPaymentService {
       );
     }
 
+    const paymentPhone = this.resolvePaymentPhone(srData, dto);
+
     if (createdByUserId) {
       await this.billing.markChargeableAfterPaymentInit(
         crmTicketId,
         createdByUserId,
       );
     }
+
+    await this.supersedePendingPayments(
+      crmTicketId,
+      dto.invoice_id,
+      createdByUserId,
+    );
 
     const lineInputs = this.lineItemsFromDto(dto);
     const invoice = dto.invoice_id
@@ -553,21 +907,22 @@ export class TicketPaymentService {
     if (invoice.crm_ticket_id !== crmTicketId) {
       throw new BadRequestException('Invoice does not belong to this ticket');
     }
-    if (invoice.status === 'PAID') {
+    if (invoice.status === TicketInvoiceStatus.PAID) {
       throw new BadRequestException('Invoice is already paid');
     }
-    if (invoice.status === 'VOID') {
+    if (invoice.status === TicketInvoiceStatus.VOID) {
       throw new BadRequestException('Invoice is void');
     }
 
     const amountMvr = Number(invoice.total_mvr);
+    if (!Number.isFinite(amountMvr) || amountMvr <= 0) {
+      throw new BadRequestException('Invoice total must be greater than zero');
+    }
     const lineItems = invoice.line_items;
     const reference = this.buildReference();
     const customerRef =
       dto.customer_reference ??
       `Invoice ${invoice.invoice_number} — SR ${srData?.number ?? crmTicketId}`;
-
-    const paymentPhone = this.resolvePaymentPhone(srData, dto);
 
     const payment = await this.prisma.ticketPayment.create({
       data: {
@@ -588,11 +943,7 @@ export class TicketPaymentService {
       },
     });
 
-    const smsLink = this.customerOpenUrl(reference);
-    let bmlTxn: Awaited<
-      ReturnType<BmlPaymentService['createPaymentTransaction']>
-    > | null = null;
-    let paymentUrl: string;
+    let bmlTxn: BmlTransactionView | null = null;
     let gatewayMode: 'bml' | 'invoice_only' = 'bml';
 
     if (this.bml.canUseGateway()) {
@@ -603,40 +954,57 @@ export class TicketPaymentService {
           customerReference: customerRef,
           webhookUrl: this.webhookUrl(),
         });
+        if (!this.bml.pickPayUrl(bmlTxn)) {
+          throw new BadRequestException('BML did not return a payment URL');
+        }
       } catch (err) {
         await this.prisma.ticketPayment.update({
           where: { id: payment.id },
           data: {
             status: TicketPaymentStatus.FAILED,
-            metadata: { error: String(err), payment_phone: paymentPhone },
+            bml_transaction_id: bmlTxn?.id ?? null,
+            metadata: {
+              payment_phone: paymentPhone,
+              awaiting_payment: false,
+              error: (err as Error).message ?? String(err),
+            },
           },
         });
         throw err;
       }
-      const bmlDirect = this.bml.pickPayUrl(bmlTxn);
-      if (!bmlDirect) {
-        throw new BadRequestException('BML did not return a payment URL');
-      }
-      paymentUrl = bmlDirect;
     } else {
       gatewayMode = 'invoice_only';
-      paymentUrl = '';
     }
-
-    const resolved = await this.chargeCatalog.resolveLines(lineInputs);
-    const itemsText = this.chargeCatalog.formatLinesForSms(resolved.lines);
 
     const bmlPayUrl = bmlTxn ? this.bml.pickPayUrl(bmlTxn) : null;
     const linkForSms = this.normalizeSmsPaymentUrl(
-      this.smsPaymentUrl({
-        reference,
-        bmlPayUrl,
-        gatewayMode,
-      }),
+      this.smsPaymentUrl({ reference, bmlPayUrl, gatewayMode }),
     );
     if (gatewayMode !== 'bml') {
       this.assertSmsLinkReachable(linkForSms);
     }
+
+    // Persist the BML transaction before anything else can fail, so a payment
+    // made on this link can always be matched back to the ticket.
+    await this.prisma.ticketPayment.update({
+      where: { id: payment.id },
+      data: {
+        bml_transaction_id: bmlTxn?.id ?? null,
+        bml_state: bmlTxn?.state ?? 'PENDING',
+        payment_url: bmlPayUrl,
+        metadata: {
+          payment_phone: paymentPhone,
+          awaiting_payment: true,
+          gateway_mode: gatewayMode,
+          sms_link: linkForSms,
+          ...(bmlPayUrl ? { bml_pay_url: bmlPayUrl } : {}),
+          ...(bmlTxn ? { bml: this.bml.toStored(bmlTxn) } : {}),
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    const resolved = await this.chargeCatalog.resolveLines(lineInputs);
+    const itemsText = this.chargeCatalog.formatLinesForSms(resolved.lines);
 
     await this.sendPaymentSms({
       phone: paymentPhone,
@@ -647,53 +1015,37 @@ export class TicketPaymentService {
       paymentUrl: linkForSms,
     });
 
-    await this.prisma.ticketPayment.update({
-      where: { id: payment.id },
-      data: {
-        bml_transaction_id: bmlTxn?.id ?? null,
-        bml_state: bmlTxn?.state ?? 'PENDING',
-        payment_url: paymentUrl || null,
-        metadata: {
-          payment_phone: paymentPhone,
-          awaiting_payment: true,
-          gateway_mode: gatewayMode,
-          sms_link: linkForSms,
-          ...(gatewayMode === 'bml' && bmlPayUrl ? {bml_pay_url: bmlPayUrl} : {}),
-          ...(bmlTxn?.raw != null ? {bml: bmlTxn.raw as object} : {}),
-        },
-      },
-    });
-
     const crmNote = [
       'Ticketify charge — awaiting payment.',
       `Items: ${itemsText}.`,
       `Invoice ${invoice.invoice_number}. Total MVR ${amountMvr.toFixed(2)} (incl. tax).`,
-      `Payment link sent to ${paymentPhone}. Status: AWAITING_PAYMENT.`,
+      `Payment link sent to ${this.maskPhone(paymentPhone)}. Status: AWAITING_PAYMENT.`,
     ].join(' ');
 
     void this.postCrmChargeNote(crmTicketId, crmNote);
 
-    void this.audit.log({
-      entity_type: 'ticket_payment',
-      entity_id: payment.id,
-      action:
-        gatewayMode === 'bml'
-          ? 'BML_PAYMENT_INITIATED'
-          : 'INVOICE_PAYMENT_SMS_SENT',
-      actor_user_id: createdByUserId,
-      new_state: {
-        reference,
-        invoice_number: invoice.invoice_number,
-        payment_phone: paymentPhone,
-        phone_override: paymentPhone !== this.defaultPhoneFromSr(srData),
-        items: itemsText,
-        payment_url: paymentUrl || null,
-      },
-      crm_sync_ok: true,
-    }).catch(() => undefined);
+    void this.audit
+      .log({
+        entity_type: 'ticket_payment',
+        entity_id: payment.id,
+        action:
+          gatewayMode === 'bml'
+            ? 'BML_PAYMENT_INITIATED'
+            : 'INVOICE_PAYMENT_SMS_SENT',
+        actor_user_id: createdByUserId,
+        new_state: {
+          reference,
+          invoice_number: invoice.invoice_number,
+          amount_mvr: amountMvr,
+          bml_transaction_id: bmlTxn?.id ?? null,
+          phone_override: paymentPhone !== this.defaultPhoneFromSr(srData),
+          items: itemsText,
+        },
+        crm_sync_ok: true,
+      })
+      .catch(() => undefined);
 
-    const linkReachable =
-      !/localhost|127\.0\.0\.1|10\.0\.2\.2/i.test(linkForSms);
+    const linkReachable = !this.isLocalUrl(linkForSms);
 
     return {
       reference,
@@ -707,7 +1059,7 @@ export class TicketPaymentService {
       currency: 'MVR',
       status: TicketPaymentStatus.PENDING,
       awaiting_payment: true,
-      payment_url: paymentUrl,
+      payment_url: bmlPayUrl ?? '',
       qr_image_url: bmlTxn?.qrImageUrl ?? null,
       bml_transaction_id: bmlTxn?.id ?? null,
       gateway_mode: gatewayMode,
@@ -742,35 +1094,40 @@ export class TicketPaymentService {
     if (!pending) {
       throw new BadRequestException('No pending payment to resend');
     }
-    const metaPending = pending.metadata as { sms_link?: string } | null;
-    if (!pending.payment_url && !metaPending?.sms_link) {
+    const meta = this.meta(pending);
+    if (!pending.payment_url && !meta.sms_link) {
       throw new BadRequestException('No pending payment link to resend');
     }
 
     let bmlPayUrl: string | null = null;
     if (this.bml.canUseGateway()) {
       bmlPayUrl = await this.ensureBmlCheckoutUrl(pending.reference);
+      const refreshed = await this.prisma.ticketPayment.findUnique({
+        where: { id: pending.id },
+      });
+      if (refreshed?.status === TicketPaymentStatus.CONFIRMED) {
+        throw new BadRequestException(
+          'The customer has already paid. Refresh billing.',
+        );
+      }
     }
 
     const paymentPhone = this.resolvePaymentPhone(srData, dto);
-    const lineItems = pending.line_items as any[];
+    const lineItems = Array.isArray(pending.line_items)
+      ? (pending.line_items as Array<{ code: string; quantity?: number }>)
+      : [];
     const resolved = await this.chargeCatalog.resolveLines(
-      lineItems.map(l => ({ code: l.code, quantity: l.quantity ?? 1 })),
+      lineItems.map((l) => ({ code: l.code, quantity: l.quantity ?? 1 })),
     );
     const itemsText = this.chargeCatalog.formatLinesForSms(resolved.lines);
 
-    const meta = pending.metadata as {
-      sms_link?: string;
-      gateway_mode?: 'bml' | 'invoice_only';
-      bml_pay_url?: string;
-    } | null;
     const gatewayMode =
-      bmlPayUrl || meta?.bml_pay_url
+      bmlPayUrl || meta.bml_pay_url
         ? 'bml'
-        : (meta?.gateway_mode ?? 'invoice_only');
+        : meta.gateway_mode ?? 'invoice_only';
     const resolvedBmlPay =
       (bmlPayUrl && this.isBmlHostedPayUrl(bmlPayUrl) ? bmlPayUrl : null) ||
-      (meta?.bml_pay_url && this.isBmlHostedPayUrl(meta.bml_pay_url)
+      (meta.bml_pay_url && this.isBmlHostedPayUrl(meta.bml_pay_url)
         ? meta.bml_pay_url
         : null);
     const linkForSms = this.normalizeSmsPaymentUrl(
@@ -793,56 +1150,70 @@ export class TicketPaymentService {
       paymentUrl: linkForSms,
     });
 
-    void this.audit.log({
-      entity_type: 'ticket_payment',
-      entity_id: pending.id,
-      action: 'BML_PAYMENT_SMS_RESENT',
-      actor_user_id: createdByUserId,
-      new_state: { payment_phone: paymentPhone, reference: pending.reference },
-      crm_sync_ok: true,
-    });
+    void this.audit
+      .log({
+        entity_type: 'ticket_payment',
+        entity_id: pending.id,
+        action: 'BML_PAYMENT_SMS_RESENT',
+        actor_user_id: createdByUserId,
+        new_state: { reference: pending.reference },
+        crm_sync_ok: true,
+      })
+      .catch(() => undefined);
 
     return {
       reference: pending.reference,
-      payment_url: pending.payment_url,
+      payment_url: resolvedBmlPay ?? pending.payment_url,
       sms_sent: true,
       resent: true,
     };
   }
 
-  async getByReference(reference: string) {
+  async reconcile(reference: string, actorUserId?: string) {
     const payment = await this.prisma.ticketPayment.findUnique({
       where: { reference },
-      include: { invoice: true, receipt: true },
     });
     if (!payment) {
       throw new NotFoundException('Payment not found');
     }
-    return payment;
-  }
-
-  async reconcile(reference: string, actorUserId?: string) {
-    const payment = await this.getByReference(reference);
     if (payment.status === TicketPaymentStatus.CONFIRMED) {
-      return { ...payment, already_confirmed: true };
+      await this.finalizeConfirmed(payment.id, {
+        announce: false,
+        repair: true,
+      });
+      const view = await this.getByReference(reference);
+      return { ...view, already_confirmed: true, payment_status: 'confirmed' };
     }
 
-    let bmlId = payment.bml_transaction_id;
-    if (!bmlId) {
-      await this.ensureBmlCheckoutUrl(reference);
+    if (!payment.bml_transaction_id) {
+      if (payment.status === TicketPaymentStatus.PENDING) {
+        await this.ensureBmlCheckoutUrl(reference);
+      }
       const refreshed = await this.getByReference(reference);
-      bmlId = refreshed.bml_transaction_id;
-    }
-    if (!bmlId) {
-      return {
-        ...payment,
-        pending: true,
-        message: 'Payment not initiated at BML',
-      };
+      if (!refreshed.bml_transaction_id) {
+        return {
+          ...refreshed,
+          pending: true,
+          message: 'Payment not initiated at BML',
+        };
+      }
     }
 
-    return this.syncFromBml(bmlId, reference, actorUserId);
+    const synced = await this.syncPayment(payment.id, 'staff', actorUserId);
+    const view = await this.getByReference(reference);
+    return {
+      ...view,
+      handled: true,
+      bml_state: synced?.bml_state ?? view.bml_state,
+      ...(view.status === TicketPaymentStatus.CONFIRMED
+        ? { payment_status: 'confirmed' }
+        : {}),
+    };
   }
+
+  // ---------------------------------------------------------------------------
+  // Webhook + sync core
+  // ---------------------------------------------------------------------------
 
   async processWebhook(
     payload: Record<string, unknown>,
@@ -868,116 +1239,293 @@ export class TicketPaymentService {
       (payload.local_id as string) ||
       ((payload.transaction as { localId?: string })?.localId ?? null);
 
-    if (transactionId) {
-      return this.syncFromBml(transactionId, localId ?? undefined);
-    }
-
-    if (localId) {
-      const payment = await this.prisma.ticketPayment.findUnique({
-        where: { reference: localId },
-      });
-      if (!payment?.bml_transaction_id) {
-        return { handled: false, reason: 'payment_not_found' };
-      }
-      return this.syncFromBml(payment.bml_transaction_id, localId);
-    }
-
-    return { handled: false, reason: 'missing_identifiers' };
-  }
-
-  private async syncFromBml(
-    bmlTransactionId: string,
-    localId?: string,
-    actorUserId?: string,
-  ) {
-    const bmlTxn = await this.bml.getPaymentTransaction(bmlTransactionId);
+    // The webhook is only a trigger: the payment is matched to OUR records and
+    // the state is re-read from BML, so a forged body cannot confirm anything.
     const payment = localId
-      ? await this.prisma.ticketPayment.findUnique({ where: { reference: localId } })
-      : await this.prisma.ticketPayment.findFirst({
-          where: { bml_transaction_id: bmlTransactionId },
-        });
+      ? await this.prisma.ticketPayment.findUnique({
+          where: { reference: String(localId) },
+        })
+      : transactionId
+        ? await this.prisma.ticketPayment.findFirst({
+            where: { bml_transaction_id: String(transactionId) },
+          })
+        : null;
 
     if (!payment) {
-      return { handled: false, reason: 'payment_not_found', bml_state: bmlTxn.state };
+      return { received: true, handled: false, reason: 'payment_not_found' };
     }
+
+    try {
+      const synced = await this.syncPayment(payment.id, 'webhook');
+      return { received: true, handled: true, status: synced?.status };
+    } catch (err) {
+      // Acknowledge anyway; the reconciler picks it up on its next pass.
+      this.logger.error(
+        `Webhook sync failed for ${payment.reference}: ${(err as Error).message}`,
+      );
+      return { received: true, handled: false, reason: 'sync_deferred' };
+    }
+  }
+
+  /** Re-reads the payment's BML transaction and applies it. */
+  async syncPayment(
+    paymentId: string,
+    source: SyncSource,
+    actorUserId?: string,
+  ): Promise<TicketPayment | null> {
+    const payment = await this.prisma.ticketPayment.findUnique({
+      where: { id: paymentId },
+    });
+    if (!payment?.bml_transaction_id) {
+      return payment;
+    }
+    const txn = await this.bml.getPaymentTransaction(
+      payment.bml_transaction_id,
+    );
+    return this.applyBmlTransaction(payment, txn, source, actorUserId);
+  }
+
+  private mismatchReason(
+    payment: TicketPayment,
+    txn: BmlTransactionView,
+  ): string | null {
+    if (!txn.localId || txn.localId !== payment.reference) {
+      return `localId mismatch (bml=${txn.localId ?? 'none'})`;
+    }
+    const expectedMinor = this.bml.toMinorUnits(Number(payment.amount_mvr));
+    const bmlMinor = txn.amount == null ? NaN : Math.round(Number(txn.amount));
+    if (!Number.isFinite(bmlMinor) || bmlMinor !== expectedMinor) {
+      return `amount mismatch (expected=${expectedMinor}, bml=${txn.amount ?? 'none'})`;
+    }
+    if (
+      txn.currency &&
+      txn.currency.toUpperCase() !== String(payment.currency).toUpperCase()
+    ) {
+      return `currency mismatch (expected=${payment.currency}, bml=${txn.currency})`;
+    }
+    if (!txn.currency) {
+      return 'currency missing in BML response';
+    }
+    return null;
+  }
+
+  /**
+   * Single place where a payment's status changes based on BML. Confirmation is
+   * an atomic compare-and-set, so concurrent webhook / return page / reconciler /
+   * staff calls produce exactly one receipt, one CRM note and one audit entry.
+   */
+  private async applyBmlTransaction(
+    payment: TicketPayment,
+    txn: BmlTransactionView,
+    source: SyncSource,
+    actorUserId?: string,
+  ): Promise<TicketPayment | null> {
+    const stored = this.bml.toStored(txn);
+    const baseMeta = this.meta(payment);
+    const checkedMeta = {
+      ...baseMeta,
+      bml: stored,
+      last_bml_check_at: stored.checked_at,
+    };
 
     if (payment.status === TicketPaymentStatus.CONFIRMED) {
-      return { handled: true, reference: payment.reference, status: payment.status };
+      return payment;
     }
 
-    const expectedMinor = this.bml.toMinorUnits(Number(payment.amount_mvr));
-    const bmlMinor = Math.round(Number(bmlTxn.amount));
-    if (
-      Number.isFinite(bmlMinor) &&
-      bmlMinor > 0 &&
-      bmlMinor !== expectedMinor
-    ) {
-      throw new BadRequestException('BML amount does not match pending payment');
-    }
-
-    if (bmlTxn.localId && bmlTxn.localId !== payment.reference) {
-      throw new BadRequestException('BML localId does not match payment reference');
-    }
-
-    let status: TicketPaymentStatus = payment.status;
-    if (this.bml.isPaymentConfirmed(bmlTxn.state)) {
-      status = TicketPaymentStatus.CONFIRMED;
-    } else if (this.bml.isPaymentFailed(bmlTxn.state)) {
-      status = TicketPaymentStatus.FAILED;
-    }
-
-    const updated = await this.prisma.ticketPayment.update({
-      where: { id: payment.id },
-      data: {
-        status,
-        bml_state: bmlTxn.state,
-        bml_transaction_id: bmlTxn.id ?? payment.bml_transaction_id,
-        confirmed_at:
-          status === TicketPaymentStatus.CONFIRMED ? new Date() : null,
-        payment_url: bmlTxn.shortUrl || bmlTxn.url || payment.payment_url,
-        metadata: {
-          ...(payment.metadata as object),
-          awaiting_payment: status === TicketPaymentStatus.PENDING,
-        },
-      },
-    });
-
-    if (status === TicketPaymentStatus.CONFIRMED) {
-      let receipt = null;
-      let invoiceNumber = payment.reference;
-      if (payment.invoice_id) {
-        const invoice = await this.invoices.markPaid(payment.invoice_id);
-        invoiceNumber = invoice.invoice_number;
-        receipt = await this.receipts.issueForPayment(invoice, updated);
+    if (this.bml.isPaymentConfirmed(txn.state)) {
+      const mismatch = this.mismatchReason(payment, txn);
+      if (mismatch) {
+        await this.prisma.ticketPayment.update({
+          where: { id: payment.id },
+          data: {
+            bml_state: txn.state,
+            metadata: {
+              ...checkedMeta,
+              review_required: true,
+              review_reason: mismatch,
+            } as Prisma.InputJsonValue,
+          },
+        });
+        if (!baseMeta.review_required) {
+          this.logger.error(
+            `BML confirmation rejected for ${payment.reference}: ${mismatch}`,
+          );
+          await this.audit
+            .log({
+              entity_type: 'ticket_payment',
+              entity_id: payment.id,
+              action: 'BML_PAYMENT_MISMATCH',
+              actor_user_id: actorUserId,
+              new_state: {
+                reference: payment.reference,
+                reason: mismatch,
+                source,
+              },
+              crm_sync_ok: false,
+              idempotency_key: `bml-mismatch:${payment.reference}`,
+            })
+            .catch(() => undefined);
+        }
+        return this.prisma.ticketPayment.findUnique({
+          where: { id: payment.id },
+        });
       }
 
-      const confirmNote = `Customer charged (Ticketify). Invoice ${invoiceNumber}. Total MVR ${Number(payment.amount_mvr).toFixed(2)}. Payment confirmed. Ref: ${payment.reference}.`;
-      await this.postCrmChargeNote(payment.crm_ticket_id, confirmNote);
+      const wasActive = payment.status === TicketPaymentStatus.PENDING;
+      const claim = await this.prisma.ticketPayment.updateMany({
+        where: {
+          id: payment.id,
+          status: { not: TicketPaymentStatus.CONFIRMED },
+        },
+        data: {
+          status: TicketPaymentStatus.CONFIRMED,
+          confirmed_at: new Date(),
+          bml_state: txn.state,
+          bml_transaction_id: txn.id ?? payment.bml_transaction_id,
+          metadata: {
+            ...checkedMeta,
+            awaiting_payment: false,
+            confirmed_via: source,
+            ...(wasActive
+              ? {}
+              : {
+                  review_required: true,
+                  review_reason: `Paid after the link was ${payment.status.toLowerCase()} — check for a duplicate charge`,
+                }),
+          } as Prisma.InputJsonValue,
+        },
+      });
 
-      await this.audit.log({
+      await this.finalizeConfirmed(payment.id, {
+        announce: claim.count === 1,
+        source,
+        actorUserId,
+      });
+      return this.prisma.ticketPayment.findUnique({
+        where: { id: payment.id },
+      });
+    }
+
+    if (
+      payment.status === TicketPaymentStatus.PENDING &&
+      this.bml.isTerminalFailure(txn)
+    ) {
+      await this.prisma.ticketPayment.updateMany({
+        where: { id: payment.id, status: TicketPaymentStatus.PENDING },
+        data: {
+          status: this.bml.isClosedState(txn.state)
+            ? TicketPaymentStatus.CANCELLED
+            : TicketPaymentStatus.FAILED,
+          bml_state: txn.state,
+          metadata: {
+            ...checkedMeta,
+            awaiting_payment: false,
+          } as Prisma.InputJsonValue,
+        },
+      });
+      void this.audit
+        .log({
+          entity_type: 'ticket_payment',
+          entity_id: payment.id,
+          action: 'BML_PAYMENT_CLOSED',
+          actor_user_id: actorUserId,
+          new_state: {
+            reference: payment.reference,
+            bml_state: txn.state,
+            source,
+          },
+          crm_sync_ok: true,
+          idempotency_key: `bml-closed:${payment.reference}:${txn.state}`,
+        })
+        .catch(() => undefined);
+      return this.prisma.ticketPayment.findUnique({
+        where: { id: payment.id },
+      });
+    }
+
+    return this.prisma.ticketPayment.update({
+      where: { id: payment.id },
+      data: {
+        bml_state: txn.state,
+        metadata: checkedMeta as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  /**
+   * Idempotent post-confirmation work: invoice → PAID and receipt issued.
+   * Only the caller that won the confirmation (`announce`) or an explicit
+   * `repair` issues the receipt and the "customer paid" note, so racing callers
+   * don't burn receipt numbers or post twice. The audit fires only for the winner.
+   */
+  async finalizeConfirmed(
+    paymentId: string,
+    opts: {
+      announce: boolean;
+      repair?: boolean;
+      source?: SyncSource;
+      actorUserId?: string;
+    },
+  ) {
+    const payment = await this.prisma.ticketPayment.findUnique({
+      where: { id: paymentId },
+      include: { invoice: true, receipt: true },
+    });
+    if (!payment || payment.status !== TicketPaymentStatus.CONFIRMED) return;
+
+    let receipt = payment.receipt;
+    if (payment.invoice_id && payment.invoice) {
+      await this.prisma.ticketInvoice.updateMany({
+        where: {
+          id: payment.invoice_id,
+          status: { not: TicketInvoiceStatus.PAID },
+        },
+        data: {
+          status: TicketInvoiceStatus.PAID,
+          paid_at: payment.confirmed_at ?? new Date(),
+        },
+      });
+      const invoice = await this.invoices.getById(payment.invoice_id);
+      if (!receipt && (opts.announce || opts.repair)) {
+        try {
+          receipt = await this.receipts.issueForPayment(invoice, payment);
+        } catch (err) {
+          if (
+            err instanceof Prisma.PrismaClientKnownRequestError &&
+            err.code === 'P2002'
+          ) {
+            receipt = await this.prisma.ticketReceipt.findUnique({
+              where: { payment_id: payment.id },
+            });
+          } else {
+            throw err;
+          }
+        }
+      }
+    }
+
+    if (opts.announce || opts.repair) {
+      await this.postPaymentReceivedNote(payment.id);
+    }
+
+    if (!opts.announce) return;
+
+    await this.audit
+      .log({
         entity_type: 'ticket_payment',
         entity_id: payment.id,
         action: 'BML_PAYMENT_CONFIRMED',
-        actor_user_id: actorUserId,
+        actor_user_id: opts.actorUserId,
         new_state: {
           reference: payment.reference,
-          bml_transaction_id: bmlTxn.id,
+          bml_transaction_id: payment.bml_transaction_id,
           amount_mvr: payment.amount_mvr,
           receipt_number: receipt?.receipt_number,
+          source: opts.source,
         },
         crm_sync_ok: true,
         idempotency_key: `bml-confirmed:${payment.reference}`,
-      });
-
-      return {
-        handled: true,
-        ...updated,
-        bml_state: bmlTxn.state,
-        receipt,
-        payment_status: 'confirmed',
-      };
-    }
-
-    return { handled: true, ...updated, bml_state: bmlTxn.state };
+      })
+      .catch(() => undefined);
   }
 }

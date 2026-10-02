@@ -20,7 +20,7 @@ import {
   ErrorState,
   InlineBanner,
 } from '../../../../components/ui/state-views';
-import {apiGet, apiPatch, apiPost} from '../../../../utils/apiClient';
+import {apiGet, apiPost} from '../../../../utils/apiClient';
 import {showError, showInfo, showSuccess} from '../../../../utils/notify';
 
 type CatalogItem = {
@@ -42,20 +42,18 @@ type Preview = {
   gst_rate: number;
 };
 
-type Step = 'decide' | 'items' | 'review' | 'await';
+type Step = 'items' | 'review' | 'await';
 
 const STEPS: {key: Step; label: string}[] = [
-  {key: 'decide', label: 'Charge?'},
   {key: 'items', label: 'Items'},
   {key: 'review', label: 'Invoice'},
   {key: 'await', label: 'Payment'},
 ];
 
 const STEP_INDEX: Record<Step, number> = {
-  decide: 0,
-  items: 1,
-  review: 2,
-  await: 3,
+  items: 0,
+  review: 1,
+  await: 2,
 };
 
 type Props = {
@@ -73,7 +71,7 @@ export default function BillingWorkflowModal({
   token,
   onUpdated,
 }: Props) {
-  const [step, setStep] = React.useState<Step>('decide');
+  const [step, setStep] = React.useState<Step>('items');
   const [booting, setBooting] = React.useState(false);
   const [bootError, setBootError] = React.useState('');
   const [loading, setLoading] = React.useState(false);
@@ -93,14 +91,12 @@ export default function BillingWorkflowModal({
   const applyWorkflow = React.useCallback((data: any) => {
     setWorkflow(data);
     if (
-      data?.decision === 'CHARGEABLE' &&
-      data?.next_step === 'await_customer_payment'
+      data?.payment_status === 'pending' ||
+      data?.payment_status === 'confirmed'
     ) {
       setStep('await');
-    } else if (data?.decision === 'CHARGEABLE') {
-      setStep('items');
     } else {
-      setStep('decide');
+      setStep('items');
     }
   }, []);
 
@@ -158,6 +154,43 @@ export default function BillingWorkflowModal({
     }
   }, [visible, token, boot]);
 
+  const isPaid = workflow?.payment_status === 'confirmed';
+  const awaitingPayment = visible && step === 'await' && !isPaid;
+  const onUpdatedRef = React.useRef(onUpdated);
+  onUpdatedRef.current = onUpdated;
+
+  React.useEffect(() => {
+    if (!awaitingPayment || !token) {
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const data = await apiPost(
+          `/billing/tickets/${ticketId}/check-payment`,
+          {},
+          token,
+          {silent: true, timeoutMs: 20000},
+        );
+        if (cancelled || !data) {
+          return;
+        }
+        applyWorkflow(data);
+        if (data.payment_status === 'confirmed') {
+          showSuccess('Payment received. You can finish and close the ticket.');
+          onUpdatedRef.current();
+        }
+      } catch {
+        // Silent background check; the manual button surfaces errors.
+      }
+    };
+    const id = setInterval(poll, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [awaitingPayment, applyWorkflow, ticketId, token]);
+
   function buildItems() {
     return Object.keys(selected)
       .filter(code => selected[code])
@@ -177,29 +210,6 @@ export default function BillingWorkflowModal({
       return false;
     }
     return true;
-  }
-
-  async function saveDecision(chargeable: boolean) {
-    setLoading(true);
-    try {
-      await apiPatch(
-        `/billing/tickets/${ticketId}/decision`,
-        {chargeable},
-        token,
-      );
-      if (chargeable) {
-        setStep('items');
-        showInfo('Select the charge items for this job');
-      } else {
-        showSuccess('Marked as no charge');
-        onUpdated();
-        onClose();
-      }
-    } catch (err: any) {
-      showError(err?.message || 'Could not save the decision');
-    } finally {
-      setLoading(false);
-    }
   }
 
   async function goToReview() {
@@ -377,25 +387,6 @@ export default function BillingWorkflowModal({
           <ScrollView
             contentContainerStyle={styles.body}
             keyboardShouldPersistTaps="handled">
-            {step === 'decide' && (
-              <>
-                <Text style={styles.lead}>
-                  Only charge the customer if extra work or materials were
-                  needed beyond the standard service.
-                </Text>
-                <PrimaryButton
-                  text="Yes, charge the customer"
-                  onPress={() => saveDecision(true)}
-                  loading={loading}
-                />
-                <SecondaryButton
-                  text="No charge, included in service"
-                  onPress={() => saveDecision(false)}
-                  disabled={loading}
-                />
-              </>
-            )}
-
             {step === 'items' && (
               <>
                 <Text style={styles.section}>Charge items</Text>
@@ -599,12 +590,27 @@ export default function BillingWorkflowModal({
 
             {step === 'await' && (
               <View style={styles.awaitBox}>
-                {workflow?.confirmed_receipt_number ? (
-                  <InlineBanner
-                    tone="info"
-                    icon="checkmark-circle-outline"
-                    message={`Paid. Receipt ${workflow.confirmed_receipt_number}`}
-                  />
+                {isPaid ? (
+                  <>
+                    <View style={[styles.awaitIcon, styles.paidIcon]}>
+                      <Icon
+                        name="checkmark-circle"
+                        size={30}
+                        color={colors.success}
+                      />
+                    </View>
+                    <Text style={styles.awaitTitle}>Payment received</Text>
+                    {workflow?.confirmed_receipt_number ? (
+                      <Text style={styles.muted}>
+                        Receipt {workflow.confirmed_receipt_number}
+                      </Text>
+                    ) : null}
+                    <Text style={styles.lead}>
+                      Confirmed by Bank of Maldives. Finish the work and close
+                      the ticket.
+                    </Text>
+                    <PrimaryButton text="Done" onPress={onClose} />
+                  </>
                 ) : (
                   <>
                     <View style={styles.awaitIcon}>
@@ -621,8 +627,8 @@ export default function BillingWorkflowModal({
                       </Text>
                     ) : null}
                     <Text style={styles.lead}>
-                      The customer pays from the SMS link. Check the status once
-                      they have paid, then finish the job.
+                      The customer pays from the SMS link. This screen updates
+                      automatically once the bank confirms the payment.
                     </Text>
                     <PrimaryButton
                       text="Check payment status"
@@ -846,6 +852,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  paidIcon: {backgroundColor: colors.successBg},
   awaitTitle: {...typography.h3, textAlign: 'center'},
   muted: {fontSize: 13, color: colors.gray2},
 });

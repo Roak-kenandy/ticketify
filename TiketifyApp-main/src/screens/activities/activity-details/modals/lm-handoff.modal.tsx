@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -20,6 +21,8 @@ import colors from '../../../../constants/colors';
 import {radius, spacing} from '../../../../constants/styles';
 import {apiGet, apiPost} from '../../../../utils/apiClient';
 import {showError, showSuccess} from '../../../../utils/notify';
+
+const RESOLUTION_DAYS = [3, 5, 7, 10, 14];
 
 type Props = {
   modalVisible: boolean;
@@ -41,6 +44,8 @@ const LmHandoffModal = (props: Props) => {
   const [activityDate, setActivityDate] = React.useState(
     moment().format('YYYY-MM-DD'),
   );
+  const [resolutionDays, setResolutionDays] = React.useState(7);
+  const [notifyCustomer, setNotifyCustomer] = React.useState(true);
   const [error, setError] = React.useState('');
 
   const load = React.useCallback(async () => {
@@ -83,19 +88,34 @@ const LmHandoffModal = (props: Props) => {
     setError('');
     setSubmitting(true);
     try {
-      const body: Record<string, string> = {
+      const body: Record<string, string | number | boolean> = {
         name: name.trim(),
         description: description.trim(),
         address_id: addressId,
         activity_date: activityDate,
+        resolution_days: resolutionDays,
+        notify_customer: notifyCustomer,
       };
       if (notes.trim()) {
         body.notes = notes.trim();
       }
-      await apiPost(`/tickets/${props.ticketId}/lm/handoff`, body, token, {
-        timeoutMs: 45000,
-      });
-      showSuccess('Handed over to Last Mile');
+      const result: any = await apiPost(
+        `/tickets/${props.ticketId}/lm/handoff`,
+        body,
+        token,
+        {timeoutMs: 45000},
+      );
+      if (notifyCustomer && result?.sms_sent === false) {
+        showSuccess(
+          'Handed over to Last Mile (customer SMS could not be sent)',
+        );
+      } else {
+        showSuccess(
+          notifyCustomer
+            ? 'Handed over to Last Mile. Customer notified by SMS.'
+            : 'Handed over to Last Mile',
+        );
+      }
       setDescription('');
       setNotes('');
       props.setModalVisible(false);
@@ -174,6 +194,44 @@ const LmHandoffModal = (props: Props) => {
             />
           </View>
           <View style={formStyles.field}>
+            <Text style={formStyles.label}>Expected resolution</Text>
+            <View style={styles.chips}>
+              {RESOLUTION_DAYS.map(days => {
+                const active = resolutionDays === days;
+                return (
+                  <TouchableOpacity
+                    key={days}
+                    style={[styles.chip, active && styles.chipActive]}
+                    onPress={() => setResolutionDays(days)}
+                    accessibilityRole="radio"
+                    accessibilityState={{selected: active}}>
+                    <Text
+                      style={[
+                        styles.chipText,
+                        active && styles.chipTextActive,
+                      ]}>
+                      {days} working days
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+          <View style={[formStyles.field, styles.switchRow]}>
+            <View style={styles.flex}>
+              <Text style={styles.optionTitle}>Send SMS to customer</Text>
+              <Text style={styles.optionSub}>
+                Tells the customer the ticket is with the Last Mile team and
+                will be resolved within {resolutionDays} working days.
+              </Text>
+            </View>
+            <Switch
+              value={notifyCustomer}
+              onValueChange={setNotifyCustomer}
+              trackColor={{true: colors.primary, false: colors.borderLight}}
+            />
+          </View>
+          <View style={formStyles.field}>
             <Text style={formStyles.label}>Site address</Text>
             {addresses.length === 0 ? (
               <EmptyState
@@ -238,4 +296,16 @@ const styles = StyleSheet.create({
   optionActive: {borderColor: colors.primary, backgroundColor: colors.infoBg},
   optionTitle: {fontWeight: '600', color: colors.black, fontSize: 14},
   optionSub: {fontSize: 12, color: colors.gray2, marginTop: 2},
+  chips: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
+  chip: {
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  chipActive: {borderColor: colors.primary, backgroundColor: colors.infoBg},
+  chipText: {fontSize: 13, color: colors.gray2},
+  chipTextActive: {color: colors.primary, fontWeight: '600'},
+  switchRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
 });

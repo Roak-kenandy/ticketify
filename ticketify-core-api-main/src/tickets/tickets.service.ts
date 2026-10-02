@@ -28,6 +28,12 @@ import { WorkflowConfigService } from 'src/config/workflow-config.service';
 import { TicketBillingService } from 'src/finance/ticket-billing.service';
 import { LmHandoffDto } from './dto/lm-handoff.dto';
 
+type LmContact = {
+  id: string;
+  phone?: { number?: string };
+  person_name?: { full_name?: string };
+};
+
 @Injectable()
 export class TicketsService {
   constructor(
@@ -1931,7 +1937,7 @@ Medianet Support Team
     }
 
     const srData = sr.data as {
-      contact?: { id: string };
+      contact?: LmContact;
       number?: string;
       assigned_to?: { team?: { id?: string }; user?: { id?: string } };
     };
@@ -1940,6 +1946,7 @@ Medianet Support Team
       throw new ForbiddenException('Service request has no linked contact');
     }
 
+    const resolutionDays = dto.resolution_days ?? 7;
     const idempotencyKey = `lm:${ticketId}:${dto.address_id}:${dto.name.trim()}`;
     const payload = {
       name: dto.name.trim(),
@@ -1995,11 +2002,24 @@ Medianet Support Team
       );
     }
 
+    const sms =
+      dto.notify_customer === false
+        ? { sent: false, reason: 'disabled by technician' }
+        : await this.sendLmHandoffSms(
+            srData.contact,
+            srData.number ?? ticketId,
+            resolutionDays,
+          );
+
     const srNote = [
       `Last Mile handoff: "${dto.name.trim()}" assigned to ${lm.transportTeamName} by ${actor.name ?? 'technician'}. Activity ${activityId}.`,
+      `Expected resolution: within ${resolutionDays} working days.`,
       released.ok
         ? 'Access technician released from this service request (team queue).'
         : 'Warning: LM activity created but CRM release from technician may need manual fix.',
+      sms.sent
+        ? 'Customer notified by SMS.'
+        : `Customer SMS not sent (${sms.reason}).`,
     ].join(' ');
     await this.crmAddNoteToTicket(ticketId, srNote, false);
 
@@ -2012,6 +2032,8 @@ Medianet Support Team
         activity_id: activityId,
         state: 'PENDING',
         released_from_technician: released.ok,
+        resolution_days: resolutionDays,
+        sms_sent: sms.sent,
       },
       crm_sync_ok: released.ok,
       idempotency_key: idempotencyKey,
@@ -2025,7 +2047,55 @@ Medianet Support Team
       ticket_number: srData.number,
       state: 'PENDING',
       released_from_technician: released.ok,
+      resolution_days: resolutionDays,
+      sms_sent: sms.sent,
     };
+  }
+
+  /** Never throws: the handoff has already happened in the CRM. */
+  private async sendLmHandoffSms(
+    contact: LmContact | undefined,
+    ticketNumber: string,
+    resolutionDays: number,
+  ): Promise<{ sent: boolean; reason?: string }> {
+    try {
+      let phone = contact?.phone?.number;
+      let name = contact?.person_name?.full_name;
+      if ((!phone || !name) && contact?.id) {
+        const details = (await this.fetchContactDetails(contact.id)) as
+          | LmContact
+          | HttpException;
+        if (details && !(details instanceof HttpException)) {
+          phone = phone || details.phone?.number;
+          name = name || details.person_name?.full_name;
+        }
+      }
+      if (!phone) {
+        return { sent: false, reason: 'no customer phone number' };
+      }
+
+      const message =
+        (await this.templates.render('LM_HANDOFF', {
+          NAME: name ?? 'Customer',
+          SR_ID: ticketNumber,
+          DAYS: resolutionDays,
+        })) ??
+        `Dear ${name ?? 'Customer'},
+
+Your ticket ${ticketNumber} requires cabling work and has been handed over to our Last Mile team. The work is expected to be completed within ${resolutionDays} working days. Our team will contact you before the visit.
+
+Thank you for your patience.
+Medianet Support Team`;
+
+      await this.sms.publishSMS({ phone, message });
+      return { sent: true };
+    } catch (error) {
+      this.logger.error(
+        'Ticket Service',
+        `LM handoff SMS failed for ${ticketNumber}: ${error}`,
+      );
+      return { sent: false, reason: 'SMS delivery failed' };
+    }
   }
 
   private lastMileOpsCache: { at: number; pending: number } | null = null;

@@ -14,6 +14,11 @@ const templates = [
       'Medianet: Please share feedback for ticket [SR_ID]: [LINK]',
   },
   {
+    trigger_key: 'LM_HANDOFF',
+    body_template:
+      'Dear [NAME], your ticket [SR_ID] requires cabling work and has been handed over to our Last Mile team. The work is expected to be completed within [DAYS] working days. Our team will contact you before the visit. Thank you for your patience. Medianet Support Team',
+  },
+  {
     trigger_key: 'PAYMENT_REQUEST',
     body_template:
       'Medianet: Invoice [INV_NO] for SR [SR_ID]. Charges: [ITEMS]. Total MVR [TOTAL]. Pay securely: [LINK]',
