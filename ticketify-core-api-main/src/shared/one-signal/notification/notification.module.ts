@@ -1,14 +1,10 @@
-// Package.
 import { Global, Module } from '@nestjs/common';
-// Internal.
 import NotificationService from './notification.service';
-import { LoggerModule } from 'src/infrastructure/logger/logger.module';
+import { PushNotifierService } from './push-notifier.service';
 
-// Code.
 @Global()
 @Module({
-  imports: [LoggerModule],
-  providers: [NotificationService],
-  exports: [NotificationService],
+  providers: [NotificationService, PushNotifierService],
+  exports: [NotificationService, PushNotifierService],
 })
 export class NotificationModule {}

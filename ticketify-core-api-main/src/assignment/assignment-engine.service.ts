@@ -290,6 +290,7 @@ export class AssignmentEngineService {
       });
       if (firstRecord) {
         await this.notifier.technicianAssigned(tech.id, {
+          ticketId: ticket.id,
           number: ticket.number,
           categoryLabel: CATEGORY_LABELS[category],
         });

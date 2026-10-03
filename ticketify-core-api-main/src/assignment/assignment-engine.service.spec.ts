@@ -123,6 +123,7 @@ describe('AssignmentEngineService', () => {
 
     expect(notifier.technicianAssigned).toHaveBeenCalledTimes(1);
     expect(notifier.technicianAssigned).toHaveBeenCalledWith('u1', {
+      ticketId: 't1',
       number: 'T1',
       categoryLabel: 'Fault',
     });

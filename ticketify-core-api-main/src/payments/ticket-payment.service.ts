@@ -32,6 +32,7 @@ import {
 import SMSService from 'src/shared/ooredoo-sms/sms.service';
 import { NotificationTemplateService } from 'src/notifications/notification-template.service';
 import { CreateTicketPaymentDto } from './dto/create-ticket-payment.dto';
+import { PushNotifierService } from 'src/shared/one-signal/notification/push-notifier.service';
 
 type PaymentMetadata = {
   payment_phone?: string;
@@ -88,6 +89,7 @@ export class TicketPaymentService {
     private chargeCatalog: ChargeCatalogService,
     private sms: SMSService,
     private templates: NotificationTemplateService,
+    private push: PushNotifierService,
   ) {}
 
   /** Unguessable: the reference is the only key protecting the public pay pages. */
@@ -1512,6 +1514,8 @@ export class TicketPaymentService {
 
     if (!opts.announce) return;
 
+    void this.notifyTechnicianPaid(payment);
+
     await this.audit
       .log({
         entity_type: 'ticket_payment',
@@ -1529,5 +1533,23 @@ export class TicketPaymentService {
         idempotency_key: `bml-confirmed:${payment.reference}`,
       })
       .catch(() => undefined);
+  }
+
+  private async notifyTechnicianPaid(payment: TicketPayment) {
+    if (!payment.created_by_user_id) return;
+    let number: string | null = null;
+    try {
+      const sr = await this.crm.getServiceRequest(
+        encodeURIComponent(payment.crm_ticket_id),
+      );
+      number = (sr.data as { number?: string } | null)?.number ?? null;
+    } catch {
+      // The push still makes sense without the ticket number.
+    }
+    await this.push.paymentReceived(payment.created_by_user_id, {
+      ticketId: payment.crm_ticket_id,
+      number,
+      amount: this.formatMvr(payment.amount_mvr),
+    });
   }
 }

@@ -4,7 +4,7 @@ import {Appearance, StatusBar, StyleSheet} from 'react-native';
 import {LogLevel, OneSignal} from 'react-native-onesignal';
 import {GestureHandlerRootView} from 'react-native-gesture-handler';
 import {SafeAreaProvider} from 'react-native-safe-area-context';
-import {Provider as StoreProvider, useDispatch} from 'react-redux';
+import {Provider as StoreProvider, useDispatch, useSelector} from 'react-redux';
 import store from './src/store/store';
 import BackgroundLocationManager from './src/components/BackgroundLocationManager';
 import GlobalApiLoadingOverlay from './src/components/GlobalApiLoadingOverlay';
@@ -13,6 +13,11 @@ import colors from './src/constants/colors';
 import {subscribeUnauthorized} from './src/utils/apiClient';
 import {handleSessionExpired} from './src/utils/session';
 import {showInfo} from './src/utils/notify';
+import {
+  navigationRef,
+  openPendingTicket,
+  registerPushHandlers,
+} from './src/services/pushNotifications';
 
 function SessionWatcher() {
   const dispatch = useDispatch();
@@ -31,6 +36,19 @@ function SessionWatcher() {
   return null;
 }
 
+/** Opens a ticket from a tapped notification once login (or session restore) finishes. */
+function PushNavigator() {
+  const isLoggedIn = useSelector((state: any) => state.auth?.isLoggedIn);
+  useEffect(() => {
+    if (!isLoggedIn) {
+      return;
+    }
+    const timer = setTimeout(openPendingTicket, 300);
+    return () => clearTimeout(timer);
+  }, [isLoggedIn]);
+  return null;
+}
+
 function App(): JSX.Element {
   useEffect(() => {
     Appearance.setColorScheme('light');
@@ -39,12 +57,7 @@ function App(): JSX.Element {
   useEffect(() => {
     OneSignal.Debug.setLogLevel(__DEV__ ? LogLevel.Verbose : LogLevel.None);
     OneSignal.initialize('5b39e7af-772d-4fc8-84ae-3236c778faf1');
-
-    OneSignal.Notifications.addEventListener('click', event => {
-      if (__DEV__) {
-        console.log('OneSignal: notification clicked:', event);
-      }
-    });
+    return registerPushHandlers();
   }, []);
 
   return (
@@ -55,8 +68,9 @@ function App(): JSX.Element {
             barStyle="light-content"
             backgroundColor={colors.primary}
           />
-          <NavigationContainer>
+          <NavigationContainer ref={navigationRef} onReady={openPendingTicket}>
             <SessionWatcher />
+            <PushNavigator />
             <RootNavigation />
             <GlobalApiLoadingOverlay />
             <BackgroundLocationManager />

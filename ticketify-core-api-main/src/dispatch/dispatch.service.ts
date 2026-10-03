@@ -12,7 +12,9 @@ import {
 import { AssignmentNotifierService } from 'src/assignment/assignment-notifier.service';
 import { TtlCache } from 'src/infrastructure/common/helpers/ttl-cache';
 
-type TeamSummary = Awaited<ReturnType<TicketsService['fetchTeamAssignmentSummary']>>;
+type TeamSummary = Awaited<
+  ReturnType<TicketsService['fetchTeamAssignmentSummary']>
+>;
 
 @Injectable()
 export class DispatchService {
@@ -33,7 +35,10 @@ export class DispatchService {
   teamIds(): string[] {
     const fromEnv = this.config.get<string>('AUTO_ASSIGN_TEAM_IDS');
     if (fromEnv?.trim()) {
-      return fromEnv.split(',').map(s => s.trim()).filter(Boolean);
+      return fromEnv
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
     }
     return [
       'f9006884-5b7e-4513-89ef-86e14acf0b25',
@@ -46,18 +51,22 @@ export class DispatchService {
     return {
       team_id: teamId,
       count: tickets.length,
-      tickets: tickets.map((t: { id: string; number?: string; state?: string }) => ({
-        id: t.id,
-        number: t.number,
-        state: t.state,
-      })),
+      tickets: tickets.map(
+        (t: { id: string; number?: string; state?: string }) => ({
+          id: t.id,
+          number: t.number,
+          state: t.state,
+        }),
+      ),
     };
   }
 
   /** Cached briefly: the map, operations board and every open admin tab poll this. */
   teamSummaries(): Promise<TeamSummary[]> {
     return this.teamSummaryCache.get(() =>
-      Promise.all(this.teamIds().map(id => this.tickets.fetchTeamAssignmentSummary(id))),
+      Promise.all(
+        this.teamIds().map((id) => this.tickets.fetchTeamAssignmentSummary(id)),
+      ),
     );
   }
 
@@ -77,14 +86,18 @@ export class DispatchService {
         includeBusy: settings.include_busy,
       }),
     ]);
-    const count = (state: string) => presence.find(p => p.presence === state)?._count ?? 0;
+    const count = (state: string) =>
+      presence.find((p) => p.presence === state)?._count ?? 0;
     return {
       online: count('ONLINE'),
       offline: count('OFFLINE'),
       busy: count('BUSY'),
       total: presence.reduce((sum, p) => sum + p._count, 0),
       auto_assign_eligible: eligible.length,
-      by_presence: presence.map(p => ({ presence: p.presence, count: p._count })),
+      by_presence: presence.map((p) => ({
+        presence: p.presence,
+        count: p._count,
+      })),
     };
   }
 
@@ -99,7 +112,7 @@ export class DispatchService {
     return {
       auto_assign_enabled: settings.enabled,
       team_auto_assign: settings.team_enabled ?? {},
-      unassigned_pools: assignmentSummaries.map(summary => ({
+      unassigned_pools: assignmentSummaries.map((summary) => ({
         team_id: summary.team_id,
         count: summary.unassigned_new,
       })),
@@ -113,6 +126,12 @@ export class DispatchService {
   }
 
   async manualAssign(ticketId: string, crmUserId: string, actorUserId: string) {
+    const before = await this.tickets
+      .crmFindServiceRequest(ticketId)
+      .catch(() => null);
+    const previousCrmUserId: string | undefined =
+      before?.assigned_to?.user?.id ?? undefined;
+
     const result = await this.tickets.assignServiceRequestToUser(
       ticketId,
       crmUserId,
@@ -122,13 +141,19 @@ export class DispatchService {
       throw result;
     }
 
-    const [technician, ticket] = await Promise.all([
+    const [technician, previousTechnician] = await Promise.all([
       this.prisma.user.findUnique({
         where: { crm_user_id: crmUserId },
         select: { id: true, name: true },
       }),
-      this.tickets.crmFindServiceRequest(ticketId).catch(() => null),
+      previousCrmUserId && previousCrmUserId !== crmUserId
+        ? this.prisma.user.findUnique({
+            where: { crm_user_id: previousCrmUserId },
+            select: { id: true },
+          })
+        : Promise.resolve(null),
     ]);
+    const ticket = before;
     const category = ticket ? ticketCategory(ticket) : null;
     await this.audit.log({
       entity_type: 'service_request',
@@ -144,10 +169,17 @@ export class DispatchService {
       },
       crm_sync_ok: true,
     });
-    if (technician) {
+    if (technician && technician.id !== actorUserId) {
       await this.notifier.technicianAssigned(technician.id, {
+        ticketId,
         number: ticket?.number,
         categoryLabel: category ? CATEGORY_LABELS[category] : null,
+      });
+    }
+    if (previousTechnician && previousTechnician.id !== actorUserId) {
+      await this.notifier.technicianUnassigned(previousTechnician.id, {
+        ticketId,
+        number: ticket?.number,
       });
     }
     return { result, actor_user_id: actorUserId };

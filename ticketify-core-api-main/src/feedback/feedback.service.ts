@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { verifyReviewLink } from 'src/infrastructure/security/review-link';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { CrmApiClient } from 'src/infrastructure/crm/crm-api.client';
-import NotificationService from 'src/shared/one-signal/notification/notification.service';
+import { PushNotifierService } from 'src/shared/one-signal/notification/push-notifier.service';
 import { TicketsService } from 'src/tickets/tickets.service';
 import { UserService } from 'src/user/user.service';
 
@@ -20,7 +20,7 @@ export class FeedbackService {
     private prisma: PrismaService,
     private user: UserService,
     private ticket: TicketsService,
-    private notification: NotificationService,
+    private push: PushNotifierService,
     private crm: CrmApiClient,
     private config: ConfigService,
   ) {}
@@ -49,6 +49,7 @@ export class FeedbackService {
       }
       const ticketData = crmTicket.data as {
         state?: string;
+        number?: string;
         assigned_to?: { user?: { id?: string } };
       };
       if (ticketData?.state !== 'CLOSED') {
@@ -79,15 +80,13 @@ export class FeedbackService {
         },
       });
 
-      // create notifcation
-
-      await this.notification.publishNotification(
-        {
-          title: 'New Feedback',
-          body: `You received a ${rating}-star review from a customer`,
-        },
-        [user_id],
-      );
+      if (user?.id) {
+        void this.push.newReview(user.id, {
+          ticketId: ticket_id,
+          number: ticketData?.number,
+          rating,
+        });
+      }
 
       if (feedback) {
         return feedback;
