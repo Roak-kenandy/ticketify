@@ -22,6 +22,9 @@ import {
   type UserPreferences,
 } from './dto/update-preferences.dto';
 
+const MAX_LOCATION_ACCURACY_M = 150;
+const COARSE_FIX_GRACE_MS = 5 * 60 * 1000;
+
 @Injectable()
 export class UserService {
   constructor(
@@ -366,6 +369,22 @@ export class UserService {
           orderBy: { created_at: 'desc' },
         });
         return latest ?? { skipped: true };
+      }
+
+      // Indoors the phone falls back to Wi-Fi/cell positioning (often 200 m+ off), which makes
+      // the live map jump. Drop those fixes while a recent point exists so the marker stays put.
+      const accuracy = Number(location.accuracy);
+      if (Number.isFinite(accuracy) && accuracy > MAX_LOCATION_ACCURACY_M) {
+        const recent = await this.prisma.userLocationTracking.findFirst({
+          where: {
+            user_id: user.id,
+            created_at: { gte: new Date(Date.now() - COARSE_FIX_GRACE_MS) },
+          },
+          orderBy: { created_at: 'desc' },
+        });
+        if (recent) {
+          return recent;
+        }
       }
 
       const add_location = await this.prisma.userLocationTracking.create({
