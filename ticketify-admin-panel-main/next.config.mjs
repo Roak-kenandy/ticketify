@@ -64,6 +64,9 @@ const nextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
   productionBrowserSourceMaps: false,
+  // Only small local logos use next/image; serving them as-is keeps the
+  // /_next/image optimizer endpoint (a recurring source of CVEs) switched off.
+  images: { unoptimized: true },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

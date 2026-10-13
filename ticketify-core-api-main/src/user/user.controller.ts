@@ -97,6 +97,7 @@ export class UserController {
     return this.userService.getUserById(id);
   }
 
+  @Roles(FIELD_ROLES)
   @Patch('status')
   updateStatus(
     @Query('status')
@@ -112,6 +113,7 @@ export class UserController {
     return this.userService.updatePresence(body, req.user);
   }
 
+  @Roles(FIELD_ROLES)
   @Post('location')
   addLocationTracking(
     @Body() location: CreateLocationTrackDto,

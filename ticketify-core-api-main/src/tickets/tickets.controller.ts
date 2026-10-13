@@ -99,11 +99,13 @@ export class TicketsController {
     return this.ticketsService.fetchUserTickets(user_id);
   }
 
+  @Roles(FIELD_ROLES)
   @Get('teams')
   async fetchTeams(@Req() req: AuthedRequest) {
     return this.ticketsService.findAllTeamTicketsSafe(req.user.crm_user_id);
   }
 
+  @Roles(FIELD_ROLES)
   @Get('files/:file_id')
   async fetchFile(@Param('file_id') file_id: string, @Res() res: Response) {
     const file = await this.ticketsService.fetchFile(file_id);

@@ -233,7 +233,7 @@ export class AuthService {
     return this.jwt.sign(
       { sub: user_id, email, crm_user_id, Roles, tv: tokenVersion },
       {
-        expiresIn: this.config.get<string>('JWT_EXPIRES_IN') || '7d',
+        expiresIn: this.config.get<string>('JWT_EXPIRES_IN') || '12h',
         secret: this.config.get('JWT_SECRET'),
         algorithm: 'HS256',
       },

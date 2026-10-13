@@ -52,15 +52,11 @@ export function readSessionUser(): SessionUser | null {
     if (!raw) {
       return null;
     }
-    const user = JSON.parse(raw) as {
-      name?: string;
-      email?: string;
-      role?: { name?: string };
-    };
+    const user = JSON.parse(raw) as { name?: string; email?: string };
     return {
       name: user.name ?? "",
       email: user.email ?? "",
-      role: user.role?.name ?? "",
+      role: AdminAuth.getRoleName(),
     };
   } catch {
     return null;

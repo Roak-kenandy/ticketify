@@ -106,6 +106,20 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     [clear, router],
   );
 
+  React.useEffect(() => {
+    if (!token) {
+      return;
+    }
+    // setTimeout overflows above ~24.8 days; tokens are far shorter than that.
+    const delay = Math.min(AdminAuth.msUntilExpiry(token), 2_147_483_647);
+    const timer = window.setTimeout(() => {
+      clear();
+      showError("Your session has expired. Please sign in again.");
+      router.replace(LOGIN_PATH);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [token, clear, router]);
+
   const signIn = React.useCallback((nextToken: string, nextUser: any) => {
     writeStored(nextToken, nextUser);
     setTokenState(nextToken);

@@ -80,7 +80,7 @@ async function bootstrap() {
       ? corsOrigins
       : corsOrigins.length
         ? corsOrigins
-        : true,
+        : [/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     allowedHeaders: ['Authorization', 'Content-Type', 'Accept'],
     preflightContinue: false,

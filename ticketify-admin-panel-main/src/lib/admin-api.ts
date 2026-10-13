@@ -53,7 +53,7 @@ export class AdminAPI {
   }
 
   static async getUserById(userId: string): Promise<UserProfile> {
-    const response = await axiosInterceptorInstance.get(`/users/${userId}`, {
+    const response = await axiosInterceptorInstance.get(`/users/${encodeURIComponent(userId)}`, {
       headers: this.getAuthHeaders(),
     });
     return response.data;
@@ -71,14 +71,14 @@ export class AdminAPI {
   }
 
   static async deleteUser(userId: string): Promise<void> {
-    await axiosInterceptorInstance.delete(`/admin/users/${userId}`, {
+    await axiosInterceptorInstance.delete(`/admin/users/${encodeURIComponent(userId)}`, {
       headers: this.getAuthHeaders(),
     });
   }
 
   static async toggleUserStatus(userId: string): Promise<User> {
     const response = await axiosInterceptorInstance.patch(
-      `/admin/users/${userId}/toggle-status`,
+      `/admin/users/${encodeURIComponent(userId)}/toggle-status`,
       {},
       { headers: this.getAuthHeaders() },
     );

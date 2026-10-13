@@ -63,7 +63,7 @@ export function isTokenExpired(token: string): boolean {
     const payload = JSON.parse(
       atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")),
     );
-    return Boolean(payload.exp) && payload.exp * 1000 < Date.now();
+    return typeof payload.exp !== "number" || payload.exp * 1000 <= Date.now();
   } catch {
     return true;
   }

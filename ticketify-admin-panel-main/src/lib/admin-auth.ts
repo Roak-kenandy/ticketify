@@ -34,17 +34,24 @@ function hasRole(allowed: string[], role: string): boolean {
   return allowed.some((name) => name.toLowerCase() === owned);
 }
 
+/**
+ * Role from the signed access token, never from the editable `user` entry.
+ * The API still enforces roles on every request; this only drives navigation.
+ */
 function storedRoleName(): string {
   if (typeof window === 'undefined') {
     return '';
   }
+  const token = getAuthToken();
+  if (!token) {
+    return '';
+  }
   try {
-    const raw = localStorage.getItem('user');
-    if (!raw) {
+    const { Roles, exp } = jwtDecode<DecodedToken>(token);
+    if (typeof exp !== 'number' || exp * 1000 <= Date.now()) {
       return '';
     }
-    const user = JSON.parse(raw) as { role?: { name?: string } };
-    return user?.role?.name ?? '';
+    return Array.isArray(Roles) && typeof Roles[0] === 'string' ? Roles[0] : '';
   } catch {
     return '';
   }
@@ -80,9 +87,19 @@ export class AdminAuth {
     try {
       const decoded = jwtDecode<DecodedToken>(token);
       const currentTime = Date.now() / 1000;
-      return decoded.exp > currentTime;
+      return typeof decoded.exp === 'number' && decoded.exp > currentTime;
     } catch {
       return false;
+    }
+  }
+
+  /** Milliseconds until the token expires (0 if already expired or unreadable). */
+  static msUntilExpiry(token: string): number {
+    try {
+      const { exp } = jwtDecode<DecodedToken>(token);
+      return typeof exp === 'number' ? Math.max(0, exp * 1000 - Date.now()) : 0;
+    } catch {
+      return 0;
     }
   }
 

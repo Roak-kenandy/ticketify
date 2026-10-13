@@ -8,6 +8,9 @@ node_modules/
 .env
 .env.*
 !.env.example
+# Local test sessions and probe output; anything in public/ is served without auth.
+**/public/tmp-*
+.tmp-*
 
 # Build outputs
 dist/

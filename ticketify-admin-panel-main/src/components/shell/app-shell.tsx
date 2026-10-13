@@ -75,6 +75,36 @@ export function AppShell({ access = "any", fullBleed, children }: AppShellProps)
   }, [access, pathname, router]);
 
   React.useEffect(() => {
+    if (!allowed) {
+      return;
+    }
+    const endSession = () => {
+      AdminAuth.clearSession();
+      router.replace("/auth/login");
+    };
+    const token = AdminAuth.getToken();
+    const timer = token
+      ? window.setTimeout(endSession, Math.min(AdminAuth.msUntilExpiry(token), 2_147_483_647))
+      : undefined;
+    // Signing out (or switching account) in another tab ends this one too.
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === "access_token") {
+        const next = AdminAuth.getToken();
+        if (!next || !AdminAuth.isTokenValid(next)) {
+          endSession();
+        } else if (next !== token) {
+          window.location.reload();
+        }
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [allowed, router]);
+
+  React.useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
 
