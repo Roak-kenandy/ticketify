@@ -22,6 +22,11 @@ import { DispatchModule } from './dispatch/dispatch.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { SecurityModule } from './infrastructure/security/security.module';
 import { SafeParamsGuard } from './infrastructure/security/safe-params.guard';
+import { InventoryModule } from './inventory/inventory.module';
+import { IncaModule } from './infrastructure/inca/inca.module';
+import { ProvisioningModule } from './provisioning/provisioning.module';
+import { ClosureModule } from './closure/closure.module';
+import { TrackingModule } from './tracking/tracking.module';
 
 @Module({
   imports: [
@@ -35,6 +40,7 @@ import { SafeParamsGuard } from './infrastructure/security/safe-params.guard';
     CrmApiModule,
     SecurityModule,
     IntegrationAuditModule,
+    IncaModule,
     ChargesModule,
     WorkflowConfigModule,
     AssignmentModule,
@@ -50,6 +56,10 @@ import { SafeParamsGuard } from './infrastructure/security/safe-params.guard';
     NotificationsModule,
     FeedbackModule,
     ReportsModule,
+    InventoryModule,
+    ProvisioningModule,
+    ClosureModule,
+    TrackingModule,
   ],
   controllers: [],
   providers: [

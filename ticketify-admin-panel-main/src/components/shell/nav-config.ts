@@ -1,10 +1,14 @@
 import {
   BarChart3,
+  Boxes,
+  PackageSearch,
+  RadioTower,
   FileSpreadsheet,
   LayoutDashboard,
   MapPinned,
   MonitorPlay,
   Receipt,
+  Smartphone,
   Users,
   Wallet,
   Zap,
@@ -42,6 +46,12 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: Zap,
         access: "dispatch-manage",
       },
+      {
+        label: "Technician app",
+        href: "/field",
+        icon: Smartphone,
+        access: "field",
+      },
     ],
   },
   {
@@ -77,6 +87,30 @@ export const NAV_GROUPS: NavGroup[] = [
         href: "/finance/reports",
         icon: Receipt,
         access: "finance",
+      },
+    ],
+  },
+  {
+    label: "Inventory",
+    items: [
+      {
+        label: "Consumption",
+        href: "/inventory",
+        icon: PackageSearch,
+        access: "inventory",
+        exact: true,
+      },
+      {
+        label: "Item master",
+        href: "/inventory/items",
+        icon: Boxes,
+        access: "inventory",
+      },
+      {
+        label: "Provisioning log",
+        href: "/provisioning",
+        icon: RadioTower,
+        access: "provisioning",
       },
     ],
   },

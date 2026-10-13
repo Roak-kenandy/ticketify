@@ -1,5 +1,7 @@
 import {
+  IsBoolean,
   IsLatitude,
+  MaxLength,
   IsLongitude,
   IsNotEmpty,
   IsNumber,
@@ -24,4 +26,15 @@ export class CreateLocationTrackDto {
   @IsOptional()
   @IsNumber()
   accuracy?: number;
+
+  /** Android: fix came from a mock-location app. */
+  @IsOptional()
+  @IsBoolean()
+  mock?: boolean;
+
+  /** Location provider that produced the fix (gps, network, fused). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  provider?: string;
 }

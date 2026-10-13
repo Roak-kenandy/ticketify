@@ -3,7 +3,12 @@ import { IsBoolean, IsIn, IsOptional } from 'class-validator';
 export const THEMES = ['light', 'dark', 'system'] as const;
 export const DENSITIES = ['comfortable', 'compact'] as const;
 export const TEXT_SIZES = ['default', 'large'] as const;
-export const START_PAGES = ['map', 'operations', 'finance'] as const;
+export const START_PAGES = [
+  'map',
+  'operations',
+  'finance',
+  'inventory',
+] as const;
 
 export type UserPreferences = {
   theme: (typeof THEMES)[number];

@@ -59,7 +59,10 @@ export class CrmApiClient {
         data = null as T;
       }
 
-      if (!response.ok) {
+      if (response.status === 404) {
+        // Records deleted in CRM (or from another CRM environment) still referenced locally.
+        this.logger.warn('CRM API', `${method} ${pathname} not found in CRM`);
+      } else if (!response.ok) {
         this.logger.error(
           'CRM API',
           `${method} ${pathname} failed (${response.status}): ${JSON.stringify(data)?.slice(0, 300)}`,

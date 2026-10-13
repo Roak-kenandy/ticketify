@@ -38,6 +38,18 @@ export class UserController {
     return this.userService.getMe(req.user);
   }
 
+  @Roles(FIELD_ROLES)
+  @Get('me/tracking')
+  myTracking(@Req() req: { user: { id: string } }) {
+    return this.userService.getTrackingSetup(req.user.id);
+  }
+
+  @Roles(FIELD_ROLES)
+  @Post('me/tracking/reset')
+  resetMyTracking(@Req() req: { user: { id: string } }) {
+    return this.userService.resetTrackingDevice(req.user.id);
+  }
+
   @Get('me/preferences')
   myPreferences(@Req() req: { user: { id: string } }) {
     return this.userService.getPreferences(req.user.id);

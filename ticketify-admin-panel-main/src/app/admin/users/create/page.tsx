@@ -278,7 +278,7 @@ export default function CreateUserPage() {
               <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
                 <li>The CRM user ID must match exactly, or assigned tickets won&apos;t appear in the app.</li>
                 <li>Each email can only be used once.</li>
-                <li>Technicians sign in on the mobile app; other roles use this console.</li>
+                <li>Everyone signs in at the same address. Technicians land in the technician app (/field); other roles land in this console.</li>
               </ul>
             </CardContent>
           </Card>

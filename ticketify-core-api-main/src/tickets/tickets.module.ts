@@ -7,6 +7,7 @@ import { SMSModule } from 'src/shared/ooredoo-sms/sms.module';
 import { NotificationTemplateModule } from 'src/notifications/notification-template.module';
 import { IntegrationAuditModule } from 'src/infrastructure/audit/integration-audit.module';
 import { FinanceModule } from 'src/finance/finance.module';
+import { ClosureModule } from 'src/closure/closure.module';
 
 @Module({
   controllers: [TicketsController],
@@ -18,6 +19,7 @@ import { FinanceModule } from 'src/finance/finance.module';
     NotificationTemplateModule,
     IntegrationAuditModule,
     FinanceModule,
+    ClosureModule,
   ],
   exports: [TicketsService],
 })

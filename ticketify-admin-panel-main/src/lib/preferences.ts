@@ -4,7 +4,7 @@ import { AdminAuth } from "./admin-auth";
 export type ThemePreference = "light" | "dark" | "system";
 export type Density = "comfortable" | "compact";
 export type TextSize = "default" | "large";
-export type StartPage = "map" | "operations" | "finance";
+export type StartPage = "map" | "operations" | "finance" | "inventory";
 
 export type Preferences = {
   theme: ThemePreference;

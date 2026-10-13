@@ -110,7 +110,7 @@ export default function AdminDashboard() {
         </Card>
       ) : (
         <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard
               label="Total users"
               value={stats?.totalUsers ?? 0}
@@ -146,7 +146,7 @@ export default function AdminDashboard() {
             />
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-5">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
             <Card className="lg:col-span-3">
               <CardHeader className="pb-4">
                 <CardTitle>Users by role</CardTitle>

@@ -23,8 +23,6 @@ import axiosInterceptorInstance from "@/lib/axios-interceptor";
 import { primePreferences } from "@/lib/preferences";
 import { cn } from "@/lib/utils";
 
-const ALLOWED_ROLES = ["Admin", "Administrator", "Supervisor", "CEO", "Finance"];
-
 const HIGHLIGHTS = [
   {
     icon: MapPinned,
@@ -76,10 +74,10 @@ export default function Login() {
       });
 
       const roleName = response.data?.user?.role?.name ?? "";
-      if (!ALLOWED_ROLES.includes(roleName)) {
+      if (!AdminAuth.canSignIn(roleName)) {
         AdminAuth.clearSession();
         setError(
-          "Your account doesn't have access to the operations console. Contact your administrator.",
+          "Your account doesn't have access to Ticketify. Contact your administrator.",
         );
         return;
       }

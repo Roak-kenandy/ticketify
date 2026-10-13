@@ -13,7 +13,12 @@ import { ActivitiesService } from 'src/activities/activities.service';
 import { CreateLocationTrackDto } from './dto/create-location-track';
 import { ConfigService } from '@nestjs/config';
 import { LoggerService } from 'src/infrastructure/logger/logger.service';
-import { TechnicianDetailsDto, TechnicianLocationTracking } from './dto/technician-details.dto';
+import {
+  TechnicianDetailsDto,
+  TechnicianLocationTracking,
+  TRACKING_STATE_SELECT,
+  TrackingState,
+} from './dto/technician-details.dto';
 import { UpdatePresenceDto } from 'src/config/dto/update-presence.dto';
 import { TechnicianPresence } from '@prisma/client';
 import {
@@ -22,11 +27,14 @@ import {
   type UserPreferences,
 } from './dto/update-preferences.dto';
 
-const MAX_LOCATION_ACCURACY_M = 150;
-const COARSE_FIX_GRACE_MS = 5 * 60 * 1000;
+import { randomBytes } from 'crypto';
+import { evaluateFix, normalizeAccuracy, PendingMove } from './location-filter';
 
 @Injectable()
 export class UserService {
+  /** Per-technician move held back until consecutive fixes confirm it. */
+  private readonly pendingMoves = new Map<string, PendingMove>();
+
   constructor(
     private prisma: PrismaService,
     private activity: ActivitiesService,
@@ -197,6 +205,7 @@ export class UserService {
           },
           take: 1,
         },
+        tracking_device: { select: TRACKING_STATE_SELECT },
       },
     });
 
@@ -319,14 +328,9 @@ export class UserService {
     }
 
     if (!crm_get_user.ok) {
-      this.logger.error('Ticket Service', 'CRM User not found');
+      this.logger.error('User Service', `CRM user ${user_id} not found (${crm_get_user.status})`);
       return new ForbiddenException('CRM User not found');
     }
-
-    this.logger.log(
-      'Ticket Service',
-      'CRM Service request found' + crm_get_user,
-    );
 
     return crm_get_user.json();
   }
@@ -371,37 +375,51 @@ export class UserService {
         return latest ?? { skipped: true };
       }
 
-      // Indoors the phone falls back to Wi-Fi/cell positioning (often 200 m+ off), which makes
-      // the live map jump. Drop those fixes while a recent point exists so the marker stays put.
-      const accuracy = Number(location.accuracy);
-      if (Number.isFinite(accuracy) && accuracy > MAX_LOCATION_ACCURACY_M) {
-        const recent = await this.prisma.userLocationTracking.findFirst({
-          where: {
-            user_id: user.id,
-            created_at: { gte: new Date(Date.now() - COARSE_FIX_GRACE_MS) },
-          },
-          orderBy: { created_at: 'desc' },
-        });
-        if (recent) {
-          return recent;
-        }
+      const latest = await this.prisma.userLocationTracking.findFirst({
+        where: { user_id: user.id },
+        orderBy: { created_at: 'desc' },
+      });
+      if (location.mock) {
+        this.logger.warn('User Service', `Rejected mock location for user ${user.id}`);
+        return latest ?? { skipped: true };
       }
 
-      const add_location = await this.prisma.userLocationTracking.create({
+      const accuracy = normalizeAccuracy(location.accuracy);
+      const decision = evaluateFix(
+        {
+          latitude: location.latitude,
+          longitude: location.longitude,
+          accuracy,
+          at: recordedAt,
+        },
+        latest,
+        this.pendingMoves.get(user.id) ?? null,
+      );
+      if (decision.action !== 'store') {
+        if (decision.action === 'hold') {
+          this.pendingMoves.set(user.id, decision.pending);
+        }
+        this.logger.warn(
+          'User Service',
+          `Location not applied for user ${user.id}: ${
+            decision.action === 'hold'
+              ? `implausible jump, waiting for confirmation (${decision.pending.count})`
+              : decision.reason
+          }${accuracy !== null ? `, ±${Math.round(accuracy)} m` : ''}`,
+        );
+        return latest ?? { skipped: true };
+      }
+      this.pendingMoves.delete(user.id);
+
+      return await this.prisma.userLocationTracking.create({
         data: {
           user_id: user.id,
           latitude: location.latitude,
           longitude: location.longitude,
+          accuracy,
           created_at: recordedAt,
         },
       });
-
-      this.logger.log(
-        'User Service',
-        `User ${user.id} added location tracking at latitude: ${location.latitude}, longitude: ${location.longitude}`,
-      );
-
-      return add_location;
     } catch (error) {
       this.logger.error(
         'User Service',
@@ -409,6 +427,146 @@ export class UserService {
       );
       throw new ForbiddenException('Failed to add location tracking');
     }
+  }
+
+  private trackingServerUrl(): string | null {
+    const explicit = this.config.get<string>('TRACCAR_SERVER_URL')?.trim();
+    if (explicit) {
+      return explicit.replace(/\/+$/, '');
+    }
+    const base = this.config
+      .get<string>('PUBLIC_API_BASE_URL')
+      ?.trim()
+      .replace(/\/+$/, '');
+    if (!base) {
+      return null;
+    }
+    return base.endsWith('/api/v1')
+      ? `${base}/tracking/traccar`
+      : `${base}/api/v1/tracking/traccar`;
+  }
+
+  private newTrackingDeviceId(): string {
+    return `tk-${randomBytes(9).toString('hex')}`;
+  }
+
+  /** Traccar Client settings for the signed-in technician; issues a device id on first use. */
+  async getTrackingSetup(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { presence: true, tracking_device: { select: { device_id: true, ...TRACKING_STATE_SELECT } } },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    const deviceId =
+      user.tracking_device?.device_id ??
+      (
+        await this.prisma.trackingDevice.upsert({
+          where: { user_id: userId },
+          create: { user_id: userId, device_id: this.newTrackingDeviceId() },
+          update: {},
+        })
+      ).device_id;
+    const last = await this.prisma.userLocationTracking.findFirst({
+      where: { user_id: userId },
+      orderBy: { created_at: 'desc' },
+      select: { created_at: true, accuracy: true },
+    });
+    return {
+      device_id: deviceId,
+      server_url: this.trackingServerUrl(),
+      presence: user.presence,
+      last_point_at: last?.created_at ?? null,
+      last_point_accuracy: last?.accuracy ?? null,
+      last_seen_at: user.tracking_device?.last_seen_at ?? null,
+      is_moving: user.tracking_device?.is_moving ?? null,
+      motion_since: user.tracking_device?.motion_since ?? null,
+      battery_level: user.tracking_device?.battery_level ?? null,
+      is_charging: user.tracking_device?.is_charging ?? null,
+      // Moving: a point every minute (Android applies Interval only when Distance is 0).
+      // Stopped: stop detection pauses GPS to save battery and the heartbeat keeps checking in;
+      // Android may stretch the heartbeat to ~10 min, which the signal rules allow for.
+      recommended: {
+        distance_m: 0,
+        interval_s: 60,
+        stop_detection: true,
+        heartbeat_s: 300,
+        wake_lock: true,
+        accuracy: 'high',
+      },
+    };
+  }
+
+  /** Issues a new device id, e.g. after a phone is lost; the old id stops being accepted. */
+  async resetTrackingDevice(userId: string) {
+    const deviceId = this.newTrackingDeviceId();
+    await this.prisma.trackingDevice.upsert({
+      where: { user_id: userId },
+      create: { user_id: userId, device_id: deviceId },
+      update: { device_id: deviceId },
+    });
+    this.pendingMoves.delete(userId);
+    return this.getTrackingSetup(userId);
+  }
+
+  /**
+   * Stores a Traccar Client fix through the same filter as app-posted points.
+   * Points are kept only while the technician is on shift (Available or Busy).
+   */
+  async recordTrackerFix(
+    deviceId: string,
+    fix: {
+      latitude: number;
+      longitude: number;
+      accuracy: number | null;
+      timestamp?: string;
+      mock: boolean;
+      isMoving?: boolean | null;
+      battery?: number | null;
+      charging?: boolean | null;
+    },
+  ): Promise<'stored' | 'off_shift' | 'unknown_device'> {
+    const device = await this.prisma.trackingDevice.findUnique({
+      where: { device_id: deviceId },
+      select: {
+        is_moving: true,
+        user: { select: { id: true, name: true, is_active: true, presence: true } },
+      },
+    });
+    const user = device?.user;
+    if (!user || !user.is_active) {
+      return 'unknown_device';
+    }
+    // Updated even off shift, so a technician who goes back to Available while parked is not
+    // reported as silent: the stationary heartbeat keeps proving the phone is alive.
+    const now = new Date();
+    const motionKnown = typeof fix.isMoving === 'boolean';
+    await this.prisma.trackingDevice.update({
+      where: { device_id: deviceId },
+      data: {
+        last_seen_at: now,
+        ...(motionKnown ? { is_moving: fix.isMoving } : {}),
+        ...(motionKnown && fix.isMoving !== device.is_moving ? { motion_since: now } : {}),
+        ...(typeof fix.battery === 'number' ? { battery_level: fix.battery } : {}),
+        ...(typeof fix.charging === 'boolean' ? { is_charging: fix.charging } : {}),
+      },
+    });
+    if (user.presence === TechnicianPresence.OFFLINE) {
+      return 'off_shift';
+    }
+    await this.addLocationTracking(
+      {
+        latitude: fix.latitude,
+        longitude: fix.longitude,
+        accuracy: fix.accuracy ?? undefined,
+        timestamp: fix.timestamp,
+        mock: fix.mock,
+        provider: 'traccar',
+      },
+      user,
+    );
+    return 'stored';
   }
 
   
@@ -680,43 +838,31 @@ export class UserService {
     totalLocations: number;
     last8Hours: TechnicianLocationTracking[];
     currentLocation?: TechnicianLocationTracking;
+    device?: TrackingState | null;
   }> {
     try {
       // Calculate 8 hours ago
       const eightHoursAgo = new Date();
       eightHoursAgo.setHours(eightHoursAgo.getHours() - 8);
 
-      // Fetch all location tracking records for the user
-      const allLocations = await this.prisma.userLocationTracking.findMany({
-        where: {
-          user_id: user_id,
-        },
-        orderBy: {
-          created_at: 'desc',
-        },
-      });
-
-      // Filter locations from the last 8 hours (chronological for path UI)
-      const last8HoursLocations = allLocations
-        .filter(
-          (location) => new Date(location.created_at) >= eightHoursAgo,
-        )
-        .sort(
-          (a, b) =>
-            new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-        );
-
-      // Get current location (most recent by GPS time)
-      const currentLocation =
-        allLocations.length > 0 ? allLocations[0] : undefined;
-
-      this.logger.log(
-        'User Service',
-        `Found ${allLocations.length} total locations, ${last8HoursLocations.length} from last 8 hours for user: ${user_id}`,
-      );
+      const [totalLocations, last8HoursLocations, currentLocation, device] = await Promise.all([
+        this.prisma.userLocationTracking.count({ where: { user_id } }),
+        this.prisma.userLocationTracking.findMany({
+          where: { user_id, created_at: { gte: eightHoursAgo } },
+          orderBy: { created_at: 'asc' },
+        }),
+        this.prisma.userLocationTracking.findFirst({
+          where: { user_id },
+          orderBy: { created_at: 'desc' },
+        }),
+        this.prisma.trackingDevice.findUnique({
+          where: { user_id },
+          select: TRACKING_STATE_SELECT,
+        }),
+      ]);
 
       return {
-        totalLocations: allLocations.length,
+        totalLocations,
         last8Hours: last8HoursLocations.map((location) => ({
           id: location.id,
           latitude: location.latitude,
@@ -731,6 +877,7 @@ export class UserService {
               created_at: currentLocation.created_at,
             }
           : undefined,
+        device: device ?? null,
       };
     } catch (error) {
       this.logger.error(

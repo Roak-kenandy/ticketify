@@ -1,3 +1,5 @@
+import type { TrackingState } from "@/lib/technician-presence";
+
 export type LocationPoint = {
   latitude: number | string;
   longitude: number | string;
@@ -14,6 +16,7 @@ export type Technician = {
   busy_comment?: string | null;
   busy_until?: string | null;
   user_location_tracking?: LocationPoint[];
+  tracking_device?: TrackingState | null;
 };
 
 export type TechnicianTicket = {
@@ -51,6 +54,7 @@ export type TechnicianDetails = {
     totalLocations: number;
     currentLocation?: LocationPoint | null;
     last8Hours?: LocationPoint[];
+    device?: TrackingState | null;
   };
 };
 

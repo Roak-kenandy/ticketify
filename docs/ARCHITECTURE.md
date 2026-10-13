@@ -6,7 +6,7 @@ This document describes how Ticketify is structured today and the patterns we fo
 
 | Layer | Pattern | Why |
 |-------|---------|-----|
-| Overall | **Client–server** | Mobile app and admin panel are clients; core API is the server. |
+| Overall | **Client–server** | One web app (operations console + technician workspace, chosen by role) is the client; core API is the server. |
 | Backend | **Modular monolith** (NestJS modules) | One deployable API with bounded modules (auth, tickets, users, feedback). Matches team size and CRM-centric workflows without microservices overhead. |
 | CRM integration | **Hexagonal (ports & adapters)** | CRM is an external system; `CrmApiClient` is the adapter. Business rules stay in services; swap CRM by changing the adapter. |
 | Internals | **Layered** | Controllers → services → Prisma / CRM client. |
@@ -18,8 +18,9 @@ Microservices would add cost (distributed tracing, eventual consistency, ops) be
 
 ```mermaid
 flowchart LR
-  Tech[Technician mobile app]
-  Admin[Admin web panel]
+  Tech[Technician browser /field]
+  Traccar[Traccar Client on phone]
+  Admin[Operations console]
   Customer[Customer browser]
   API[Ticketify Core API]
   CRM[CRM Backoffice API]
@@ -27,6 +28,7 @@ flowchart LR
   PG[(PostgreSQL)]
 
   Tech --> API
+  Traccar --> API
   Admin --> API
   Customer --> Admin
   API --> CRM
@@ -38,8 +40,8 @@ flowchart LR
 
 | Container | Technology | Responsibility |
 |-----------|------------|----------------|
-| TiketifyApp | React Native | Field workflows, tickets, location, offline-aware UX |
-| ticketify-admin-panel | Next.js | Dispatch, users, reports, customer review UI |
+| ticketify-admin-panel | Next.js | One sign-in for every role. Technicians: `/field` (tickets, inventory, INCA, closure). Office roles: dispatch, users, reports, finance, inventory, customer review UI |
+| Traccar Client | Android/iOS app | Background GPS to `POST /api/v1/tracking/traccar` (per-technician device ID) |
 | ticketify-core-api | NestJS + Prisma | Auth, RBAC, ticket orchestration, feedback, audit logs |
 | CRM Backoffice | External REST | Source of truth for service requests |
 | PostgreSQL | Prisma | Users, roles, feedback, location, app metadata |

@@ -25,6 +25,7 @@ const contentSecurityPolicy = [
   `script-src 'self' 'unsafe-inline' ${isProduction ? "" : "'unsafe-eval'"} ${googleMaps.join(" ")}`,
   `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`,
   `img-src 'self' data: blob: https://medianet.mv ${googleMaps.join(" ")} ${apiOrigin}`,
+  "media-src 'self' blob:",
   `font-src 'self' data: https://fonts.gstatic.com`,
   `connect-src 'self' ${apiOrigin} ${googleMaps.join(" ")} ${isProduction ? "" : "ws: http://127.0.0.1:* http://localhost:*"}`,
   "frame-src 'none'",
@@ -44,7 +45,8 @@ const securityHeaders = [
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   {
     key: "Permissions-Policy",
-    value: "camera=(), microphone=(), geolocation=(self), payment=(), usb=()",
+    // Camera: serial scanning and site photos in the technician workspace.
+    value: "camera=(self), microphone=(), geolocation=(self), payment=(), usb=()",
   },
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
   ...(isProduction

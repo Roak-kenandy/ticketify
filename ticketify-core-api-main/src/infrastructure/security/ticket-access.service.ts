@@ -32,7 +32,7 @@ export class TicketAccessService {
   ) {}
 
   /** Roles that may see every ticket (also used for finance documents). */
-  static readonly ALL_TICKET_ROLES = [...OPS_VIEW_ROLES, 'Finance'];
+  static readonly ALL_TICKET_ROLES = [...OPS_VIEW_ROLES, 'Finance', 'Inventory'];
 
   async canAccess(user: AccessUser, kind: TicketScopeKind, value: string) {
     if (hasAnyRole(TicketAccessService.ALL_TICKET_ROLES, user.role)) {

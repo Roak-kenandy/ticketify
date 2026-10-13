@@ -207,3 +207,77 @@
     background-size: 40px 40px;
   }
 }
+
+/* Technician workspace (/field): the mobile app's palette, always light. */
+@layer base {
+  .field-app {
+    color-scheme: light;
+    --background: 225 45% 97%;
+    --foreground: 0 0% 13%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 13%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 13%;
+    --primary: 231 98% 16%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 40 100% 49%;
+    --secondary-foreground: 231 98% 16%;
+    --muted: 216 25% 95%;
+    --muted-foreground: 0 0% 46%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 76% 36%;
+    --success-foreground: 0 0% 100%;
+    --warning: 21 90% 48%;
+    --warning-foreground: 0 0% 100%;
+    --info: 221 83% 53%;
+    --info-foreground: 0 0% 100%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 231 98% 16%;
+    --radius: 16px;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-xl: 20px;
+    --shadow-card: 0 4px 12px rgba(15, 23, 42, 0.08);
+    -webkit-tap-highlight-color: transparent;
+    font-family:
+      system-ui,
+      -apple-system,
+      "Segoe UI",
+      Roboto,
+      "Helvetica Neue",
+      Arial,
+      sans-serif;
+  }
+}
+
+@layer components {
+  .field-app .card {
+    @apply rounded-lg bg-white p-4 shadow-card;
+  }
+  .field-app .field-label {
+    @apply text-sm font-semibold text-ink;
+  }
+  .field-app .field-hint {
+    @apply text-xs font-medium text-gray2;
+  }
+  .field-app .field-error {
+    @apply text-[13px] text-error;
+  }
+  .field-app .input {
+    @apply h-12 w-full rounded-md border border-borderlight bg-white px-3 text-[15px] text-ink outline-none placeholder:text-gray3 focus:border-primary disabled:opacity-60;
+  }
+  .field-app .textarea {
+    @apply min-h-[104px] w-full rounded-md border border-borderlight bg-white p-3 text-[15px] text-ink outline-none placeholder:text-gray3 focus:border-primary disabled:opacity-60;
+  }
+  .field-app .caption {
+    @apply text-xs font-medium text-gray2;
+  }
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}

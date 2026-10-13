@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { INVENTORY_ITEMS } from './inventory-items';
 
 const prisma = new PrismaClient();
 
@@ -112,7 +113,20 @@ async function main() {
     update: {},
   });
 
-  console.log('Phase 2 seed complete (templates, charges, assignment policy).');
+  // Create missing items only; the inventory team owns edits after the first seed.
+  for (const [index, item] of INVENTORY_ITEMS.entries()) {
+    await prisma.inventoryItem.upsert({
+      where: { code: item.code },
+      create: {
+        ...item,
+        conversion_factor: item.conversion_factor ?? 1,
+        sort_order: (index + 1) * 10,
+      },
+      update: {},
+    });
+  }
+
+  console.log('Phase 2 seed complete (templates, charges, assignment policy, inventory items).');
 }
 
 main()

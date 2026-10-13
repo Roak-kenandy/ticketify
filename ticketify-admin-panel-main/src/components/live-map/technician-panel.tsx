@@ -2,12 +2,15 @@
 
 import * as React from "react";
 import moment from "moment";
-import { MapPinOff, Search, Users, X } from "lucide-react";
+import { BatteryLow, MapPinOff, Navigation, Pause, Search, Users, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/access";
 import {
+  describeSignal,
+  isLowBattery,
   PRESENCE_UI,
   resolveTechnicianPresence,
+  trackingSignal,
   type TechnicianPresenceState,
 } from "@/lib/technician-presence";
 import { Input } from "@/components/ui/input";
@@ -247,6 +250,10 @@ function TechnicianRow({
   const ui = PRESENCE_UI[presence];
   const lastSeen = technician.user_location_tracking?.[0]?.created_at;
   const hasLocation = Boolean(technicianCoords(technician));
+  const signal = trackingSignal(presence, technician.tracking_device, lastSeen);
+  const signalText = describeSignal(signal);
+  const lowBattery = presence !== "offline" && isLowBattery(technician.tracking_device);
+  const SignalIcon = signal.kind === "moving" ? Navigation : signal.kind === "stopped" ? Pause : MapPinOff;
 
   return (
     <button
@@ -289,13 +296,32 @@ function TechnicianRow({
         </span>
         <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <span className={ui.textClass}>{ui.label}</span>
-          {lastSeen && (
+          {presence === "offline" && lastSeen && (
             <>
               <span aria-hidden>·</span>
               <span className="truncate">{moment(lastSeen).fromNow()}</span>
             </>
           )}
         </span>
+        {signalText && (
+          <span
+            className={cn(
+              "mt-0.5 flex items-center gap-1 text-xs",
+              signal.kind === "no_signal"
+                ? "font-medium text-amber-600 dark:text-amber-400"
+                : "text-muted-foreground",
+            )}
+          >
+            <SignalIcon className="h-3 w-3 shrink-0" aria-hidden />
+            <span className="truncate">{signalText}</span>
+          </span>
+        )}
+        {lowBattery && (
+          <span className="mt-0.5 flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400">
+            <BatteryLow className="h-3 w-3 shrink-0" aria-hidden />
+            Battery {technician.tracking_device?.battery_level}%
+          </span>
+        )}
         {presence === "busy" && technician.busy_comment && (
           <span className="mt-0.5 block truncate text-xs text-muted-foreground">
             “{technician.busy_comment}”

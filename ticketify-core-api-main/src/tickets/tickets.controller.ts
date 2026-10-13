@@ -180,6 +180,7 @@ export class TicketsController {
   @Throttle(SMS_THROTTLE)
   @Put(':id/complete')
   async complete(
+    @Req() req: AuthedRequest,
     @Param('id') ticket_id: string,
     @Body() body: CompleteTicketDto,
   ) {
@@ -187,6 +188,7 @@ export class TicketsController {
       ticket_id,
       body.comment,
       body.stage_id,
+      req.user.id,
     );
   }
 

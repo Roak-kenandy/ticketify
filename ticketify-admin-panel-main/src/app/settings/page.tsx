@@ -68,6 +68,7 @@ const START_PAGES: { value: StartPage; label: string; allowed: () => boolean }[]
   { value: "map", label: "Live map", allowed: () => hasAccess("ops") },
   { value: "operations", label: "Operations board", allowed: () => hasAccess("dispatch") },
   { value: "finance", label: "Finance overview", allowed: () => hasAccess("finance") },
+  { value: "inventory", label: "Inventory consumption", allowed: () => hasAccess("inventory") },
 ];
 
 export default function SettingsPage() {

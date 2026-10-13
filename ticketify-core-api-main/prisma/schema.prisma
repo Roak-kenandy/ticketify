@@ -31,6 +31,7 @@ model User {
   busy_until             DateTime?
   /// Per-user UI preferences for the admin panel (theme, density, start page…).
   preferences            Json?
+  tracking_device        TrackingDevice?
   created_at             DateTime               @default(now())
   updated_at             DateTime               @updatedAt
   user_log               UserLog[]
@@ -68,10 +69,34 @@ model UserLocationTracking {
   user_id    String
   latitude   Float
   longitude  Float
+  /// Reported horizontal accuracy in metres; null for older app builds.
+  accuracy   Float?
   created_at DateTime @default(now())
   user       User     @relation(fields: [user_id], references: [id])
 
+  @@index([user_id, created_at(sort: Desc)])
   @@map("user_location_tracking")
+}
+
+/// Traccar Client device identifier per technician. Kept off the users table so
+/// user payloads never expose it: anyone holding it can post that user's location.
+model TrackingDevice {
+  id         String   @id @default(cuid())
+  user_id    String   @unique
+  device_id  String   @unique
+  /// Last time Traccar Client contacted the server with this id, stored or not (off shift, filtered).
+  last_seen_at DateTime?
+  /// Traccar motion state from the last post; false while stop detection holds the phone stationary.
+  is_moving    Boolean?
+  /// When is_moving last changed, e.g. when the technician arrived on site.
+  motion_since DateTime?
+  battery_level Int?
+  is_charging  Boolean?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("tracking_devices")
 }
 
 model UserTicket {
@@ -293,4 +318,166 @@ model TicketReceipt {
 
   @@index([crm_ticket_id])
   @@map("ticket_receipts")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — Inventory consumption & INCA provisioning (keyed on the CRM SR id)
+// ---------------------------------------------------------------------------
+
+model InventoryItem {
+  id                String   @id @default(cuid())
+  code              String   @unique
+  name              String
+  category          String
+  stock_uom         String
+  consumption_uom   String
+  /// Consumption units per stock unit, e.g. 1000 for a 1000 m cable roll.
+  conversion_factor Decimal  @default(1) @db.Decimal(12, 4)
+  serialized        Boolean  @default(false)
+  allow_decimal     Boolean  @default(false)
+  remarks_required  Boolean  @default(false)
+  active            Boolean  @default(true)
+  notes             String?
+  sort_order        Int      @default(0)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  consumptions TicketInventoryConsumption[]
+
+  @@map("inventory_items")
+}
+
+enum InventoryDeclarationType {
+  USED
+  NONE_USED
+}
+
+/// One per Service Request: the technician's "Inventory used / No inventory used" answer.
+model TicketInventoryDeclaration {
+  id                  String                   @id @default(cuid())
+  crm_ticket_id       String                   @unique
+  sr_number           String?
+  declaration         InventoryDeclarationType
+  declared_by_user_id String
+  department          String?
+  service_type        String?
+  area                String?
+  customer_name       String?
+  declared_at         DateTime                 @default(now())
+  updated_at          DateTime                 @updatedAt
+
+  @@map("ticket_inventory_declarations")
+}
+
+enum InventoryConsumptionStatus {
+  POSTED
+  REVERSED
+}
+
+model TicketInventoryConsumption {
+  id                          String                     @id @default(cuid())
+  crm_ticket_id               String
+  sr_number                   String?
+  item_id                     String
+  item_name                   String
+  quantity                    Decimal                    @db.Decimal(12, 2)
+  uom                         String
+  serial_number               String?
+  remarks                     String?
+  technician_user_id          String
+  department                  String?
+  service_type                String?
+  area                        String?
+  customer_name               String?
+  provisioning_transaction_id String?
+  status                      InventoryConsumptionStatus @default(POSTED)
+  idempotency_key             String?                    @unique
+  posted_at                   DateTime                   @default(now())
+
+  item        InventoryItem         @relation(fields: [item_id], references: [id])
+  adjustments InventoryAdjustment[]
+
+  @@index([crm_ticket_id])
+  @@index([posted_at])
+  @@index([technician_user_id])
+  @@index([item_id])
+  @@map("ticket_inventory_consumptions")
+}
+
+model InventoryAdjustment {
+  id                   String   @id @default(cuid())
+  consumption_id       String
+  quantity_delta       Decimal  @db.Decimal(12, 2)
+  reason               String
+  requested_by_user_id String
+  approved_by_user_id  String?
+  created_at           DateTime @default(now())
+
+  consumption TicketInventoryConsumption @relation(fields: [consumption_id], references: [id])
+
+  @@index([consumption_id])
+  @@map("inventory_adjustments")
+}
+
+enum ProvisioningAction {
+  NEW_CONNECTION
+  ONT_REPLACEMENT
+  RELOCATION
+  SIGNAL_CHECK
+}
+
+enum ProvisioningStatus {
+  VALIDATING
+  REGISTERING_ONT
+  APPLYING_CONFIG
+  WAITING_TODO
+  VERIFYING
+  SUCCEEDED
+  FAILED
+}
+
+model ProvisioningTransaction {
+  id                 String             @id @default(cuid())
+  crm_ticket_id      String
+  sr_number          String?
+  action             ProvisioningAction
+  status             ProvisioningStatus @default(VALIDATING)
+  technician_user_id String
+  /// Submitted form values; secrets (PPPoE password) are never stored.
+  submitted          Json
+  /// Terminal node, ONT serials, OLT/PON, package, optical readings, verification flags.
+  result             Json?
+  ont_serial         String?
+  old_ont_serial     String?
+  /// True when a new ONT was physically installed and must appear in inventory.
+  installs_ont       Boolean            @default(false)
+  failed_stage       String?
+  error_message      String?
+  attempts           Int                @default(1)
+  started_at         DateTime           @default(now())
+  finished_at        DateTime?
+  updated_at         DateTime           @updatedAt
+
+  steps ProvisioningStep[]
+
+  @@index([crm_ticket_id])
+  @@index([status])
+  @@index([started_at])
+  @@map("provisioning_transactions")
+}
+
+model ProvisioningStep {
+  id             String   @id @default(cuid())
+  transaction_id String
+  attempt        Int
+  stage          String
+  ok             Boolean
+  message        String
+  detail         Json?
+  created_at     DateTime @default(now())
+
+  transaction ProvisioningTransaction @relation(fields: [transaction_id], references: [id])
+
+  @@index([transaction_id])
+  @@map("provisioning_steps")
 }

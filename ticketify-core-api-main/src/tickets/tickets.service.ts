@@ -25,6 +25,7 @@ import { CrmApiClient } from 'src/infrastructure/crm/crm-api.client';
 import { NotificationTemplateService } from 'src/notifications/notification-template.service';
 import { IntegrationAuditService } from 'src/infrastructure/audit/integration-audit.service';
 import { WorkflowConfigService } from 'src/config/workflow-config.service';
+import { ClosureValidationService } from 'src/closure/closure-validation.service';
 import { TicketBillingService } from 'src/finance/ticket-billing.service';
 import { LmHandoffDto } from './dto/lm-handoff.dto';
 import { signReviewLink } from 'src/infrastructure/security/review-link';
@@ -50,6 +51,7 @@ export class TicketsService {
     private audit: IntegrationAuditService,
     private workflowConfig: WorkflowConfigService,
     private ticketBilling: TicketBillingService,
+    private closure: ClosureValidationService,
   ) {}
 
   async createNewTicket(dto: CreateTicketDto) {
@@ -1414,10 +1416,16 @@ Medianet Support Team
     return updatedTicket;
   }
 
-  async completeTicket(ticket_id: string, comment: string, stage_id?: string) {
+  async completeTicket(
+    ticket_id: string,
+    comment: string,
+    stage_id?: string,
+    actorUserId?: string,
+  ) {
     await this.assertNoPendingNoResponse(ticket_id);
     await this.assertNoPendingLastMile(ticket_id);
     await this.ticketBilling.assertReadyToClose(ticket_id);
+    const closureChecks = await this.closure.assertReadyToClose(ticket_id);
 
     let ticket = await this.crmFindServiceRequest(ticket_id);
     const resolvedStageId =
@@ -1461,6 +1469,7 @@ Medianet Support Team
         crm_start_service_request.statusText,
       );
     }
+    await this.closure.recordClosure(ticket_id, actorUserId, closureChecks);
 
     const reviewUrl = this.buildCustomerReviewUrl(ticket_id, user.id);
 

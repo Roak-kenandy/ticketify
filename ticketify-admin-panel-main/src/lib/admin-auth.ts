@@ -19,6 +19,20 @@ const FINANCE_REPORT_ROLES = [
   'Administrator',
   'Supervisor',
 ];
+const INVENTORY_ROLES = ['Inventory', 'Admin', 'Administrator', 'Supervisor'];
+const ITEM_MASTER_ROLES = ['Admin', 'Administrator'];
+/** Same as FIELD_ROLES in the API: technicians plus managers who work tickets. */
+const FIELD_ROLES = ['Technician', 'Admin', 'Administrator', 'Supervisor'];
+/** Everyone who signs in to the operations console (not technicians). */
+export const CONSOLE_ROLES = ['Admin', 'Administrator', 'Supervisor', 'CEO', 'Finance', 'Inventory'];
+export const SIGN_IN_ROLES = CONSOLE_ROLES.concat(
+  FIELD_ROLES.filter((role) => !CONSOLE_ROLES.includes(role)),
+);
+
+function hasRole(allowed: string[], role: string): boolean {
+  const owned = role.toLowerCase();
+  return allowed.some((name) => name.toLowerCase() === owned);
+}
 
 function storedRoleName(): string {
   if (typeof window === 'undefined') {
@@ -88,6 +102,20 @@ export class AdminAuth {
     return FINANCE_REPORT_ROLES.includes(storedRoleName());
   }
 
+  static isInventory(): boolean {
+    return storedRoleName() === 'Inventory';
+  }
+
+  /** Consumption report, reconcile and adjust (Office Inventory Team + managers). */
+  static canAccessInventory(): boolean {
+    return INVENTORY_ROLES.includes(storedRoleName());
+  }
+
+  /** Create and edit items, UOMs and serial/decimal rules. */
+  static canManageItemMaster(): boolean {
+    return ITEM_MASTER_ROLES.includes(storedRoleName());
+  }
+
   static canViewOpsMap(): boolean {
     return PANEL_ROLES.includes(storedRoleName());
   }
@@ -129,13 +157,36 @@ export class AdminAuth {
     return DISPATCH_ROLES.includes(storedRoleName());
   }
 
-  /** Landing page: the user's chosen start page when they can access it, else the role default. */
+  static canSignIn(role: string): boolean {
+    return hasRole(SIGN_IN_ROLES, role);
+  }
+
+  /** Technician workspace under /field. */
+  static canUseFieldApp(): boolean {
+    return hasRole(FIELD_ROLES, storedRoleName());
+  }
+
+  static canUseConsole(): boolean {
+    return hasRole(CONSOLE_ROLES, storedRoleName());
+  }
+
+  /** Landing page: technicians go to /field, everyone else to their console home. */
   static homePath(): string {
+    if (!this.canUseConsole()) {
+      return this.canUseFieldApp() ? '/field' : '/auth/login';
+    }
+    return this.consoleHomePath();
+  }
+
+  /** The user's chosen start page when they can access it, else the role default. */
+  static consoleHomePath(): string {
     const startPage = storedStartPage();
     if (startPage === 'operations' && this.canViewDispatchBoard()) return '/dispatch';
     if (startPage === 'finance' && this.canAccessFinanceReports()) return '/finance';
+    if (startPage === 'inventory' && this.canAccessInventory()) return '/inventory';
     if (startPage === 'map' && this.canViewOpsMap()) return '/';
-    return this.isFinance() ? '/finance' : '/';
+    if (this.isFinance()) return '/finance';
+    return this.isInventory() ? '/inventory' : '/';
   }
 
   static isUserAuthorized(): boolean {

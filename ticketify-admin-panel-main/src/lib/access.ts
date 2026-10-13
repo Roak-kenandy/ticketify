@@ -7,6 +7,9 @@ export type AccessKey =
   | "dispatch-manage"
   | "reports"
   | "finance"
+  | "inventory"
+  | "provisioning"
+  | "field"
   | "admin";
 
 export function hasAccess(key: AccessKey): boolean {
@@ -21,6 +24,12 @@ export function hasAccess(key: AccessKey): boolean {
       return AdminAuth.canAccessReports();
     case "finance":
       return AdminAuth.canAccessFinanceReports();
+    case "inventory":
+      return AdminAuth.canAccessInventory();
+    case "provisioning":
+      return AdminAuth.canViewOpsMap();
+    case "field":
+      return AdminAuth.canUseFieldApp();
     case "admin":
       return AdminAuth.canAccessAdminPanel();
     default:

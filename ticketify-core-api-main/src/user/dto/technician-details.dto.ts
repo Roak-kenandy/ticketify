@@ -24,6 +24,23 @@ export interface TechnicianLocationTracking {
   created_at: Date;
 }
 
+/** Traccar Client state shown to dispatch. Never includes the device id (it is a credential). */
+export const TRACKING_STATE_SELECT = {
+  last_seen_at: true,
+  is_moving: true,
+  motion_since: true,
+  battery_level: true,
+  is_charging: true,
+} as const;
+
+export interface TrackingState {
+  last_seen_at: Date | null;
+  is_moving: boolean | null;
+  motion_since: Date | null;
+  battery_level: number | null;
+  is_charging: boolean | null;
+}
+
 export interface TechnicianDetailsDto {
   user: {
     id: string;
@@ -57,5 +74,7 @@ export interface TechnicianDetailsDto {
     totalLocations: number;
     last8Hours: TechnicianLocationTracking[];
     currentLocation?: TechnicianLocationTracking;
+    /** Traccar Client state; null when the technician has not set it up. */
+    device?: TrackingState | null;
   };
 }

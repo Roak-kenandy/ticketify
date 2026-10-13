@@ -3,9 +3,13 @@
 import * as React from "react";
 import moment from "moment";
 import {
+  Battery,
+  BatteryLow,
   Clock,
+  Navigation,
   Mail,
   MapPin,
+  MapPinOff,
   Pause,
   Phone,
   Play,
@@ -15,7 +19,13 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/access";
-import { PRESENCE_UI, resolveTechnicianPresence } from "@/lib/technician-presence";
+import {
+  describeSignal,
+  isLowBattery,
+  PRESENCE_UI,
+  resolveTechnicianPresence,
+  trackingSignal,
+} from "@/lib/technician-presence";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -70,6 +80,11 @@ export function TechnicianDetailsPanel({
   const tickets = details?.serviceTickets;
   const ratings = details?.ratings;
   const tracking = details?.locationTracking;
+  const device = tracking?.device ?? technician?.tracking_device ?? null;
+  const signal = trackingSignal(presence, device, tracking?.currentLocation?.created_at);
+  const signalText = describeSignal(signal);
+  const stale = Boolean(details) && signal.kind === "no_signal";
+  const lowBattery = presence !== "offline" && isLowBattery(device);
 
   return (
     <aside
@@ -183,6 +198,40 @@ export function TechnicianDetailsPanel({
                 </p>
               ) : (
                 <p className="text-sm text-muted-foreground">No location shared yet.</p>
+              )}
+              {signalText && !stale && (
+                <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                  {signal.kind === "stopped" ? (
+                    <Pause className="h-3.5 w-3.5" />
+                  ) : (
+                    <Navigation className="h-3.5 w-3.5" />
+                  )}
+                  {signalText}
+                </p>
+              )}
+              {typeof device?.battery_level === "number" && (
+                <p
+                  className={cn(
+                    "flex items-center gap-2 text-sm",
+                    lowBattery ? "font-medium text-destructive" : "text-muted-foreground",
+                  )}
+                >
+                  {lowBattery ? <BatteryLow className="h-3.5 w-3.5" /> : <Battery className="h-3.5 w-3.5" />}
+                  Battery {device.battery_level}%{device.is_charging ? " · charging" : ""}
+                </p>
+              )}
+              {stale && (
+                <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm">
+                  <MapPinOff className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden />
+                  <div>
+                    <p className="font-medium text-warning">{signalText}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {ui.label}, but the phone has stopped checking in
+                      {device?.is_moving === true ? " while moving" : ""}. Traccar Client may be switched off,
+                      closed by battery saving, the battery may be flat, or the phone may have no data.
+                    </p>
+                  </div>
+                </div>
               )}
               <PlaybackControls playback={playback} onStart={onStartPlayback} />
             </section>
