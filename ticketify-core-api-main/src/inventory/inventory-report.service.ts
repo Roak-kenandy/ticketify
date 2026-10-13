@@ -3,6 +3,16 @@ import { Prisma, ProvisioningAction } from '@prisma/client';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { ACTION_LABELS } from 'src/provisioning/provisioning-policy';
 import { effectiveQuantity } from './ticket-inventory.service';
+import {
+  displayDate,
+  parseDate,
+  ReportColumn,
+  round2,
+  splitList,
+  startOfMaldivesMonth,
+  toCsv,
+  toExcel,
+} from './report-format';
 
 export type InventoryReportQuery = {
   from?: string;
@@ -66,15 +76,19 @@ export type InventorySummary = {
     lines: number;
     serials: number;
   }[];
+  /** Business line: department + service type of the SR. */
+  by_business_line: {
+    department: string;
+    service_type: string;
+    tickets: number;
+    lines: number;
+    items: { item_name: string; uom: string; quantity: number }[];
+  }[];
 };
 
 const MAX_ROWS = 10_000;
-const MALDIVES_OFFSET_MS = 5 * 60 * 60 * 1000;
 
-const COLUMNS: {
-  header: string;
-  value: (row: InventoryReportRow) => string | number | null;
-}[] = [
+const COLUMNS: ReportColumn<InventoryReportRow>[] = [
   { header: 'Date / time', value: (row) => displayDate(row.posted_at) },
   { header: 'SR ID', value: (row) => row.sr_number ?? row.crm_ticket_id },
   { header: 'Technician', value: (row) => row.technician_name },
@@ -152,6 +166,10 @@ export class InventoryReportService {
       InventorySummary['by_technician'][number] & { ticketSet: Set<string> }
     >();
     const items = new Map<string, InventorySummary['by_item'][number]>();
+    const businessLines = new Map<
+      string,
+      InventorySummary['by_business_line'][number] & { ticketSet: Set<string> }
+    >();
     for (const row of active) {
       const tech = technicians.get(row.technician_user_id) ?? {
         technician_user_id: row.technician_user_id,
@@ -190,6 +208,29 @@ export class InventoryReportService {
       item.lines += 1;
       if (row.serial_number) item.serials += 1;
       items.set(row.item_id, item);
+
+      const department = row.department?.trim() || 'Unspecified';
+      const serviceType = row.service_type?.trim() || 'Unspecified';
+      const lineKey = `${department}\u0000${serviceType}`;
+      const line = businessLines.get(lineKey) ?? {
+        department,
+        service_type: serviceType,
+        tickets: 0,
+        lines: 0,
+        items: [],
+        ticketSet: new Set<string>(),
+      };
+      line.lines += 1;
+      line.ticketSet.add(row.crm_ticket_id);
+      const lineItem = line.items.find(
+        (entry) => entry.item_name === row.item_name && entry.uom === row.uom,
+      );
+      if (lineItem) {
+        lineItem.quantity = round2(lineItem.quantity + row.quantity);
+      } else {
+        line.items.push({ item_name: row.item_name, uom: row.uom, quantity: row.quantity });
+      }
+      businessLines.set(lineKey, line);
     }
     return {
       totals: {
@@ -214,6 +255,18 @@ export class InventoryReportService {
       by_item: [...items.values()].sort(
         (a, b) => b.lines - a.lines || a.item_name.localeCompare(b.item_name),
       ),
+      by_business_line: [...businessLines.values()]
+        .map(({ ticketSet, ...line }) => ({
+          ...line,
+          tickets: ticketSet.size,
+          items: line.items.sort((a, b) => a.item_name.localeCompare(b.item_name)),
+        }))
+        .sort(
+          (a, b) =>
+            b.tickets - a.tickets ||
+            a.department.localeCompare(b.department) ||
+            a.service_type.localeCompare(b.service_type),
+        ),
     };
   }
 
@@ -258,58 +311,23 @@ export class InventoryReportService {
         .map(([id, name]) => ({ id, name }))
         .sort((a, b) => a.name.localeCompare(b.name)),
       items,
-      default_from: this.startOfMaldivesMonth().toISOString(),
+      default_from: startOfMaldivesMonth().toISOString(),
     };
   }
 
   toCsv(rows: InventoryReportRow[]): string {
-    const escape = (value: string | number | null) => {
-      const text = value === null || value === undefined ? '' : String(value);
-      // Leading =, +, - or @ would be evaluated as a formula by spreadsheet apps.
-      const safe =
-        /^[=+\-@\t\r]/.test(text) && typeof value !== 'number'
-          ? `'${text}`
-          : text;
-      return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-    };
-    const lines = [
-      COLUMNS.map((column) => escape(column.header)).join(','),
-      ...rows.map((row) =>
-        COLUMNS.map((column) => escape(column.value(row))).join(','),
-      ),
-    ];
-    return `\uFEFF${lines.join('\r\n')}\r\n`;
+    return toCsv(COLUMNS, rows);
   }
 
   toExcel(rows: InventoryReportRow[]): string {
-    const cell = (value: string | number | null) =>
-      typeof value === 'number'
-        ? `<Cell><Data ss:Type="Number">${value}</Data></Cell>`
-        : `<Cell><Data ss:Type="String">${escapeXml(value ?? '')}</Data></Cell>`;
-    const header = COLUMNS.map((column) => cell(column.header)).join('');
-    const body = rows
-      .map(
-        (row) =>
-          `<Row>${COLUMNS.map((column) => cell(column.value(row))).join('')}</Row>`,
-      )
-      .join('\n');
-    return `<?xml version="1.0"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-<Worksheet ss:Name="Inventory consumption">
-<Table>
-<Row>${header}</Row>
-${body}
-</Table>
-</Worksheet>
-</Workbook>`;
+    return toExcel('Inventory consumption', COLUMNS, rows);
   }
 
   private async where(
     query: InventoryReportQuery,
   ): Promise<Prisma.TicketInventoryConsumptionWhereInput> {
     const filters: Prisma.TicketInventoryConsumptionWhereInput[] = [];
-    const from = parseDate(query.from) ?? this.startOfMaldivesMonth();
+    const from = parseDate(query.from) ?? startOfMaldivesMonth();
     const to = parseDate(query.to, true);
     filters.push({ posted_at: to ? { gte: from, lte: to } : { gte: from } });
 
@@ -382,47 +400,4 @@ ${body}
       users.map((user) => [user.id, user.name?.trim() || user.email]),
     );
   }
-
-  private startOfMaldivesMonth(): Date {
-    const local = new Date(Date.now() + MALDIVES_OFFSET_MS);
-    return new Date(
-      Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), 1) -
-        MALDIVES_OFFSET_MS,
-    );
-  }
-}
-
-function splitList(value?: string): string[] {
-  return (value ?? '')
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .slice(0, 200);
-}
-
-/** Plain YYYY-MM-DD dates are whole days in Maldives time. */
-function parseDate(value?: string, endOfDay = false): Date | null {
-  const raw = value?.trim();
-  if (!raw) return null;
-  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(raw)
-    ? new Date(`${raw}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}+05:00`)
-    : new Date(raw);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function displayDate(value: Date): string {
-  const local = new Date(value.getTime() + MALDIVES_OFFSET_MS);
-  return local.toISOString().slice(0, 16).replace('T', ' ');
-}
-
-function escapeXml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
 }

@@ -15,6 +15,21 @@ export type InventoryItem = {
   notes: string | null;
 };
 
+export type MyStockItem = {
+  item: Pick<
+    InventoryItem,
+    "id" | "code" | "name" | "category" | "consumption_uom" | "serialized" | "allow_decimal" | "remarks_required" | "active"
+  >;
+  issued: number;
+  consumed: number;
+  returned: number;
+  in_hand: number;
+  serials: { serial_number: string; issued_at: string }[];
+};
+
+/** What the inventory team issued to the signed-in user; restricted = may only record these. */
+export type MyStock = { restricted: boolean; items: MyStockItem[] };
+
 export type InventoryLine = {
   id: string;
   item_id: string;

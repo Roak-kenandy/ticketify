@@ -342,9 +342,73 @@ model InventoryItem {
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
 
-  consumptions TicketInventoryConsumption[]
+  consumptions    TicketInventoryConsumption[]
+  stock_movements TechnicianStockMovement[]
+  serial_units    SerialUnit[]
 
   @@map("inventory_items")
+}
+
+enum StockMovementType {
+  ISSUE
+  RETURN
+}
+
+enum StockReturnCondition {
+  GOOD
+  FAULTY
+}
+
+enum SerialUnitStatus {
+  WITH_TECHNICIAN
+  CONSUMED
+  RETURNED
+  FAULTY
+}
+
+/// Items the inventory team hands to (ISSUE) or takes back from (RETURN) a technician.
+/// Quantities are in the item's consumption UOM; serialized items are one row per serial.
+model TechnicianStockMovement {
+  id                   String                @id @default(cuid())
+  /// One issue/return slip; also the client idempotency key for that slip.
+  batch_id             String
+  type                 StockMovementType
+  technician_user_id   String
+  item_id              String
+  item_name            String
+  quantity             Decimal               @db.Decimal(12, 2)
+  uom                  String
+  serial_number        String?
+  condition            StockReturnCondition?
+  reference            String?
+  notes                String?
+  performed_by_user_id String
+  created_at           DateTime              @default(now())
+
+  item InventoryItem @relation(fields: [item_id], references: [id])
+
+  @@index([technician_user_id, item_id])
+  @@index([created_at])
+  @@index([batch_id])
+  @@index([serial_number])
+  @@map("technician_stock_movements")
+}
+
+/// Where each serialized unit (ONT, router…) is right now; history is in the movements and consumptions.
+model SerialUnit {
+  id                 String           @id @default(cuid())
+  serial_number      String           @unique
+  item_id            String
+  status             SerialUnitStatus
+  technician_user_id String?
+  consumption_id     String?          @unique
+  issued_at          DateTime         @default(now())
+  updated_at         DateTime         @updatedAt
+
+  item InventoryItem @relation(fields: [item_id], references: [id])
+
+  @@index([technician_user_id, status])
+  @@map("serial_units")
 }
 
 enum InventoryDeclarationType {
@@ -391,6 +455,8 @@ model TicketInventoryConsumption {
   customer_name               String?
   provisioning_transaction_id String?
   status                      InventoryConsumptionStatus @default(POSTED)
+  /// Drawn from the technician's issued stock; older lines predate issuing and are not.
+  stock_tracked               Boolean                    @default(false)
   idempotency_key             String?                    @unique
   posted_at                   DateTime                   @default(now())
 

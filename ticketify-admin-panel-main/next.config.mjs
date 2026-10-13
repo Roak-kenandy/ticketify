@@ -62,6 +62,7 @@ const securityHeaders = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   poweredByHeader: false,
+  devIndicators: false,
   reactStrictMode: true,
   productionBrowserSourceMaps: false,
   // Only small local logos use next/image; serving them as-is keeps the

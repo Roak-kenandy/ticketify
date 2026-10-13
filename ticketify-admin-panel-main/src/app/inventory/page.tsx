@@ -101,7 +101,7 @@ const emptyFilters = (): Filters => ({
   sr: "",
 });
 
-type View = "detail" | "technician" | "item";
+type View = "detail" | "technician" | "item" | "business";
 
 const STATUS_BADGE: Record<
   InventoryRowStatus,
@@ -470,6 +470,11 @@ export default function InventoryConsumptionPage() {
                 label: "By item",
                 count: summary?.by_item.length,
               },
+              {
+                value: "business",
+                label: "By business line",
+                count: summary?.by_business_line?.length,
+              },
             ]}
           />
         </div>
@@ -680,6 +685,56 @@ export default function InventoryConsumptionPage() {
                     <TableCell>
                       <div className="flex flex-wrap gap-1.5">
                         {tech.items.map((item) => (
+                          <Badge
+                            key={`${item.item_name}-${item.uom}`}
+                            variant="outline"
+                            className="font-normal"
+                          >
+                            {item.item_name}
+                            <span className="font-medium tabular-nums">
+                              {formatQuantity(item.quantity, item.uom)}
+                            </span>
+                          </Badge>
+                        ))}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        ) : view === "business" ? (
+          <Table containerClassName="max-h-[calc(100dvh-460px)] min-h-[320px]">
+            <TableHeader sticky>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Department</TableHead>
+                <TableHead>Service type</TableHead>
+                <TableHead className="text-right">Service requests</TableHead>
+                <TableHead className="text-right">Lines</TableHead>
+                <TableHead>Items used</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading ? (
+                <TableSkeletonRows columns={5} rows={6} />
+              ) : (
+                summary?.by_business_line.map((line) => (
+                  <TableRow key={`${line.department}-${line.service_type}`}>
+                    <TableCell className="whitespace-nowrap font-medium">
+                      {line.department}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {line.service_type}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {line.tickets}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {line.lines}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1.5">
+                        {line.items.map((item) => (
                           <Badge
                             key={`${item.item_name}-${item.uom}`}
                             variant="outline"

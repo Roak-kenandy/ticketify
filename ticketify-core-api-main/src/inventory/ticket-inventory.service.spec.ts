@@ -65,7 +65,10 @@ function build(
       fn({
         ticketInventoryDeclaration: { upsert: jest.fn() },
         ticketInventoryConsumption: {
-          create: jest.fn(async ({ data }) => created.push(data)),
+          create: jest.fn(async ({ data }) => {
+            created.push(data);
+            return { id: `line-${created.length}` };
+          }),
         },
       }),
     ),
@@ -86,14 +89,20 @@ function build(
   };
   const access = { canAccess: jest.fn().mockResolvedValue(true) };
   const audit = { log: jest.fn().mockResolvedValue(true) };
+  const stock = {
+    assertCanDraw: jest.fn().mockResolvedValue(undefined),
+    markConsumed: jest.fn().mockResolvedValue(undefined),
+    releaseConsumption: jest.fn().mockResolvedValue(undefined),
+  };
   const service = new TicketInventoryService(
     prisma as never,
     audit as never,
     items as never,
     snapshots as never,
     access as never,
+    stock as never,
   );
-  return { service, created, audit };
+  return { service, created, audit, stock };
 }
 
 const actor = { id: 'tech-1', crm_user_id: 'crm-1', role: ['Technician'] };
@@ -123,6 +132,50 @@ describe('TicketInventoryService', () => {
     expect(created[0].uom).toBe('Meter');
     expect(created[1].serial_number).toBe('HWTC0001ABCD');
     expect(created[1].sr_number).toBe('SR-100');
+  });
+
+  it('draws technician lines from issued stock and marks the ONT installed', async () => {
+    const { service, created, stock } = build();
+    await service.declare(
+      'sr-1',
+      actor,
+      dto([
+        { item_id: 'cable', quantity: 12.5 },
+        { item_id: 'ont', quantity: 1, serial_number: 'HWTC0001ABCD' },
+      ]),
+    );
+    expect(stock.assertCanDraw).toHaveBeenCalledWith(
+      expect.anything(),
+      'tech-1',
+      [
+        expect.objectContaining({ quantity: 12.5, serial: null }),
+        expect.objectContaining({ quantity: 1, serial: 'HWTC0001ABCD' }),
+      ],
+    );
+    expect(created.every((line) => line.stock_tracked === true)).toBe(true);
+    expect(stock.markConsumed).toHaveBeenCalledWith(expect.anything(), 'HWTC0001ABCD', 'line-2');
+  });
+
+  it('posts nothing when the technician does not hold the stock', async () => {
+    const { service, created, stock } = build();
+    stock.assertCanDraw.mockRejectedValueOnce(
+      new BadRequestException('2 Core Cable has not been issued to you.'),
+    );
+    await expect(
+      service.declare('sr-1', actor, dto([{ item_id: 'cable', quantity: 3 }])),
+    ).rejects.toThrow(/not been issued/);
+    expect(created).toHaveLength(0);
+  });
+
+  it('lets the inventory team post corrections outside issued stock', async () => {
+    const { service, created, stock } = build();
+    await service.declare(
+      'sr-1',
+      { id: 'inv-1', role: ['Inventory'] },
+      dto([{ item_id: 'cable', quantity: 3 }]),
+    );
+    expect(stock.assertCanDraw).not.toHaveBeenCalled();
+    expect(created[0].stock_tracked).toBe(false);
   });
 
   it('rejects decimals on whole-unit items and more than 2 decimals', async () => {

@@ -1,6 +1,8 @@
 import {
   BarChart3,
   Boxes,
+  ClipboardList,
+  PackageCheck,
   PackageSearch,
   RadioTower,
   FileSpreadsheet,
@@ -99,6 +101,19 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: PackageSearch,
         access: "inventory",
         exact: true,
+      },
+      {
+        label: "Technician stock",
+        href: "/inventory/stock",
+        icon: PackageCheck,
+        access: "inventory",
+        exact: true,
+      },
+      {
+        label: "Stock report",
+        href: "/inventory/stock/report",
+        icon: ClipboardList,
+        access: "inventory",
       },
       {
         label: "Item master",

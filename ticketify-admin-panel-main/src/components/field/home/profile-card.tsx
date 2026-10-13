@@ -9,9 +9,24 @@ import { cn } from "@/lib/field/cn";
 import { fieldContainer } from "@/lib/field/layout";
 import { showError } from "@/lib/field/notify";
 import { useSession } from "@/lib/field/session";
-import { initials, PRESENCE_META, presenceFromUser, type Presence } from "@/lib/field/ticket-meta";
+import { PRESENCE_META, presenceFromUser, type Presence } from "@/lib/field/ticket-meta";
 
-/** Dashboard header: menu, avatar, name and the Available / Busy / Offline switch. */
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function firstName(name?: string) {
+  return String(name ?? "").trim().split(/\s+/)[0] || "there";
+}
+
+function todayLabel() {
+  return new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
+}
+
+/** Dashboard header: menu, greeting and the Available / Busy / Offline switch. */
 export default function ProfileCard() {
   const drawer = useDrawer();
   const { token, user, updateUser } = useSession();
@@ -90,41 +105,41 @@ export default function ProfileCard() {
           >
             <Menu className="h-[26px] w-[26px] text-primary" />
           </button>
-          <div className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-full bg-secondary min-[360px]:flex text-[15px] font-bold text-primary">
-            {initials(user?.name)}
-          </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[17px] font-bold text-white">{user?.name ?? "Technician"}</p>
-            <p className="mt-0.5 truncate text-xs text-white/75">{user?.email ?? ""}</p>
+            <p className="truncate text-[17px] font-bold text-white">
+              {greeting()}, {firstName(user?.name)}
+            </p>
+            <p className="mt-0.5 truncate text-xs text-white/75">{todayLabel()}</p>
           </div>
         </div>
-        <div className="flex shrink-0 flex-col items-center gap-0.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-white/65">Availability</span>
-          <div className="flex items-center gap-0.5" role="radiogroup" aria-label="Availability">
-            {(["ONLINE", "BUSY", "OFFLINE"] as Presence[]).map((key) => {
-              const meta = PRESENCE_META[key];
-              const active = presence === key;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  aria-label={`${meta.label}: ${meta.description}`}
-                  title={meta.label}
-                  disabled={submitting}
-                  onClick={() => onSelect(key)}
-                  className="flex h-8 w-8 items-center justify-center rounded-full disabled:cursor-wait"
-                >
-                  <span
-                    className={cn("h-[22px] w-[22px] rounded-full border-[3px]", !active && "opacity-45")}
-                    style={{ backgroundColor: meta.color, borderColor: active ? "#FFFFFF" : "transparent" }}
-                  />
-                </button>
-              );
-            })}
-          </div>
-          <span className="text-xs font-bold text-[#F8FAFC]">{PRESENCE_META[presence].label}</span>
+        <div
+          className="flex shrink-0 items-center gap-0.5 rounded-full bg-white/10 p-1"
+          role="radiogroup"
+          aria-label="Availability"
+        >
+          {(["ONLINE", "BUSY", "OFFLINE"] as Presence[]).map((key) => {
+            const meta = PRESENCE_META[key];
+            const active = presence === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                aria-label={`${meta.label}: ${meta.description}`}
+                title={meta.description}
+                disabled={submitting}
+                onClick={() => onSelect(key)}
+                className={cn(
+                  "flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold transition-colors disabled:cursor-wait",
+                  active ? "bg-white text-ink shadow-sm" : "text-white/75 hover:text-white",
+                )}
+              >
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: meta.color }} />
+                <span className={cn(!active && "hidden sm:inline")}>{meta.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 

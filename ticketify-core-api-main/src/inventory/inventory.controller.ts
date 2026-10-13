@@ -40,6 +40,10 @@ import {
   InventoryReportQuery,
   InventoryReportService,
 } from './inventory-report.service';
+import { StockIssueDto, StockReturnDto } from './dto/stock.dto';
+import { ReportColumn, toCsv, toExcel } from './report-format';
+import { StockReportQuery, StockReportService } from './stock-report.service';
+import { TechnicianStockService } from './technician-stock.service';
 
 const TICKET_ROLES = [...new Set([...FIELD_ROLES, ...INVENTORY_ROLES])];
 
@@ -51,6 +55,8 @@ export class InventoryController {
     private readonly items: InventoryItemsService,
     private readonly tickets: TicketInventoryService,
     private readonly report: InventoryReportService,
+    private readonly stock: TechnicianStockService,
+    private readonly stockReport: StockReportService,
   ) {}
 
   @UseGuards(JwtGuard, RolesGuard)
@@ -171,4 +177,96 @@ export class InventoryController {
     );
     res.send(this.report.toExcel(rows));
   }
+
+  /** The caller's own issued stock; the field app only offers these items. */
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(TICKET_ROLES)
+  @Get('stock/mine')
+  myStock(@Req() req: AuthedRequest) {
+    return this.stock.mine(req.user);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(INVENTORY_ROLES)
+  @Get('stock/technicians')
+  stockTechnicians() {
+    return this.stock.technicians();
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(INVENTORY_ROLES)
+  @Post('stock/issue')
+  issueStock(@Req() req: AuthedRequest, @Body() body: StockIssueDto) {
+    return this.stock.issue(req.user, body);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(INVENTORY_ROLES)
+  @Post('stock/return')
+  returnStock(@Req() req: AuthedRequest, @Body() body: StockReturnDto) {
+    return this.stock.returnStock(req.user, body);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(INVENTORY_ROLES)
+  @Get('stock/summary')
+  stockSummary(@Query() query: StockReportQuery) {
+    return this.stockReport.summary(query);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(INVENTORY_ROLES)
+  @Get('stock/summary/export')
+  async exportStockSummary(
+    @Query() query: StockReportQuery & { format?: string },
+    @Res() res: Response,
+  ) {
+    const { rows } = await this.stockReport.summary(query);
+    sendSheet(res, query.format, 'technician-stock', 'Technician stock', this.stockReport.summaryColumns, rows);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(INVENTORY_ROLES)
+  @Get('stock/movements')
+  stockMovements(@Query() query: StockReportQuery) {
+    return this.stockReport.movements(query);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(INVENTORY_ROLES)
+  @Get('stock/movements/export')
+  async exportStockMovements(
+    @Query() query: StockReportQuery & { format?: string },
+    @Res() res: Response,
+  ) {
+    const rows = await this.stockReport.movements(query);
+    sendSheet(res, query.format, 'stock-issues-returns', 'Issues and returns', this.stockReport.movementColumns, rows);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(INVENTORY_ROLES)
+  @Get('stock/serials')
+  stockSerials(@Query() query: StockReportQuery) {
+    return this.stockReport.serials(query);
+  }
+}
+
+function sendSheet<Row>(
+  res: Response,
+  format: string | undefined,
+  fileName: string,
+  sheetName: string,
+  columns: ReportColumn<Row>[],
+  rows: Row[],
+) {
+  const stamp = new Date().toISOString().slice(0, 10);
+  if (format === 'csv') {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}-${stamp}.csv"`);
+    res.send(toCsv(columns, rows));
+    return;
+  }
+  res.setHeader('Content-Type', 'application/vnd.ms-excel; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${fileName}-${stamp}.xls"`);
+  res.send(toExcel(sheetName, columns, rows));
 }

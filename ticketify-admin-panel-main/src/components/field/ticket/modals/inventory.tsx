@@ -34,7 +34,7 @@ import { cn } from "@/lib/field/cn";
 import { showError, showSuccess } from "@/lib/field/notify";
 import { isValidSerial, normalizeSerial } from "@/lib/field/serial";
 import { useSession } from "@/lib/field/session";
-import type { InventoryItem, InventoryLine, TicketInventory } from "@/types/field-workflow";
+import type { InventoryItem, InventoryLine, MyStock, TicketInventory } from "@/types/field-workflow";
 
 type Declaration = "USED" | "NONE_USED";
 
@@ -70,6 +70,7 @@ export default function InventoryModal({
 }) {
   const { token } = useSession();
   const [items, setItems] = React.useState<InventoryItem[]>([]);
+  const [stock, setStock] = React.useState<MyStock | null>(null);
   const [inventory, setInventory] = React.useState<TicketInventory | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [loadError, setLoadError] = React.useState("");
@@ -87,11 +88,13 @@ export default function InventoryModal({
     setLoading(true);
     setLoadError("");
     try {
-      const [itemList, current]: [InventoryItem[], TicketInventory] = await Promise.all([
+      const [itemList, current, mine]: [InventoryItem[], TicketInventory, MyStock] = await Promise.all([
         apiGet("/inventory/items", token),
         apiGet(`/inventory/tickets/${ticketId}`, token),
+        apiGet("/inventory/stock/mine", token),
       ]);
       setItems(itemList);
+      setStock(mine);
       setInventory(current);
       const byId = new Map(itemList.map((item) => [item.id, item]));
       const proposed = current.proposed_lines.flatMap((line) => {
@@ -138,17 +141,39 @@ export default function InventoryModal({
     [postedLines],
   );
 
+  const restricted = Boolean(stock?.restricted);
+  const held = React.useMemo(() => new Map((stock?.items ?? []).map((entry) => [entry.item.id, entry])), [stock]);
+  const pickerItems = React.useMemo(
+    () => (restricted ? items.filter((item) => (held.get(item.id)?.in_hand ?? 0) > 0) : items),
+    [restricted, items, held],
+  );
+
   const errors = React.useMemo(() => {
     const result: Record<string, DraftErrors> = {};
     const seen = new Set<string>();
+    const requested = new Map<string, number>();
+    for (const draft of drafts) {
+      if (!draft.item.serialized) {
+        requested.set(draft.item.id, (requested.get(draft.item.id) ?? 0) + (parseQuantity(draft.quantity) || 0));
+      }
+    }
     for (const draft of drafts) {
       const entry: DraftErrors = {};
       if (!draft.item.serialized) {
         entry.quantity = quantityError(draft.item, draft.quantity);
+        const inHand = held.get(draft.item.id)?.in_hand ?? 0;
+        if (!entry.quantity && restricted && (requested.get(draft.item.id) ?? 0) > inHand) {
+          entry.quantity = inHand > 0 ? `You only have ${formatQuantity(inHand, draft.item.consumption_uom)} issued` : "Not issued to you";
+        }
       } else {
         const serial = normalizeSerial(draft.serial);
         if (!serial) {
-          entry.serial = "Scan or enter the serial number";
+          entry.serial = restricted ? "Choose one of your issued serials" : "Scan or enter the serial number";
+        } else if (
+          restricted &&
+          !held.get(draft.item.id)?.serials.some((unit) => unit.serial_number === serial)
+        ) {
+          entry.serial = "This serial is not issued to you. Ask the inventory team.";
         } else if (!isValidSerial(serial)) {
           entry.serial = "Not a valid serial number";
         } else if (seen.has(serial) || takenSerials.has(serial)) {
@@ -164,7 +189,7 @@ export default function InventoryModal({
       }
     }
     return result;
-  }, [drafts, takenSerials]);
+  }, [drafts, takenSerials, restricted, held]);
 
   const currentType = inventory?.declaration?.type ?? null;
   const hasChanges =
@@ -187,7 +212,7 @@ export default function InventoryModal({
       ...list,
       { key, item, quantity: item.serialized ? "1" : item.allow_decimal ? "" : "1", serial: "", remarks: "" },
     ]);
-    if (item.serialized) {
+    if (item.serialized && !restricted) {
       setScanFor(key);
     }
   };
@@ -275,7 +300,7 @@ export default function InventoryModal({
       }
     >
       {picking ? (
-        <ItemPicker items={items} onPick={addItem} />
+        <ItemPicker items={pickerItems} held={restricted ? held : null} onPick={addItem} />
       ) : loading && !inventory ? (
         <SheetCenter>
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
@@ -348,6 +373,19 @@ export default function InventoryModal({
                 <DraftCard
                   key={draft.key}
                   draft={draft}
+                  serialOptions={
+                    restricted && draft.item.serialized
+                      ? (held.get(draft.item.id)?.serials ?? [])
+                          .map((unit) => unit.serial_number)
+                          .filter(
+                            (serial) =>
+                              serial === normalizeSerial(draft.serial) ||
+                              (!takenSerials.has(serial) &&
+                                !drafts.some((other) => other.key !== draft.key && normalizeSerial(other.serial) === serial)),
+                          )
+                      : null
+                  }
+                  inHand={restricted && !draft.item.serialized ? (held.get(draft.item.id)?.in_hand ?? 0) : null}
                   errors={showErrors ? errors[draft.key] : undefined}
                   onChange={(patch) => updateDraft(draft.key, patch)}
                   onScan={() => setScanFor(draft.key)}
@@ -516,12 +554,17 @@ function PostedRow({ line, first, onReverse }: { line: InventoryLine; first: boo
 
 function DraftCard({
   draft,
+  serialOptions,
+  inHand,
   errors,
   onChange,
   onScan,
   onRemove,
 }: {
   draft: Draft;
+  /** Issued serials the technician may pick; null when any serial may be scanned. */
+  serialOptions: string[] | null;
+  inHand: number | null;
   errors?: DraftErrors;
   onChange: (patch: Partial<Draft>) => void;
   onScan: () => void;
@@ -541,6 +584,7 @@ function DraftCard({
           <p className="text-sm font-semibold text-ink">{item.name}</p>
           <p className="mt-0.5 text-xs text-gray2">
             {item.category} · {item.consumption_uom}
+            {inHand !== null ? ` · ${formatQuantity(inHand, item.consumption_uom)} in hand` : ""}
           </p>
         </div>
         <button type="button" onClick={onRemove} aria-label={`Remove ${item.name}`}>
@@ -557,28 +601,48 @@ function DraftCard({
       {item.serialized ? (
         <>
           <span className="caption">Serial number · 1 unit</span>
-          <div className="flex gap-2">
-            <input
-              className={cn("input flex-1 font-mono uppercase", errors?.serial && "border-error")}
-              value={draft.serial}
-              onChange={(event) => onChange({ serial: event.target.value })}
-              autoCapitalize="characters"
-              autoCorrect="off"
-              spellCheck={false}
-              readOnly={fromProvisioning}
-              placeholder="Scan or type serial"
-            />
-            {!fromProvisioning ? (
-              <button
-                type="button"
-                onClick={onScan}
-                aria-label="Scan serial"
-                className="flex h-12 w-12 items-center justify-center rounded-md bg-primary"
+          {serialOptions && !fromProvisioning ? (
+            serialOptions.length ? (
+              <select
+                className={cn("input font-mono", errors?.serial && "border-error")}
+                value={normalizeSerial(draft.serial) ?? ""}
+                onChange={(event) => onChange({ serial: event.target.value })}
+                aria-label={`${item.name} serial`}
               >
-                <ScanLine className="h-[22px] w-[22px] text-white" />
-              </button>
-            ) : null}
-          </div>
+                <option value="">Choose an issued serial…</option>
+                {serialOptions.map((serial) => (
+                  <option key={serial} value={serial}>
+                    {serial}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="text-xs text-error">No unused {item.name} serials are issued to you.</p>
+            )
+          ) : (
+            <div className="flex gap-2">
+              <input
+                className={cn("input flex-1 font-mono uppercase", errors?.serial && "border-error")}
+                value={draft.serial}
+                onChange={(event) => onChange({ serial: event.target.value })}
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+                readOnly={fromProvisioning}
+                placeholder="Scan or type serial"
+              />
+              {!fromProvisioning ? (
+                <button
+                  type="button"
+                  onClick={onScan}
+                  aria-label="Scan serial"
+                  className="flex h-12 w-12 items-center justify-center rounded-md bg-primary"
+                >
+                  <ScanLine className="h-[22px] w-[22px] text-white" />
+                </button>
+              ) : null}
+            </div>
+          )}
           {errors?.serial ? <p className="text-xs text-error">{errors.serial}</p> : null}
         </>
       ) : item.allow_decimal ? (
@@ -660,7 +724,16 @@ function DraftCard({
   );
 }
 
-function ItemPicker({ items, onPick }: { items: InventoryItem[]; onPick: (item: InventoryItem) => void }) {
+function ItemPicker({
+  items,
+  held,
+  onPick,
+}: {
+  items: InventoryItem[];
+  /** Issued stock by item id when the user may only record issued items. */
+  held: Map<string, MyStock["items"][number]> | null;
+  onPick: (item: InventoryItem) => void;
+}) {
   const [query, setQuery] = React.useState("");
   const sections = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -698,7 +771,14 @@ function ItemPicker({ items, onPick }: { items: InventoryItem[]; onPick: (item: 
         ) : null}
       </div>
       <div className="px-4 pb-8">
-        {sections.length === 0 ? (
+        {held && items.length === 0 ? (
+          <EmptyState
+            compact
+            icon={Box}
+            title="No items issued to you"
+            message="Ask the inventory team to issue the materials you need for this job."
+          />
+        ) : sections.length === 0 ? (
           <EmptyState compact icon={Search} title="No matching items" message="Try a different name or code." />
         ) : (
           sections.map((section) => (
@@ -715,7 +795,9 @@ function ItemPicker({ items, onPick }: { items: InventoryItem[]; onPick: (item: 
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-semibold text-ink">{item.name}</span>
                       <span className="mt-0.5 block text-xs text-gray2">
-                        {item.code} · {item.consumption_uom}
+                        {held
+                          ? `${formatQuantity(held.get(item.id)?.in_hand ?? 0, item.consumption_uom)} in hand`
+                          : `${item.code} · ${item.consumption_uom}`}
                       </span>
                     </span>
                     {item.serialized ? (

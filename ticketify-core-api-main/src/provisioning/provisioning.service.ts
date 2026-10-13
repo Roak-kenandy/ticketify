@@ -33,6 +33,7 @@ import {
   TicketSnapshotService,
 } from 'src/inventory/ticket-snapshot.service';
 import { normalizeSerial } from 'src/inventory/ticket-inventory.service';
+import { TechnicianStockService } from 'src/inventory/technician-stock.service';
 import {
   RetryProvisioningDto,
   SignalAfterDto,
@@ -96,6 +97,7 @@ export class ProvisioningService implements OnModuleInit {
     private readonly audit: IntegrationAuditService,
     private readonly access: TicketAccessService,
     private readonly snapshots: TicketSnapshotService,
+    private readonly stock: TechnicianStockService,
     private readonly config: ConfigService,
     private readonly logger: LoggerService,
     @Inject(INCA_CLIENT) private readonly inca: IncaClient,
@@ -285,6 +287,20 @@ export class ProvisioningService implements OnModuleInit {
       );
     }
     const input = this.buildInput(snapshot, dto);
+    const installsOnt =
+      dto.action === 'NEW_CONNECTION' ||
+      dto.action === 'ONT_REPLACEMENT' ||
+      (dto.action === 'RELOCATION' && input.new_ont);
+    if (
+      installsOnt &&
+      input.ont_serial &&
+      !this.stock.isInventoryTeam(actor) &&
+      !(await this.stock.holdsSerial(actor.id, input.ont_serial))
+    ) {
+      throw new BadRequestException(
+        `ONT ${input.ont_serial} is not issued to you. Pick one of your issued ONTs, or ask the inventory team to issue it.`,
+      );
+    }
     const deviceItemCode = input.device_type
       ? await this.inca
           .deviceTypes()

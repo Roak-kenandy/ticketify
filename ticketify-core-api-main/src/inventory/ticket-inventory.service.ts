@@ -19,6 +19,10 @@ import { hasAnyRole, INVENTORY_ROLES } from 'src/auth/ops-roles';
 import { InventoryDeclarationDto, InventoryLineDto } from './dto/inventory.dto';
 import { InventoryItemsService } from './inventory-items.service';
 import { TicketSnapshotService } from './ticket-snapshot.service';
+import { normalizeSerial, SERIAL_PATTERN } from './serial';
+import { TechnicianStockService } from './technician-stock.service';
+
+export { normalizeSerial } from './serial';
 
 export type InventoryActor = {
   id: string;
@@ -108,13 +112,6 @@ const ITEM_SELECT = {
   consumption_uom: true,
 } as const;
 
-const SERIAL_PATTERN = /^[A-Z0-9][A-Z0-9:._/-]{3,63}$/;
-
-export function normalizeSerial(value?: string | null): string | null {
-  const serial = value?.replace(/\s+/g, '').toUpperCase() ?? '';
-  return serial || null;
-}
-
 function decimalPlaces(value: number): number {
   const [, fraction = ''] = String(value).split('.');
   return fraction.length;
@@ -128,6 +125,7 @@ export class TicketInventoryService {
     private readonly items: InventoryItemsService,
     private readonly snapshots: TicketSnapshotService,
     private readonly access: TicketAccessService,
+    private readonly stock: TechnicianStockService,
   ) {}
 
   async view(crmTicketId: string): Promise<TicketInventoryView> {
@@ -195,9 +193,17 @@ export class TicketInventoryService {
 
     const prepared = await this.prepareLines(crmTicketId, lines);
     const snapshot = await this.snapshots.get(crmTicketId);
+    const fromIssuedStock = !this.isInventoryTeam(actor);
 
     try {
       await this.prisma.$transaction(async (tx) => {
+        if (fromIssuedStock && prepared.length) {
+          await this.stock.assertCanDraw(
+            tx,
+            actor.id,
+            prepared.map((line) => ({ item: line.item, quantity: line.quantity, serial: line.serial })),
+          );
+        }
         await tx.ticketInventoryDeclaration.upsert({
           where: { crm_ticket_id: crmTicketId },
           create: {
@@ -217,8 +223,9 @@ export class TicketInventoryService {
           },
         });
         for (const [index, line] of prepared.entries()) {
-          await tx.ticketInventoryConsumption.create({
+          const created = await tx.ticketInventoryConsumption.create({
             data: {
+              stock_tracked: fromIssuedStock,
               crm_ticket_id: crmTicketId,
               sr_number: snapshot.sr_number,
               item_id: line.item.id,
@@ -236,6 +243,9 @@ export class TicketInventoryService {
               idempotency_key: `${key}:${index}`,
             },
           });
+          if (fromIssuedStock && line.serial) {
+            await this.stock.markConsumed(tx, line.serial, created.id);
+          }
         }
       });
     } catch (error) {
@@ -289,6 +299,9 @@ export class TicketInventoryService {
           approved_by_user_id: this.isInventoryTeam(actor) ? actor.id : null,
         },
       });
+      if (line.stock_tracked) {
+        await this.stock.releaseConsumption(tx, lineId);
+      }
     });
     await this.audit.log({
       entity_type: 'ticket_inventory',

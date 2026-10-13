@@ -43,6 +43,7 @@ import { apiGet, apiPost } from "@/lib/field/api";
 import { cn } from "@/lib/field/cn";
 import { showError, showInfo, showSuccess } from "@/lib/field/notify";
 import { isValidSerial, normalizeSerial } from "@/lib/field/serial";
+import { issuedSerials, useMyStock } from "@/lib/field/stock";
 import { useSession } from "@/lib/field/session";
 import type {
   IncaOption,
@@ -125,6 +126,7 @@ export default function ProvisioningModal({
   const [starting, setStarting] = React.useState(false);
   const [detecting, setDetecting] = React.useState(false);
   const [run, setRun] = React.useState<ProvisioningTransaction | null>(null);
+  const { stock } = useMyStock(visible);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -347,6 +349,7 @@ export default function ProvisioningModal({
           onChange={updateForm}
           onScan={() => setScanning(true)}
           onDetect={detect}
+          issued={stock?.restricted ? issuedSerials(stock) : null}
         />
       ) : run ? (
         <RunView
@@ -639,6 +642,7 @@ function FormView({
   onChange,
   onScan,
   onDetect,
+  issued,
 }: {
   ctx: ProvisioningContext;
   action: ProvisioningAction;
@@ -649,6 +653,8 @@ function FormView({
   onChange: (patch: Partial<Form>) => void;
   onScan: () => void;
   onDetect: () => void;
+  /** ONTs issued to a technician who may only install those; null = any serial. */
+  issued: { serial: string; itemName: string }[] | null;
 }) {
   const [showPassword, setShowPassword] = React.useState(false);
   const toChoices = (options: IncaOption[]) => options.map((option) => ({ value: option.code, label: option.label }));
@@ -740,12 +746,35 @@ function FormView({
           error={errors.serial}
           hint={action === "SIGNAL_CHECK" ? "Leave as is to read the ONT on the customer record." : undefined}
         >
-          <SerialInput
-            value={form.serial}
-            error={!!errors.serial}
-            onChange={(serial) => onChange({ serial })}
-            onScan={onScan}
-          />
+          {issued && showDevice ? (
+            issued.length ? (
+              <select
+                className={cn("input font-mono", errors.serial && "border-error")}
+                value={normalizeSerial(form.serial) ?? ""}
+                onChange={(event) => onChange({ serial: event.target.value })}
+                aria-label="ONT serial"
+              >
+                <option value="">Choose one of your issued ONTs…</option>
+                {issued.map((unit) => (
+                  <option key={unit.serial} value={unit.serial}>
+                    {unit.serial} · {unit.itemName}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <InlineBanner
+                tone="warning"
+                message="No ONTs are issued to you. Ask the inventory team to issue one before installing."
+              />
+            )
+          ) : (
+            <SerialInput
+              value={form.serial}
+              error={!!errors.serial}
+              onChange={(serial) => onChange({ serial })}
+              onScan={onScan}
+            />
+          )}
         </Field>
       ) : null}
 

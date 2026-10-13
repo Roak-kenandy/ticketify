@@ -8,6 +8,7 @@ import {
   LogOut,
   MapPin,
   MonitorPlay,
+  Package,
   Phone,
   Star,
   UserCircle,
@@ -17,6 +18,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import React from "react";
 import { ConfirmDialog } from "@/components/field/ui/confirm-dialog";
+import { BrandMark } from "@/components/shell/brand";
 import { Overlay } from "@/components/field/ui/overlay";
 import { AdminAuth } from "@/lib/admin-auth";
 import { SUPPORT_PHONE } from "@/lib/field/app";
@@ -27,6 +29,7 @@ import { initials } from "@/lib/field/ticket-meta";
 const NAV_ITEMS: Array<{ href: string; label: string; icon: LucideIcon }> = [
   { href: "/field", label: "Dashboard", icon: LayoutGrid },
   { href: "/field/tickets", label: "My tickets", icon: Layers },
+  { href: "/field/stock", label: "My stock", icon: Package },
   { href: "/field/reviews", label: "Reviews", icon: Star },
   { href: "/field/account", label: "Account", icon: UserCircle },
   { href: "/field/tracking", label: "Location tracking", icon: MapPin },
@@ -58,15 +61,19 @@ function DrawerContent({
   const consoleHref = AdminAuth.canUseConsole() ? AdminAuth.consoleHomePath() : null;
   return (
     <div className="flex h-full flex-col bg-white">
-      <div className="flex-1 overflow-y-auto pb-3 pt-4">
-        <div className="mx-4 mb-4 rounded-lg bg-primary p-4">
-          <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-secondary text-lg font-bold text-primary">
-            {initials(user?.name)}
-          </div>
-          <p className="text-lg font-bold text-white">{user?.name ?? "Technician"}</p>
-          <p className="mt-1 truncate text-[13px] text-white/80">{user?.email ?? ""}</p>
-        </div>
-        <nav className="flex flex-col gap-1 px-4">
+      <div className="flex-1 overflow-y-auto pb-3">
+        <Link
+          href="/field"
+          onClick={onNavigate}
+          className="mb-2 flex h-16 items-center gap-2.5 border-b border-borderlight px-5"
+        >
+          <BrandMark />
+          <span className="flex min-w-0 flex-col leading-tight">
+            <span className="truncate text-[15px] font-semibold tracking-tight text-ink">Ticketify</span>
+            <span className="truncate text-[11px] font-medium text-gray2">Field workspace</span>
+          </span>
+        </Link>
+        <nav className="flex flex-col gap-1 px-4 pt-2">
           {NAV_ITEMS.map((item) => {
             const focused = isActive(pathname, item.href);
             const Icon = item.icon;
@@ -88,6 +95,19 @@ function DrawerContent({
         </nav>
       </div>
       <div className="flex flex-col gap-1 border-t border-borderlight p-4">
+        <Link
+          href="/field/account"
+          onClick={onNavigate}
+          className="mb-1 flex items-center gap-3 rounded-md px-2 py-2 hover:bg-surface"
+        >
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary text-sm font-bold text-primary">
+            {initials(user?.name)}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-semibold text-ink">{user?.name ?? "Technician"}</span>
+            <span className="block truncate text-xs text-gray2">{user?.email ?? ""}</span>
+          </span>
+        </Link>
         {consoleHref ? (
           <Link
             href={consoleHref}
