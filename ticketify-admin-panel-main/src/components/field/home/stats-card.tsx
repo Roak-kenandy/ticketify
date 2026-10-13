@@ -42,7 +42,9 @@ export default function StatsCard({ tickets, loading }: { tickets: any[]; loadin
                   {counts[state]}
                 </span>
               )}
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-gray2">{tone.label}</span>
+              <span className="px-1 text-center text-[10px] font-semibold uppercase leading-tight text-gray2 min-[360px]:text-[11px] min-[360px]:tracking-wide">
+                {tone.label}
+              </span>
             </Link>
           );
         })}
@@ -88,7 +90,7 @@ function TaskRow({
       disabled={!task}
       className="flex min-h-8 items-center justify-between gap-3 text-left"
     >
-      <span className="flex items-center gap-2">
+      <span className="flex shrink-0 items-center gap-2">
         <Icon className="h-5 w-5 text-primary" />
         <span className="text-sm font-semibold text-ink">{label}</span>
       </span>

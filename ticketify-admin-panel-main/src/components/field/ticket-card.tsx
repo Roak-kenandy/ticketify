@@ -30,7 +30,7 @@ function TicketCard({
       className="flex flex-col gap-2 rounded-lg border border-borderlight bg-white p-4 shadow-card transition active:scale-[0.995] active:opacity-90"
     >
       <div className="flex items-center gap-3">
-        <div className="flex h-[42px] w-[42px] items-center justify-center rounded-md" style={{ backgroundColor: state.bg }}>
+        <div className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-md" style={{ backgroundColor: state.bg }}>
           {StateIcon ? <StateIcon className="h-5 w-5" style={{ color: state.color }} /> : null}
         </div>
         <div className="min-w-0 flex-1">
@@ -54,13 +54,13 @@ function TicketCard({
         ) : null}
       </div>
 
-      <div className="mt-1 flex items-center justify-between gap-2 border-t border-borderlight pt-2">
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-borderlight pt-2">
         <div className="flex min-w-0 flex-1 items-center gap-1">
           <User className="h-[13px] w-[13px] shrink-0 text-gray3" />
           <span className="truncate text-xs text-gray2">{ticket.contact?.name || "No contact"}</span>
         </div>
         {created ? (
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <Calendar className="h-[13px] w-[13px] text-gray3" />
             <span className="text-xs text-gray2">{created.format("DD MMM YYYY")}</span>
           </div>

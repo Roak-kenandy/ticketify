@@ -6,6 +6,7 @@ import { useDrawer } from "@/components/field/shell/app-shell";
 import FormModal from "@/components/field/ui/form-modal";
 import { apiPatch } from "@/lib/field/api";
 import { cn } from "@/lib/field/cn";
+import { fieldContainer } from "@/lib/field/layout";
 import { showError } from "@/lib/field/notify";
 import { useSession } from "@/lib/field/session";
 import { initials, PRESENCE_META, presenceFromUser, type Presence } from "@/lib/field/ticket-meta";
@@ -79,7 +80,7 @@ export default function ProfileCard() {
 
   return (
     <header className="sticky top-0 z-30 bg-primary pt-[env(safe-area-inset-top)]">
-      <div className="mx-auto flex max-w-3xl items-center justify-between px-4 pb-4 pt-3">
+      <div className={cn(fieldContainer.wide, "flex items-center justify-between px-4 pb-3 pt-3 sm:pb-4")}>
         <div className="mr-2 flex min-w-0 flex-1 items-center gap-3">
           <button
             type="button"
@@ -89,7 +90,7 @@ export default function ProfileCard() {
           >
             <Menu className="h-[26px] w-[26px] text-primary" />
           </button>
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-secondary text-[15px] font-bold text-primary">
+          <div className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-full bg-secondary min-[360px]:flex text-[15px] font-bold text-primary">
             {initials(user?.name)}
           </div>
           <div className="min-w-0 flex-1">
@@ -97,9 +98,9 @@ export default function ProfileCard() {
             <p className="mt-0.5 truncate text-xs text-white/75">{user?.email ?? ""}</p>
           </div>
         </div>
-        <div className="flex flex-col items-center gap-1">
+        <div className="flex shrink-0 flex-col items-center gap-0.5">
           <span className="text-[10px] font-semibold uppercase tracking-wide text-white/65">Availability</span>
-          <div className="flex items-center gap-2.5" role="radiogroup" aria-label="Availability">
+          <div className="flex items-center gap-0.5" role="radiogroup" aria-label="Availability">
             {(["ONLINE", "BUSY", "OFFLINE"] as Presence[]).map((key) => {
               const meta = PRESENCE_META[key];
               const active = presence === key;
@@ -113,9 +114,13 @@ export default function ProfileCard() {
                   title={meta.label}
                   disabled={submitting}
                   onClick={() => onSelect(key)}
-                  className={cn("h-[22px] w-[22px] rounded-full border-[3px]", !active && "opacity-45")}
-                  style={{ backgroundColor: meta.color, borderColor: active ? "#FFFFFF" : "transparent" }}
-                />
+                  className="flex h-8 w-8 items-center justify-center rounded-full disabled:cursor-wait"
+                >
+                  <span
+                    className={cn("h-[22px] w-[22px] rounded-full border-[3px]", !active && "opacity-45")}
+                    style={{ backgroundColor: meta.color, borderColor: active ? "#FFFFFF" : "transparent" }}
+                  />
+                </button>
               );
             })}
           </div>

@@ -42,6 +42,7 @@ import { apiGet, apiPut } from "@/lib/field/api";
 import { dialable } from "@/lib/field/app";
 import { cn } from "@/lib/field/cn";
 import colors from "@/lib/field/colors";
+import { fieldContainer } from "@/lib/field/layout";
 import {
   hasPendingLastMile,
   hasPendingNoResponse,
@@ -378,6 +379,7 @@ export default function TicketDetailsPage() {
         title={view?.number ? `#${view.number}` : "Ticket"}
         subtitle={view?.queue?.name ?? view?.queue_info?.name}
         backHref="/field/tickets"
+        wide
         right={
           <div className="flex items-center gap-1">
             <button
@@ -402,7 +404,7 @@ export default function TicketDetailsPage() {
         }
       />
 
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-3 p-4 pb-6">
+      <main className={cn(fieldContainer.wide, "flex flex-1 flex-col gap-3 p-4 pb-6")}>
         <section className="flex flex-col gap-3 rounded-lg border border-borderlight bg-white p-4 shadow-card">
           <div className="flex flex-wrap gap-2">
             <ToneBadge tone={stateTone} showIcon />
@@ -468,147 +470,154 @@ export default function TicketDetailsPage() {
         ) : null}
         {showChecklist && closure ? <CompletionChecklist closure={closure} onOpen={setModal} /> : null}
 
-        <Section title="Customer">
-          <InfoRow icon={User} label="Name" value={customerName} />
-          {firstLoad ? (
-            <>
-              <Skeleton height={16} />
-              <Skeleton height={16} width="70%" />
-            </>
-          ) : (
-            <>
-              <InfoRow
-                icon={Phone}
-                label="Phone"
-                value={phone}
-                href={dialablePhone ? `tel:${dialablePhone}` : undefined}
-              />
-              <InfoRow icon={Barcode} label="Customer code" value={data?.contact?.code} />
-              <InfoRow icon={MapPin} label="Address" value={address || "No address on file"} />
-            </>
-          )}
-          {services.length > 0 ? (
-            <div className="mt-1 flex flex-col gap-2">
-              <span className="caption">Services and devices</span>
-              <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
-                {services.map((item: any, index: number) => (
-                  <div
+        <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-2">
+          <Section title="Customer">
+            <InfoRow icon={User} label="Name" value={customerName} />
+            {firstLoad ? (
+              <>
+                <Skeleton height={16} />
+                <Skeleton height={16} width="70%" />
+              </>
+            ) : (
+              <>
+                <InfoRow
+                  icon={Phone}
+                  label="Phone"
+                  value={phone}
+                  href={dialablePhone ? `tel:${dialablePhone}` : undefined}
+                />
+                <InfoRow icon={Barcode} label="Customer code" value={data?.contact?.code} />
+                <InfoRow icon={MapPin} label="Address" value={address || "No address on file"} />
+              </>
+            )}
+            {services.length > 0 ? (
+              <div className="mt-1 flex flex-col gap-2">
+                <span className="caption">Services and devices</span>
+                <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
+                  {services.map((item: any, index: number) => (
+                    <div
+                      key={String(item?.id ?? index)}
+                      className="flex w-40 shrink-0 flex-col items-start gap-2 rounded-md border border-borderlight bg-surface p-3"
+                    >
+                      <p className="line-clamp-2 text-[13px] font-semibold text-ink">
+                        {item?.product?.name ?? "Service"}
+                      </p>
+                      <ToneBadge
+                        size="sm"
+                        tone={
+                          item?.state === "EFFECTIVE"
+                            ? { label: "Active", color: colors.success, bg: colors.successBg }
+                            : { label: item?.state ?? "Unknown", color: colors.warning, bg: colors.warningBg }
+                        }
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </Section>
+
+          <Section
+            title="Photos & attachments"
+            count={attachments.length}
+            actionLabel={canEdit ? "Add" : undefined}
+            onAction={() => setModal("attachment")}
+          >
+            {firstLoad ? (
+              <div className="flex flex-wrap gap-2">
+                <Skeleton width={96} height={96} />
+                <Skeleton width={96} height={96} />
+              </div>
+            ) : attachments.length === 0 ? (
+              <p className="text-[13px] text-gray2">No attachments yet</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {attachments.map((item: any, index: number) => (
+                  <AttachmentThumb
                     key={String(item?.id ?? index)}
-                    className="flex w-40 shrink-0 flex-col items-start gap-2 rounded-md border border-borderlight bg-surface p-3"
+                    fileId={item?.file?.id}
+                    onClick={() => {
+                      setSelectedImage(item);
+                      setModal("image");
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </Section>
+
+          <Section title="Activities" count={activities.length}>
+            {firstLoad ? (
+              <Skeleton height={56} />
+            ) : activities.length === 0 ? (
+              <p className="text-[13px] text-gray2">No activities</p>
+            ) : (
+              activities.map((item: any, index: number) => {
+                const state = resolveCrmActivityState(item);
+                const done = state === "COMPLETED";
+                return (
+                  <button
+                    key={String(item?.id ?? index)}
+                    type="button"
+                    onClick={() => {
+                      setSelectedActivity(item);
+                      setModal("activity");
+                    }}
+                    className="flex items-center gap-3 rounded-md border border-borderlight p-3 text-left active:bg-surface"
                   >
-                    <p className="line-clamp-2 text-[13px] font-semibold text-ink">
-                      {item?.product?.name ?? "Service"}
-                    </p>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold text-ink">{item?.name ?? "Activity"}</span>
+                      <span className="caption block">
+                        {[item?.type?.name, crmDate(item?.date ?? item?.activity_date?.date)].filter(Boolean).join(" · ")}
+                      </span>
+                    </span>
                     <ToneBadge
                       size="sm"
                       tone={
-                        item?.state === "EFFECTIVE"
-                          ? { label: "Active", color: colors.success, bg: colors.successBg }
-                          : { label: item?.state ?? "Unknown", color: colors.warning, bg: colors.warningBg }
+                        done
+                          ? { label: lmStatusLabel("COMPLETED"), color: colors.success, bg: colors.successBg }
+                          : { label: lmStatusLabel(state), color: colors.warning, bg: colors.warningBg }
                       }
                     />
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </Section>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-gray3" />
+                  </button>
+                );
+              })
+            )}
+          </Section>
 
-        <Section
-          title="Photos & attachments"
-          count={attachments.length}
-          actionLabel={canEdit ? "Add" : undefined}
-          onAction={() => setModal("attachment")}
-        >
-          {firstLoad ? (
-            <div className="flex flex-wrap gap-2">
-              <Skeleton width={96} height={96} />
-              <Skeleton width={96} height={96} />
-            </div>
-          ) : attachments.length === 0 ? (
-            <p className="text-[13px] text-gray2">No attachments yet</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {attachments.map((item: any, index: number) => (
-                <AttachmentThumb
-                  key={String(item?.id ?? index)}
-                  fileId={item?.file?.id}
-                  onClick={() => {
-                    setSelectedImage(item);
-                    setModal("image");
-                  }}
-                />
-              ))}
-            </div>
-          )}
-        </Section>
-
-        <Section title="Activities" count={activities.length}>
-          {firstLoad ? (
-            <Skeleton height={56} />
-          ) : activities.length === 0 ? (
-            <p className="text-[13px] text-gray2">No activities</p>
-          ) : (
-            activities.map((item: any, index: number) => {
-              const state = resolveCrmActivityState(item);
-              const done = state === "COMPLETED";
-              return (
-                <button
-                  key={String(item?.id ?? index)}
-                  type="button"
-                  onClick={() => {
-                    setSelectedActivity(item);
-                    setModal("activity");
-                  }}
-                  className="flex items-center gap-3 rounded-md border border-borderlight p-3 text-left active:bg-surface"
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-semibold text-ink">{item?.name ?? "Activity"}</span>
-                    <span className="caption block">
-                      {[item?.type?.name, crmDate(item?.date ?? item?.activity_date?.date)].filter(Boolean).join(" · ")}
-                    </span>
-                  </span>
-                  <ToneBadge
-                    size="sm"
-                    tone={
-                      done
-                        ? { label: lmStatusLabel("COMPLETED"), color: colors.success, bg: colors.successBg }
-                        : { label: lmStatusLabel(state), color: colors.warning, bg: colors.warningBg }
-                    }
-                  />
-                  <ChevronRight className="h-4 w-4 shrink-0 text-gray3" />
-                </button>
-              );
-            })
-          )}
-        </Section>
-
-        <Section
-          title="Notes"
-          count={notes.length}
-          actionLabel={canEdit ? "Add" : undefined}
-          onAction={() => setModal("note")}
-        >
-          {firstLoad ? (
-            <Skeleton height={56} />
-          ) : notes.length === 0 ? (
-            <p className="text-[13px] text-gray2">No notes yet</p>
-          ) : (
-            notes.map((item: any, index: number) => (
-              <div key={String(item?.id ?? index)} className="flex flex-col gap-1 rounded-md bg-surface p-3">
-                <p className="whitespace-pre-line text-sm leading-5 text-ink">{item?.note}</p>
-                <span className="caption">{crmDate(item?.created_on, "DD MMM YYYY, h:mm A")}</span>
-              </div>
-            ))
-          )}
-        </Section>
+          <Section
+            title="Notes"
+            count={notes.length}
+            actionLabel={canEdit ? "Add" : undefined}
+            onAction={() => setModal("note")}
+          >
+            {firstLoad ? (
+              <Skeleton height={56} />
+            ) : notes.length === 0 ? (
+              <p className="text-[13px] text-gray2">No notes yet</p>
+            ) : (
+              notes.map((item: any, index: number) => (
+                <div key={String(item?.id ?? index)} className="flex flex-col gap-1 rounded-md bg-surface p-3">
+                  <p className="whitespace-pre-line text-sm leading-5 text-ink">{item?.note}</p>
+                  <span className="caption">{crmDate(item?.created_on, "DD MMM YYYY, h:mm A")}</span>
+                </div>
+              ))
+            )}
+          </Section>
+        </div>
 
         {!firstLoad && !data ? <EmptyState icon={AlertCircle} title="Details unavailable" /> : null}
       </main>
 
       <footer className="sticky bottom-0 z-20 border-t border-borderlight bg-white shadow-sheet">
-        <div className="mx-auto flex max-w-3xl flex-col gap-3 px-4 pt-3 pb-[max(12px,env(safe-area-inset-bottom))]">
-          <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 empty:hidden">
+        <div
+          className={cn(
+            fieldContainer.wide,
+            "flex flex-col gap-3 px-4 pt-3 pb-[max(12px,env(safe-area-inset-bottom))] lg:flex-row lg:items-center",
+          )}
+        >
+          <div className="no-scrollbar -mx-4 flex min-w-0 gap-2 overflow-x-auto px-4 empty:hidden lg:mx-0 lg:flex-1 lg:flex-wrap lg:px-0">
             {phone ? (
               <ActionChip
                 icon={Phone}
@@ -645,6 +654,7 @@ export default function TicketDetailsPage() {
               loading={submitted}
               disabled={lmBlocking || (isMine && closeStageActive && noResponseBlocking)}
               onClick={onPrimaryPress}
+              className="lg:w-72 lg:shrink-0"
               style={primaryColor ? { backgroundColor: primaryColor } : undefined}
             />
           ) : null}

@@ -9,6 +9,8 @@ import StatsCard from "@/components/field/home/stats-card";
 import TicketCard from "@/components/field/ticket-card";
 import { EmptyState, ErrorState, InlineBanner, TicketCardSkeleton } from "@/components/field/ui/state-views";
 import { apiGet } from "@/lib/field/api";
+import { cn } from "@/lib/field/cn";
+import { fieldCardGrid, fieldContainer } from "@/lib/field/layout";
 import { showError } from "@/lib/field/notify";
 import { useSession } from "@/lib/field/session";
 import { presenceFromUser } from "@/lib/field/ticket-meta";
@@ -77,7 +79,7 @@ export default function DashboardPage() {
   if (!sections.length) {
     if (!loaded && !syncError) {
       empty = (
-        <div className="mt-2 flex flex-col gap-2">
+        <div className={cn(fieldCardGrid, "mt-2")}>
           <TicketCardSkeleton />
           <TicketCardSkeleton />
           <TicketCardSkeleton />
@@ -97,7 +99,7 @@ export default function DashboardPage() {
   return (
     <>
       <ProfileCard />
-      <main className="mx-auto flex max-w-3xl flex-col gap-4 p-4 pb-16">
+      <main className={cn(fieldContainer.wide, "flex flex-col gap-4 p-4 pb-16")}>
         {!onShift ? (
           <InlineBanner
             icon={Moon}
@@ -122,7 +124,7 @@ export default function DashboardPage() {
         <StatsCard tickets={tickets} loading={!loaded} />
 
         <div className="flex items-end gap-2">
-          <div className="flex-1">
+          <div className="min-w-0 flex-1">
             <h2 className="text-lg font-bold text-ink">Team queue</h2>
             <p className="mt-0.5 text-[13px] text-gray2">
               New tickets across your teams
@@ -134,14 +136,14 @@ export default function DashboardPage() {
             onClick={onRefresh}
             disabled={refreshing}
             aria-label="Refresh"
-            className="flex h-10 w-10 items-center justify-center rounded-full border border-borderlight bg-white text-primary disabled:opacity-60"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-borderlight bg-white text-primary disabled:opacity-60"
           >
             <RefreshCw className={refreshing ? "h-[18px] w-[18px] animate-spin" : "h-[18px] w-[18px]"} />
           </button>
         </div>
 
         <div className="flex items-center gap-2 rounded-lg border border-borderlight bg-white px-3">
-          <Search className="h-[18px] w-[18px] text-gray3" />
+          <Search className="h-[18px] w-[18px] shrink-0 text-gray3" />
           <input
             type="search"
             value={query}
@@ -149,7 +151,7 @@ export default function DashboardPage() {
             placeholder="Search ticket number, customer or text"
             autoCapitalize="none"
             autoCorrect="off"
-            className="h-[46px] flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-gray3 [&::-webkit-search-cancel-button]:hidden"
+            className="h-[46px] min-w-0 flex-1 bg-transparent text-base sm:text-sm text-ink outline-none placeholder:text-gray3 [&::-webkit-search-cancel-button]:hidden"
           />
           {query ? (
             <button type="button" onClick={() => setQuery("")} aria-label="Clear search">
@@ -167,7 +169,7 @@ export default function DashboardPage() {
                   {section.unavailable ? "Unavailable" : section.data.length}
                 </span>
               </div>
-              <div className="flex flex-col gap-2">
+              <div className={fieldCardGrid}>
                 {section.data.map((ticket: any, index: number) => (
                   <TicketCard key={String(ticket?.id ?? index)} ticket={ticket} />
                 ))}

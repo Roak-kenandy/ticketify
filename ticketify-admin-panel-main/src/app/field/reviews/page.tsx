@@ -7,6 +7,8 @@ import React from "react";
 import { ScreenHeader } from "@/components/field/shell/headers";
 import { EmptyState, ErrorState, Skeleton } from "@/components/field/ui/state-views";
 import { apiGet } from "@/lib/field/api";
+import { cn } from "@/lib/field/cn";
+import { fieldCardGrid, fieldContainer } from "@/lib/field/layout";
 import { showError } from "@/lib/field/notify";
 import { useSession } from "@/lib/field/session";
 
@@ -64,8 +66,8 @@ export default function ReviewsPage() {
 
   return (
     <>
-      <ScreenHeader title="Reviews" subtitle="What customers say about your work" />
-      <main className="mx-auto flex max-w-3xl flex-col gap-2 p-4 pb-16">
+      <ScreenHeader title="Reviews" subtitle="What customers say about your work" wide />
+      <main className={cn(fieldContainer.wide, "flex flex-col gap-2 p-4 pb-16")}>
         <div className="flex justify-end">
           <button
             type="button"
@@ -87,15 +89,21 @@ export default function ReviewsPage() {
           </div>
         ) : null}
         {feedbacks?.length ? (
-          feedbacks.map((item, index) => <ReviewCard key={String(item?.feedback?.id ?? index)} data={item} />)
+          <div className={fieldCardGrid}>
+            {feedbacks.map((item, index) => (
+              <ReviewCard key={String(item?.feedback?.id ?? index)} data={item} />
+            ))}
+          </div>
         ) : feedbacks === null && !error ? (
-          [0, 1, 2].map((i) => (
-            <div key={i} className="flex flex-col gap-2 rounded-lg bg-white p-4">
-              <Skeleton width={110} height={16} />
-              <Skeleton height={14} />
-              <Skeleton width="60%" height={14} />
-            </div>
-          ))
+          <div className={fieldCardGrid}>
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="flex flex-col gap-2 rounded-lg bg-white p-4">
+                <Skeleton width={110} height={16} />
+                <Skeleton height={14} />
+                <Skeleton width="60%" height={14} />
+              </div>
+            ))}
+          </div>
         ) : feedbacks === null && error ? (
           <ErrorState message={error} onRetry={() => load("refresh")} />
         ) : (
@@ -131,7 +139,7 @@ function ReviewCard({ data }: { data: any }) {
       {data?.feedback?.feedback ? (
         <p className="text-[15px] leading-[21px] text-ink">“{data.feedback.feedback}”</p>
       ) : null}
-      <div className="flex items-center justify-between border-t border-borderlight pt-2">
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-borderlight pt-2">
         <span className="flex min-w-0 items-center gap-1">
           <User className="h-3.5 w-3.5 text-gray2" />
           <span className="truncate text-[13px] text-gray2">

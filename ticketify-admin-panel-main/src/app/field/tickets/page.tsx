@@ -7,6 +7,7 @@ import { ScreenHeader } from "@/components/field/shell/headers";
 import TicketCard from "@/components/field/ticket-card";
 import { EmptyState, ErrorState, InlineBanner, TicketCardSkeleton } from "@/components/field/ui/state-views";
 import { cn } from "@/lib/field/cn";
+import { fieldCardGrid, fieldContainer } from "@/lib/field/layout";
 import { showError } from "@/lib/field/notify";
 import { useTickets } from "@/lib/field/tickets";
 
@@ -76,9 +77,9 @@ function MyTickets() {
 
   return (
     <>
-      <ScreenHeader title="My tickets" subtitle="Tap refresh to sync with the CRM">
+      <ScreenHeader title="My tickets" subtitle="Tap refresh to sync with the CRM" wide>
           <div className="flex items-center gap-2">
-            <div className="flex flex-1 rounded-md bg-white p-1" role="tablist">
+            <div className="flex min-w-0 flex-1 rounded-md bg-white p-1 sm:max-w-md" role="tablist">
               {TABS.map((item) => {
                 const on = item.key === active;
                 return (
@@ -89,7 +90,7 @@ function MyTickets() {
                     aria-selected={on}
                     onClick={() => router.replace(`/field/tickets?tab=${item.key}`, { scroll: false })}
                     className={cn(
-                      "flex-1 rounded-[9px] py-2 text-[13px] font-bold",
+                      "min-w-0 flex-1 truncate rounded-[9px] px-1 py-2 text-xs font-bold min-[360px]:text-[13px]",
                       on ? "bg-tertiary text-primary" : "text-gray2",
                     )}
                   >
@@ -103,25 +104,29 @@ function MyTickets() {
               onClick={onRefresh}
               disabled={refreshing}
               aria-label="Refresh"
-              className="flex h-11 w-11 items-center justify-center rounded-md bg-white/15 text-white disabled:opacity-60"
+              className="ml-auto flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-white/15 text-white disabled:opacity-60"
             >
               <RefreshCw className={refreshing ? "h-5 w-5 animate-spin" : "h-5 w-5"} />
             </button>
           </div>
       </ScreenHeader>
-      <main className="mx-auto flex max-w-3xl flex-col gap-2 p-4 pb-16">
+      <main className={cn(fieldContainer.wide, "flex flex-col gap-2 p-4 pb-16")}>
         {loaded && error ? (
           <div className="mb-2">
             <InlineBanner tone="error" message={error} actionLabel="Retry" onAction={onRefresh} />
           </div>
         ) : null}
         {list.length ? (
-          list.map((ticket, index) => <TicketCard key={String(ticket?.id ?? index)} ticket={ticket} hideState />)
+          <div className={fieldCardGrid}>
+            {list.map((ticket, index) => (
+              <TicketCard key={String(ticket?.id ?? index)} ticket={ticket} hideState />
+            ))}
+          </div>
         ) : !loaded && !error ? (
-          <>
+          <div className={fieldCardGrid}>
             <TicketCardSkeleton />
             <TicketCardSkeleton />
-          </>
+          </div>
         ) : !loaded && error ? (
           <ErrorState message={error} onRetry={onRefresh} />
         ) : (
