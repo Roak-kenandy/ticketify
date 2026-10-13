@@ -423,7 +423,7 @@ export class TicketsService {
     const apiUrl = String(this.config.get('API_URL') ?? '').replace(/\/$/, '');
     for (const attachment of attachments?.content ?? []) {
       if (attachment?.file?.id) {
-        attachment.file_url = `${apiUrl}/tickets/files/${attachment.file.id}`;
+        attachment.file_url = `${apiUrl}/tickets/${crm_id}/files/${attachment.file.id}`;
       }
     }
     service_request.queue_info = queue_info;
@@ -779,18 +779,18 @@ Medianet Support Team
   }
 
   async fetchServiceRequests(user_id, team_id, state, size = 100) {
-    let url_params = '';
+    const params = new URLSearchParams();
 
     if (user_id) {
-      url_params += `assigned_to_user_id=${user_id}`;
+      params.set('assigned_to_user_id', String(user_id));
     }
 
     if (team_id) {
-      url_params += `assigned_to_team_id=${team_id}`;
+      params.set('assigned_to_team_id', String(team_id));
     }
 
     if (state) {
-      url_params += `&states=${state}`;
+      params.set('states', String(state));
     }
 
     // Add date filter for closed tickets (last 24 hours)
@@ -798,12 +798,13 @@ Medianet Support Team
       const twentyFourHoursAgo = new Date();
       twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
       const dateFilter = twentyFourHoursAgo.toISOString().split('T')[0]; // Format as YYYY-MM-DD
-      url_params += `&updated_at_from=${dateFilter}`;
+      params.set('updated_at_from', dateFilter);
     }
 
     if (size) {
-      url_params += `&size=${size}`;
+      params.set('size', String(size));
     }
+    const url_params = params.toString();
 
     let crm_service_requests = await fetch(
       this.config.get('CRM_BACKOFFICE_API_URL') +
@@ -2336,6 +2337,26 @@ Medianet Support Team`;
         a.type?.id === lm.activityTypeId ||
         a.type?.name === lm.activityTypeName,
     );
+  }
+
+  async getTicketActivity(ticketId: string, activityId: string) {
+    const res = await this.crmApi.getActivity(activityId);
+    const linkedTicket = (res.data as { service_request?: { id?: string } })
+      ?.service_request?.id;
+    if (!res.ok || !linkedTicket || String(linkedTicket) !== String(ticketId)) {
+      throw new NotFoundException('Activity not found on this ticket');
+    }
+    return res.data;
+  }
+
+  async fetchTicketFile(ticketId: string, fileId: string) {
+    const attachments = await this.FetchServiceRequestAttachments(ticketId);
+    const content: any[] =
+      attachments instanceof HttpException ? [] : attachments?.content ?? [];
+    if (!content.some((a) => String(a?.file?.id) === String(fileId))) {
+      throw new NotFoundException('File not found on this ticket');
+    }
+    return this.fetchFile(fileId);
   }
 
   async completeLastMileActivity(

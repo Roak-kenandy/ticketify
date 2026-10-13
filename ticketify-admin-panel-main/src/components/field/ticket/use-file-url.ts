@@ -7,7 +7,7 @@ import { useSession } from "@/lib/field/session";
 const cache = new Map<string, Promise<string>>();
 
 /** Object URL for an authenticated ticket file; shared across thumbnails and the viewer. */
-export function useFileUrl(fileId?: string) {
+export function useFileUrl(ticketId?: string, fileId?: string) {
   const { token } = useSession();
   const [url, setUrl] = React.useState<string | null>(null);
   const [failed, setFailed] = React.useState(false);
@@ -15,15 +15,16 @@ export function useFileUrl(fileId?: string) {
   React.useEffect(() => {
     setUrl(null);
     setFailed(false);
-    if (!fileId || !token) {
+    if (!ticketId || !fileId || !token) {
       return;
     }
     let cancelled = false;
-    let pending = cache.get(fileId);
+    const key = `${ticketId}/${fileId}`;
+    let pending = cache.get(key);
     if (!pending) {
-      pending = fetchFileObjectUrl(fileId, token);
-      cache.set(fileId, pending);
-      pending.catch(() => cache.delete(fileId));
+      pending = fetchFileObjectUrl(ticketId, fileId, token);
+      cache.set(key, pending);
+      pending.catch(() => cache.delete(key));
     }
     pending.then(
       (value) => !cancelled && setUrl(value),
@@ -32,7 +33,7 @@ export function useFileUrl(fileId?: string) {
     return () => {
       cancelled = true;
     };
-  }, [fileId, token]);
+  }, [ticketId, fileId, token]);
 
   return { url, failed };
 }

@@ -6,15 +6,17 @@ import { Overlay } from "@/components/field/ui/overlay";
 import { useFileUrl } from "../use-file-url";
 
 export default function ViewImageModal({
+  ticketId,
   image,
   visible,
   onClose,
 }: {
+  ticketId: string;
   image: any;
   visible: boolean;
   onClose: () => void;
 }) {
-  const { url, failed } = useFileUrl(visible ? image?.file?.id : undefined);
+  const { url, failed } = useFileUrl(ticketId, visible ? image?.file?.id : undefined);
 
   return (
     <Overlay open={visible} onEscape={onClose}>

@@ -9,8 +9,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtGuard } from 'src/auth/guard/jwt.guard';
-import { DISPATCH_MANAGE_ROLES, FIELD_ROLES } from 'src/auth/ops-roles';
+import { DISPATCH_MANAGE_ROLES } from 'src/auth/ops-roles';
 import { Roles } from 'src/infrastructure/decorators/roles.decorator';
+import { TicketAccessService } from 'src/infrastructure/security/ticket-access.service';
 import { ActivitiesService } from './activities.service';
 import { CreateActivityDto } from './dto/create-activity.dto';
 import { UpdateActivityDto } from './dto/update-activity.dto';
@@ -31,7 +32,8 @@ export class ActivitiesController {
     return this.activitiesService.findAll();
   }
 
-  @Roles(FIELD_ROLES)
+  /** Technicians use the ticket-scoped GET tickets/:id/activities/:activityId. */
+  @Roles(TicketAccessService.ALL_TICKET_ROLES)
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.activitiesService.findOne(id);

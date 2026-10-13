@@ -99,10 +99,10 @@ export class ActivitiesService {
         const errorText = await crmCreateActivity.text();
         this.logger.error(
           'Activities Service',
-          `CRM Activity creation failed: ${errorText}`,
+          'CRM activity creation failed',
         );
         throw new ForbiddenException(
-          `CRM Activity creation failed: ${errorText}`,
+          'CRM activity creation failed',
         );
       }
 
@@ -132,12 +132,12 @@ export class ActivitiesService {
     } catch (error) {
       this.logger.error(
         'Activities Service',
-        `Error creating activity: ${error.message}`,
+        'Could not create the activity',
       );
       if (error instanceof ForbiddenException) {
         throw error;
       }
-      throw new ForbiddenException(`Error creating activity: ${error.message}`);
+      throw new ForbiddenException('Could not create the activity');
     }
   }
 
@@ -173,10 +173,10 @@ export class ActivitiesService {
         const errorText = await crmActivityDetails.text();
         this.logger.error(
           'Activities Service',
-          `Failed to fetch activity details: ${errorText}`,
+          'Could not load the activity',
         );
         throw new ForbiddenException(
-          `Failed to fetch activity details: ${errorText}`,
+          'Could not load the activity',
         );
       }
 
@@ -190,13 +190,13 @@ export class ActivitiesService {
     } catch (error) {
       this.logger.error(
         'Activities Service',
-        `Error fetching activity details: ${error.message}`,
+        'Could not load the activity',
       );
       if (error instanceof ForbiddenException) {
         throw error;
       }
       throw new ForbiddenException(
-        `Error fetching activity details: ${error.message}`,
+        'Could not load the activity',
       );
     }
   }
@@ -225,7 +225,7 @@ export class ActivitiesService {
     if (!res.ok) {
       const errorText = await res.text();
       throw new ForbiddenException(
-        `CRM could not complete activity: ${errorText}`,
+        'CRM could not complete the activity',
       );
     }
     return res.json();

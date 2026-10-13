@@ -38,7 +38,12 @@ async function bootstrap() {
     silenceVerboseConsole();
   }
 
-  app.set('trust proxy', config.get<string>('TRUST_PROXY_HOPS') ?? 1);
+  // Express reads a string as an IP list, not a hop count, so this must be a number.
+  const proxyHops = Number(config.get<string>('TRUST_PROXY_HOPS') ?? 1);
+  if (!Number.isInteger(proxyHops) || proxyHops < 0) {
+    throw new Error('TRUST_PROXY_HOPS must be a whole number (0 when not behind a proxy)');
+  }
+  app.set('trust proxy', proxyHops);
   app.disable('x-powered-by');
 
   app.use(

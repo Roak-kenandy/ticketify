@@ -12,10 +12,12 @@ import { lmStatusLabel, resolveCrmActivityState } from "@/lib/field/crm-activity
 import { useSession } from "@/lib/field/session";
 
 export default function ActivityDetailModal({
+  ticketId,
   activity,
   visible,
   onClose,
 }: {
+  ticketId: string;
   activity: any;
   visible: boolean;
   onClose: () => void;
@@ -32,11 +34,16 @@ export default function ActivityDetailModal({
     setDetails(null);
     setError("");
     try {
-      setDetails(await apiGet(`/activities/${activityId}`, token));
+      setDetails(
+        await apiGet(
+          `/tickets/${encodeURIComponent(ticketId)}/activities/${encodeURIComponent(activityId)}`,
+          token,
+        ),
+      );
     } catch (err: any) {
       setError(err?.message || "Could not load the activity");
     }
-  }, [activityId, token]);
+  }, [ticketId, activityId, token]);
 
   React.useEffect(() => {
     if (visible) {

@@ -4,6 +4,14 @@ import { UpdateReportDto } from './dto/update-report.dto';
 import { ConfigService } from '@nestjs/config';
 import { CrmMongoService } from './crm-mongo.service';
 
+function csvCell(value: unknown): string {
+  const text = value === null || value === undefined ? '' : String(value);
+  // Leading =, +, - or @ would be evaluated as a formula by spreadsheet apps.
+  const safe =
+    /^[=+\-@\t\r]/.test(text) && typeof value !== 'number' ? `'${text}` : text;
+  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
+
 @Injectable()
 export class ReportsService {
   constructor(
@@ -351,7 +359,7 @@ export class ReportsService {
       row['3-7DaysPercentage'] ?? 0,
       row['7+DaysPercentage'] ?? 0,
     ];
-    return `${headers.join(',')}\n${values.join(',')}\n`;
+    return `${headers.join(',')}\n${values.map(csvCell).join(',')}\n`;
   }
 
   formatTeamReportCsv(rows: any[]): string {
@@ -369,7 +377,7 @@ export class ReportsService {
         r.total ?? 0,
         r.closed_total ?? 0,
         r.open_total ?? 0,
-      ].join(','),
+      ].map(csvCell).join(','),
     );
     return `${headers.join(',')}\n${lines.join('\n')}\n`;
   }

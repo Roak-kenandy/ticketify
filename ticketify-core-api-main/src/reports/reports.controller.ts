@@ -161,9 +161,11 @@ export class ReportsController {
     const rows = await this.reportsService.findTicketAging(queue, team);
     const row = rows?.[0] ?? {};
     const csv = this.reportsService.formatAgingCsv(row, { queue, team });
+    const part = (value: string) =>
+      String(value || 'all').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="ticket-aging-${team || 'all'}-${queue || 'all'}.csv"`,
+      `attachment; filename="ticket-aging-${part(team)}-${part(queue)}.csv"`,
     );
     res.send(csv);
   }

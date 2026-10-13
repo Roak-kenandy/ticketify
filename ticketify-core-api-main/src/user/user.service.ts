@@ -776,8 +776,7 @@ export class UserService {
       // Fetch location tracking data for last 8 hours
       const locationData = await this.fetchUserLocationTracking(user_id);
 
-      // Remove password from user object
-      const { password, ...userWithoutPassword } = user;
+      const { password, token_version, ...userWithoutPassword } = user as any;
 
       const technicianDetails: TechnicianDetailsDto = {
         user: userWithoutPassword,
@@ -804,7 +803,7 @@ export class UserService {
         'User Service',
         `Failed to fetch technician details for user ${user_id}: ${error.message}`,
       );
-      throw new ForbiddenException(`Failed to fetch technician details: ${error.message}`);
+      throw new ForbiddenException('Failed to fetch technician details');
     }
   }
 

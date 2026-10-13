@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, HttpException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { verifyReviewLink } from 'src/infrastructure/security/review-link';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
@@ -94,7 +94,8 @@ export class FeedbackService {
         throw new Error('Failed to submit feedback');
       }
     } catch (error) {
-      throw new ForbiddenException(error.message);
+      if (error instanceof HttpException) throw error;
+      throw new ForbiddenException('Failed to submit feedback');
     }
   }
 

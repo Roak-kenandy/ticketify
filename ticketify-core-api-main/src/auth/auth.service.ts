@@ -16,12 +16,15 @@ import * as argon from 'argon2';
 import { ActivitiesService } from 'src/activities/activities.service';
 import { CrmApiClient } from 'src/infrastructure/crm/crm-api.client';
 
+/** Per email + client IP, so one person cannot lock someone else out. */
 const MAX_FAILED_LOGINS = 5;
+/** Per email across all IPs: stops a distributed guessing attack on one account. */
+const MAX_FAILED_LOGINS_PER_ACCOUNT = 30;
 const LOCKOUT_MS = 15 * 60 * 1000;
 
 @Injectable()
 export class AuthService {
-  /** email -> recent failures; per-process, complements the per-IP throttle. */
+  /** `email|ip` and `email` -> recent failures; per-process, complements the per-IP throttle. */
   private readonly failedLogins = new Map<
     string,
     { count: number; lockedUntil: number; last: number }
@@ -98,15 +101,17 @@ export class AuthService {
         token_version: { increment: 1 },
       },
     });
-    this.failedLogins.delete(user.email.toLowerCase());
+    this.clearFailedLogins(user.email.toLowerCase());
     await this.activity.createUserLog('Password reset', user);
     return { message: 'Password reset' };
   }
 
-  async login(dto: { email: string; password: string }) {
+  async login(dto: { email: string; password: string }, ip = 'unknown') {
     const email = String(dto.email ?? '')
       .trim()
       .toLowerCase();
+    const clientKey = `${email}|${ip}`;
+    this.assertNotLocked(clientKey);
     this.assertNotLocked(email);
 
     const user = await this.prisma.user.findFirst({
@@ -122,7 +127,8 @@ export class AuthService {
       .catch(() => false);
 
     if (!user || !match) {
-      this.recordFailedLogin(email);
+      this.recordFailedLogin(clientKey, MAX_FAILED_LOGINS);
+      this.recordFailedLogin(email, MAX_FAILED_LOGINS_PER_ACCOUNT);
       throw new ForbiddenException('Invalid credentials');
     }
     if (!user.is_active) {
@@ -130,7 +136,7 @@ export class AuthService {
         'This account has been deactivated. Contact your administrator.',
       );
     }
-    this.failedLogins.delete(email);
+    this.clearFailedLogins(email);
 
     delete user.password;
 
@@ -240,8 +246,15 @@ export class AuthService {
     );
   }
 
-  private assertNotLocked(email: string) {
-    const entry = this.failedLogins.get(email);
+  private clearFailedLogins(email: string) {
+    this.failedLogins.delete(email);
+    for (const key of this.failedLogins.keys()) {
+      if (key.startsWith(`${email}|`)) this.failedLogins.delete(key);
+    }
+  }
+
+  private assertNotLocked(key: string) {
+    const entry = this.failedLogins.get(key);
     if (entry && entry.lockedUntil > Date.now()) {
       const minutes = Math.ceil((entry.lockedUntil - Date.now()) / 60000);
       throw new HttpException(
@@ -251,16 +264,16 @@ export class AuthService {
     }
   }
 
-  private recordFailedLogin(email: string) {
+  private recordFailedLogin(key: string, limit: number) {
     const now = Date.now();
-    const entry = this.failedLogins.get(email);
+    const entry = this.failedLogins.get(key);
     const count = entry && now - entry.last < LOCKOUT_MS ? entry.count + 1 : 1;
-    this.failedLogins.set(email, {
+    this.failedLogins.set(key, {
       count,
       last: now,
-      lockedUntil: count >= MAX_FAILED_LOGINS ? now + LOCKOUT_MS : 0,
+      lockedUntil: count >= limit ? now + LOCKOUT_MS : 0,
     });
-    if (count >= MAX_FAILED_LOGINS) {
+    if (count === limit) {
       this.logger.error(
         'AuthService',
         'Account temporarily locked after failed logins',

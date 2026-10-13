@@ -535,6 +535,7 @@ export default function TicketDetailsPage() {
                 {attachments.map((item: any, index: number) => (
                   <AttachmentThumb
                     key={String(item?.id ?? index)}
+                    ticketId={ticketId}
                     fileId={item?.file?.id}
                     onClick={() => {
                       setSelectedImage(item);
@@ -661,7 +662,7 @@ export default function TicketDetailsPage() {
         </div>
       </footer>
 
-      <ActivityDetailModal visible={modal === "activity"} onClose={closeModal} activity={selectedActivity} />
+      <ActivityDetailModal ticketId={ticketId} visible={modal === "activity"} onClose={closeModal} activity={selectedActivity} />
       <AddAttachmentModal
         ticketId={ticketId}
         visible={modal === "attachment"}
@@ -669,7 +670,7 @@ export default function TicketDetailsPage() {
         onSuccess={refreshAfterChange}
       />
       <AddNoteModal ticketId={ticketId} visible={modal === "note"} onClose={closeModal} onSuccess={refreshAfterChange} />
-      <ViewImageModal visible={modal === "image"} onClose={closeModal} image={selectedImage} />
+      <ViewImageModal ticketId={ticketId} visible={modal === "image"} onClose={closeModal} image={selectedImage} />
       <CloseTicketModal
         visible={modal === "close"}
         onClose={closeModal}
@@ -779,8 +780,16 @@ function InfoRow({ icon: Icon, label, value, href }: { icon: LucideIcon; label: 
   );
 }
 
-function AttachmentThumb({ fileId, onClick }: { fileId?: string; onClick: () => void }) {
-  const { url, failed } = useFileUrl(fileId);
+function AttachmentThumb({
+  ticketId,
+  fileId,
+  onClick,
+}: {
+  ticketId: string;
+  fileId?: string;
+  onClick: () => void;
+}) {
+  const { url, failed } = useFileUrl(ticketId, fileId);
   return (
     <button
       type="button"

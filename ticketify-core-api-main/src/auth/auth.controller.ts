@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   HttpCode,
+  Ip,
   Post,
   Req,
   UseGuards,
@@ -32,8 +33,8 @@ export class AuthController {
 
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('login')
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  login(@Body() dto: LoginDto, @Ip() ip: string) {
+    return this.authService.login(dto, ip);
   }
 
   @UseGuards(JwtGuard)

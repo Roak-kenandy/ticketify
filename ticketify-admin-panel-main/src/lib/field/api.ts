@@ -225,11 +225,12 @@ export const apiPatch = (
  * Fetches the file and returns an object URL the caller must revoke.
  */
 export async function fetchFileObjectUrl(
+  ticketId: string,
   fileId: string,
   token: string,
 ): Promise<string> {
   const response = await rawFetch(
-    `/tickets/files/${encodeURIComponent(fileId)}`,
+    `/tickets/${encodeURIComponent(ticketId)}/files/${encodeURIComponent(fileId)}`,
     token,
     { method: "GET", headers: { Accept: "*/*" } },
     { silent: true, timeoutMs: 45000 },

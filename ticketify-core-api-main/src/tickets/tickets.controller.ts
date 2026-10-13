@@ -31,6 +31,7 @@ import {
 } from './dto/ticket-actions.dto';
 import { FIELD_ROLES, OPS_VIEW_ROLES } from 'src/auth/ops-roles';
 import { TicketAccessGuard } from 'src/infrastructure/security/ticket-access.guard';
+import { TicketAccessService } from 'src/infrastructure/security/ticket-access.service';
 
 const ALLOWED_UPLOAD_TYPES = new Set([
   'image/jpeg',
@@ -105,10 +106,40 @@ export class TicketsController {
     return this.ticketsService.findAllTeamTicketsSafe(req.user.crm_user_id);
   }
 
-  @Roles(FIELD_ROLES)
+  @Roles(TicketAccessService.ALL_TICKET_ROLES)
   @Get('files/:file_id')
   async fetchFile(@Param('file_id') file_id: string, @Res() res: Response) {
-    const file = await this.ticketsService.fetchFile(file_id);
+    this.sendFile(res, await this.ticketsService.fetchFile(file_id));
+  }
+
+  @Roles(FIELD_ROLES)
+  @UseGuards(TicketAccessGuard)
+  @Get(':id/files/:file_id')
+  async fetchTicketFile(
+    @Param('id') ticket_id: string,
+    @Param('file_id') file_id: string,
+    @Res() res: Response,
+  ) {
+    this.sendFile(
+      res,
+      await this.ticketsService.fetchTicketFile(ticket_id, file_id),
+    );
+  }
+
+  @Roles(FIELD_ROLES)
+  @UseGuards(TicketAccessGuard)
+  @Get(':id/activities/:activityId')
+  getTicketActivity(
+    @Param('id') ticket_id: string,
+    @Param('activityId') activityId: string,
+  ) {
+    return this.ticketsService.getTicketActivity(ticket_id, activityId);
+  }
+
+  private sendFile(
+    res: Response,
+    file: { buffer: Buffer; contentType: string },
+  ) {
     const type = String(file.contentType ?? '')
       .split(';')[0]
       .trim()
