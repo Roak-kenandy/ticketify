@@ -13,7 +13,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { IntegrationAuditService } from 'src/infrastructure/audit/integration-audit.service';
-import { FIELD_ROLES, hasAnyRole, INVENTORY_ROLES } from 'src/auth/ops-roles';
+import { hasAnyRole, INVENTORY_ROLES } from 'src/auth/ops-roles';
 import { InventoryItemsService } from './inventory-items.service';
 import { normalizeSerial, SERIAL_PATTERN } from './serial';
 import { round2 } from './report-format';
@@ -59,6 +59,9 @@ type PreparedLine = {
   condition?: StockReturnCondition;
 };
 
+/** Only technicians hold issued stock; managers record items unrestricted. */
+const STOCK_HOLDER_ROLES = ['Technician'];
+
 const ITEM_VIEW_SELECT = {
   id: true,
   code: true,
@@ -94,7 +97,7 @@ export class TechnicianStockService {
       orderBy: { name: 'asc' },
     });
     return users
-      .filter((user) => hasAnyRole(FIELD_ROLES, user.role?.name))
+      .filter((user) => hasAnyRole(STOCK_HOLDER_ROLES, user.role?.name))
       .map((user) => ({
         id: user.id,
         name: user.name?.trim() || user.email,
@@ -524,7 +527,7 @@ export class TechnicianStockService {
       where: { id },
       select: { id: true, name: true, email: true, is_active: true, role: { select: { name: true } } },
     });
-    if (!user || !user.is_active || !hasAnyRole(FIELD_ROLES, user.role?.name)) {
+    if (!user || !user.is_active || !hasAnyRole(STOCK_HOLDER_ROLES, user.role?.name)) {
       throw new NotFoundException('Technician not found or inactive');
     }
     return { id: user.id, name: user.name?.trim() || user.email };
