@@ -41,7 +41,7 @@ import {
   InventoryReportService,
 } from './inventory-report.service';
 import { StockIssueDto, StockReturnDto } from './dto/stock.dto';
-import { ReportColumn, toCsv, toExcel } from './report-format';
+import { displayDate, ReportColumn, ReportMeta, toCsv, toExcel } from './report-format';
 import { StockReportQuery, StockReportService } from './stock-report.service';
 import { TechnicianStockService } from './technician-stock.service';
 
@@ -221,8 +221,11 @@ export class InventoryController {
     @Query() query: StockReportQuery & { format?: string },
     @Res() res: Response,
   ) {
-    const { rows } = await this.stockReport.summary(query);
-    sendSheet(res, query.format, 'technician-stock', 'Technician stock', this.stockReport.summaryColumns, rows);
+    const [{ rows }, meta] = await Promise.all([
+      this.stockReport.summary(query),
+      this.stockReport.exportMeta('Technician stock', query, 'in hand is the balance right now'),
+    ]);
+    sendSheet(res, query.format, 'technician-stock', 'Technician stock', this.stockReport.summaryColumns, rows, meta);
   }
 
   @UseGuards(JwtGuard, RolesGuard)
@@ -239,8 +242,11 @@ export class InventoryController {
     @Query() query: StockReportQuery & { format?: string },
     @Res() res: Response,
   ) {
-    const rows = await this.stockReport.movements(query);
-    sendSheet(res, query.format, 'stock-issues-returns', 'Issues and returns', this.stockReport.movementColumns, rows);
+    const [rows, meta] = await Promise.all([
+      this.stockReport.movements(query),
+      this.stockReport.exportMeta('Stock issues and returns', query, 'by date / time of each issue or return'),
+    ]);
+    sendSheet(res, query.format, 'stock-issues-returns', 'Issues and returns', this.stockReport.movementColumns, rows, meta);
   }
 
   @UseGuards(JwtGuard, RolesGuard)
@@ -258,15 +264,16 @@ function sendSheet<Row>(
   sheetName: string,
   columns: ReportColumn<Row>[],
   rows: Row[],
+  meta: ReportMeta = [],
 ) {
-  const stamp = new Date().toISOString().slice(0, 10);
+  const stamp = displayDate(new Date()).replace(' ', '-').replace(':', '');
   if (format === 'csv') {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}-${stamp}.csv"`);
-    res.send(toCsv(columns, rows));
+    res.send(toCsv(columns, rows, meta));
     return;
   }
   res.setHeader('Content-Type', 'application/vnd.ms-excel; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${fileName}-${stamp}.xls"`);
-  res.send(toExcel(sheetName, columns, rows));
+  res.send(toExcel(sheetName, columns, rows, meta));
 }

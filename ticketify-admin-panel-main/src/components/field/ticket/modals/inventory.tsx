@@ -572,10 +572,18 @@ function DraftCard({
 }) {
   const { item } = draft;
   const fromProvisioning = Boolean(draft.provisioningTransactionId);
+  /** Restricted technicians may never record more than the inventory team issued to them. */
+  const max = inHand;
+  const current = parseQuantity(draft.quantity) || 0;
+  const atMax = max !== null && current >= max;
+  const capped = (text: string) =>
+    max !== null && (parseQuantity(text) || 0) > max ? String(Number(max.toFixed(2))) : text;
   const step = (delta: number) => {
-    const next = Math.max(1, Math.round((parseQuantity(draft.quantity) || 0) + delta));
-    onChange({ quantity: String(next) });
+    const next = Math.max(1, Math.round(current + delta));
+    onChange({ quantity: String(max !== null ? Math.min(next, Math.floor(max)) : next) });
   };
+  const limitHint =
+    max !== null ? `Up to ${formatQuantity(max, item.consumption_uom)}: only what the inventory team issued to you.` : null;
 
   return (
     <SheetCard>
@@ -652,7 +660,7 @@ function DraftCard({
             <input
               className={cn("input w-32", errors?.quantity && "border-error")}
               value={draft.quantity}
-              onChange={(event) => onChange({ quantity: event.target.value.replace(/[^0-9.,]/g, "") })}
+              onChange={(event) => onChange({ quantity: capped(event.target.value.replace(/[^0-9.,]/g, "")) })}
               inputMode="decimal"
               placeholder="0.00"
             />
@@ -661,7 +669,7 @@ function DraftCard({
           {errors?.quantity ? (
             <p className="text-xs text-error">{errors.quantity}</p>
           ) : (
-            <p className="text-xs text-gray2">Decimals allowed, e.g. 12.5</p>
+            <p className="text-xs text-gray2">{limitHint ?? "Decimals allowed, e.g. 12.5"}</p>
           )}
         </>
       ) : (
@@ -682,20 +690,25 @@ function DraftCard({
                 errors?.quantity ? "border-error" : "border-borderlight",
               )}
               value={draft.quantity}
-              onChange={(event) => onChange({ quantity: event.target.value.replace(/[^0-9]/g, "") })}
+              onChange={(event) => onChange({ quantity: capped(event.target.value.replace(/[^0-9]/g, "")) })}
               inputMode="numeric"
             />
             <button
               type="button"
               onClick={() => step(1)}
+              disabled={atMax}
               aria-label="Increase"
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-tertiary text-primary"
+              className="flex h-10 w-10 items-center justify-center rounded-full border border-tertiary text-primary disabled:opacity-35"
             >
               <Plus className="h-[18px] w-[18px]" />
             </button>
             <span className="text-sm font-semibold text-gray2">{item.consumption_uom}</span>
           </div>
-          {errors?.quantity ? <p className="text-xs text-error">{errors.quantity}</p> : null}
+          {errors?.quantity ? (
+            <p className="text-xs text-error">{errors.quantity}</p>
+          ) : limitHint ? (
+            <p className="text-xs text-gray2">{limitHint}</p>
+          ) : null}
         </>
       )}
 

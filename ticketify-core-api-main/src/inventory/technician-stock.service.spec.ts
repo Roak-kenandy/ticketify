@@ -43,6 +43,7 @@ function build({
       type: 'ISSUE',
       condition: null,
       _sum: { quantity: new Prisma.Decimal(row.quantity) },
+      _max: { created_at: new Date('2026-10-01T05:00:00Z') },
     })),
   );
   const queryRaw = jest.fn(async (strings: TemplateStringsArray) =>

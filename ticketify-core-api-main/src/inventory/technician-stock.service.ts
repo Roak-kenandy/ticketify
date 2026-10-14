@@ -36,6 +36,9 @@ export type StockTotals = {
   returned_faulty: number;
   consumed: number;
   in_hand: number;
+  last_issued_at: Date | null;
+  last_returned_at: Date | null;
+  last_used_at: Date | null;
 };
 
 export type StockFilter = {
@@ -120,6 +123,7 @@ export class TechnicianStockService {
         ...(createdAt ? { created_at: createdAt } : {}),
       },
       _sum: { quantity: true },
+      _max: { created_at: true },
     });
 
     const conditions: Prisma.Sql[] = [Prisma.sql`c.stock_tracked = true`, Prisma.sql`c.status = 'POSTED'`];
@@ -131,9 +135,12 @@ export class TechnicianStockService {
     }
     if (filter.from) conditions.push(Prisma.sql`c.posted_at >= ${filter.from}`);
     if (filter.to) conditions.push(Prisma.sql`c.posted_at <= ${filter.to}`);
-    const consumed = await db.$queryRaw<{ technician_user_id: string; item_id: string; consumed: number }[]>`
+    const consumed = await db.$queryRaw<
+      { technician_user_id: string; item_id: string; consumed: number; last_used_at: Date | null }[]
+    >`
       SELECT c.technician_user_id, c.item_id,
-             COALESCE(SUM(c.quantity + COALESCE(a.delta, 0)), 0)::float8 AS consumed
+             COALESCE(SUM(c.quantity + COALESCE(a.delta, 0)), 0)::float8 AS consumed,
+             MAX(c.posted_at) AS last_used_at
       FROM ticket_inventory_consumptions c
       LEFT JOIN (
         SELECT consumption_id, SUM(quantity_delta) AS delta
@@ -155,6 +162,9 @@ export class TechnicianStockService {
           returned_faulty: 0,
           consumed: 0,
           in_hand: 0,
+          last_issued_at: null,
+          last_returned_at: null,
+          last_used_at: null,
         };
         rows.set(key, entry);
       }
@@ -163,12 +173,20 @@ export class TechnicianStockService {
     for (const movement of movements) {
       const entry = row(movement.technician_user_id, movement.item_id);
       const quantity = Number(movement._sum.quantity ?? 0);
-      if (movement.type === 'ISSUE') entry.issued = round2(entry.issued + quantity);
-      else if (movement.condition === 'FAULTY') entry.returned_faulty = round2(entry.returned_faulty + quantity);
-      else entry.returned_good = round2(entry.returned_good + quantity);
+      const at = movement._max.created_at;
+      if (movement.type === 'ISSUE') {
+        entry.issued = round2(entry.issued + quantity);
+        entry.last_issued_at = latest(entry.last_issued_at, at);
+      } else {
+        if (movement.condition === 'FAULTY') entry.returned_faulty = round2(entry.returned_faulty + quantity);
+        else entry.returned_good = round2(entry.returned_good + quantity);
+        entry.last_returned_at = latest(entry.last_returned_at, at);
+      }
     }
     for (const line of consumed) {
-      row(line.technician_user_id, line.item_id).consumed = round2(Number(line.consumed));
+      const entry = row(line.technician_user_id, line.item_id);
+      entry.consumed = round2(Number(line.consumed));
+      entry.last_used_at = line.last_used_at;
     }
     for (const entry of rows.values()) {
       entry.in_hand = round2(entry.issued - entry.returned_good - entry.returned_faulty - entry.consumed);
@@ -563,4 +581,9 @@ export class TechnicianStockService {
 function dateRange(from?: Date | null, to?: Date | null) {
   if (!from && !to) return null;
   return { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) };
+}
+
+function latest(current: Date | null, next: Date | null | undefined): Date | null {
+  if (!next) return current;
+  return !current || next > current ? next : current;
 }

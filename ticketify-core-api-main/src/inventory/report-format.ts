@@ -28,6 +28,13 @@ export function displayDate(value: Date): string {
   return local.toISOString().slice(0, 16).replace('T', ' ');
 }
 
+export function displayDateOrBlank(value: Date | null | undefined): string {
+  return value ? displayDate(value) : '';
+}
+
+/** Label/value lines printed above the table, e.g. period and generation time. */
+export type ReportMeta = [label: string, value: string][];
+
 export function startOfMaldivesMonth(): Date {
   const local = new Date(Date.now() + MALDIVES_OFFSET_MS);
   return new Date(
@@ -48,8 +55,14 @@ function csvCell(value: string | number | null): string {
   return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
-export function toCsv<Row>(columns: ReportColumn<Row>[], rows: Row[]): string {
+export function toCsv<Row>(
+  columns: ReportColumn<Row>[],
+  rows: Row[],
+  meta: ReportMeta = [],
+): string {
   const lines = [
+    ...meta.map(([label, value]) => `${csvCell(label)},${csvCell(value)}`),
+    ...(meta.length ? [''] : []),
     columns.map((column) => csvCell(column.header)).join(','),
     ...rows.map((row) =>
       columns.map((column) => csvCell(column.value(row))).join(','),
@@ -71,6 +84,7 @@ export function toExcel<Row>(
   sheetName: string,
   columns: ReportColumn<Row>[],
   rows: Row[],
+  meta: ReportMeta = [],
 ): string {
   const cell = (value: string | number | null) =>
     typeof value === 'number'
@@ -83,12 +97,15 @@ export function toExcel<Row>(
         `<Row>${columns.map((column) => cell(column.value(row))).join('')}</Row>`,
     )
     .join('\n');
+  const preamble = meta.length
+    ? `${meta.map(([label, value]) => `<Row>${cell(label)}${cell(value)}</Row>`).join('\n')}\n<Row></Row>\n`
+    : '';
   return `<?xml version="1.0"?>
 <?mso-application progid="Excel.Sheet"?>
 <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
 <Worksheet ss:Name="${escapeXml(sheetName.slice(0, 31))}">
 <Table>
-<Row>${header}</Row>
+${preamble}<Row>${header}</Row>
 ${body}
 </Table>
 </Worksheet>

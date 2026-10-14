@@ -82,7 +82,7 @@ export default function StockReportPage() {
   async function download(kind: "summary" | "movements", format: "csv" | "xls") {
     setDownloading(`${kind}-${format}`);
     try {
-      const stamp = moment().format("YYYY-MM-DD");
+      const stamp = moment().format("YYYY-MM-DD-HHmm");
       const base = kind === "summary" ? "technician-stock" : "stock-issues-returns";
       await downloadFile(
         `/inventory/stock/${kind}/export${query}${query ? "&" : "?"}format=${format}`,

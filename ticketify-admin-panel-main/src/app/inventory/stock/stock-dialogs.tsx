@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,6 +28,7 @@ import {
   type StockTechnician,
 } from "@/lib/inventory";
 import { cn } from "@/lib/utils";
+import { AddItemPicker } from "./add-item-picker";
 
 const textareaClass =
   "flex min-h-[96px] w-full rounded-md border border-input bg-card px-3 py-2 font-mono text-sm uppercase shadow-sm placeholder:normal-case placeholder:font-sans placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 aria-[invalid=true]:border-destructive";
@@ -107,7 +108,7 @@ export function IssueStockDialog({
   const [reference, setReference] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [lines, setLines] = React.useState<IssueLine[]>([]);
-  const [picker, setPicker] = React.useState("");
+  const [pickerOpen, setPickerOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [showErrors, setShowErrors] = React.useState(false);
   const slipKey = React.useRef(newSlipKey("iss"));
@@ -118,6 +119,7 @@ export function IssueStockDialog({
     setReference("");
     setNotes("");
     setLines([]);
+    setPickerOpen(false);
     setShowErrors(false);
     slipKey.current = newSlipKey("iss");
     axiosInterceptorInstance
@@ -149,7 +151,6 @@ export function IssueStockDialog({
 
   function addItem(itemId: string) {
     const item = items.find((candidate) => candidate.id === itemId);
-    setPicker("");
     if (!item) return;
     setLines((list) => [
       ...list,
@@ -194,9 +195,17 @@ export function IssueStockDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && !busy && onClose()}>
-      <DialogContent className="max-h-[90dvh] max-w-2xl overflow-y-auto">
-        <form onSubmit={submit} className="space-y-4">
-          <DialogHeader>
+      <DialogContent
+        className="flex max-h-[90dvh] max-w-2xl flex-col gap-0 overflow-hidden p-0"
+        onEscapeKeyDown={(event) => {
+          if (pickerOpen) {
+            event.preventDefault();
+            setPickerOpen(false);
+          }
+        }}
+      >
+        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+          <DialogHeader className="border-b px-6 py-4 pr-12">
             <DialogTitle>Issue items to a technician</DialogTitle>
             <DialogDescription>
               The technician can only record these items on their tickets. Devices such as ONTs need the serial number of
@@ -204,130 +213,130 @@ export function IssueStockDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <TechnicianSelect technicians={technicians} value={technician} onChange={setTechnician} disabled={busy} />
-            <div className="space-y-1.5">
-              <Label htmlFor="issue-ref">Slip / reference (optional)</Label>
-              <Input
-                id="issue-ref"
-                value={reference}
-                onChange={(e) => setReference(e.target.value)}
-                placeholder="e.g. ISS-2026-0142"
-                maxLength={80}
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-6 py-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <TechnicianSelect technicians={technicians} value={technician} onChange={setTechnician} disabled={busy} />
+              <div className="space-y-1.5">
+                <Label htmlFor="issue-ref">Slip / reference (optional)</Label>
+                <Input
+                  id="issue-ref"
+                  value={reference}
+                  onChange={(e) => setReference(e.target.value)}
+                  placeholder="e.g. ISS-2026-0142"
+                  maxLength={80}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {lines.map((line, index) => {
+                const error = showErrors ? errors[index] : "";
+                const serials = line.item.serialized ? parseSerials(line.serials) : [];
+                const converts = !line.item.serialized && line.item.conversion_factor !== 1;
+                return (
+                  <div key={line.key} className="space-y-2 rounded-lg border p-3">
+                    <div className="flex items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium">{line.item.name}</div>
+                        <div className="font-mono text-[11px] text-muted-foreground">{line.item.code}</div>
+                      </div>
+                      {line.item.serialized && <Badge variant="info">Serial required</Badge>}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Remove ${line.item.name}`}
+                        onClick={() => setLines((list) => list.filter((other) => other.key !== line.key))}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    {line.item.serialized ? (
+                      <div className="space-y-1.5">
+                        <Label htmlFor={`serials-${line.key}`}>
+                          Serial numbers · {serials.length} unit{serials.length === 1 ? "" : "s"}
+                        </Label>
+                        <textarea
+                          id={`serials-${line.key}`}
+                          className={textareaClass}
+                          value={line.serials}
+                          onChange={(e) => update(line.key, { serials: e.target.value })}
+                          placeholder="Scan or type one serial per line"
+                          aria-invalid={Boolean(error)}
+                          spellCheck={false}
+                          autoCapitalize="characters"
+                        />
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-end gap-2">
+                        <div className="space-y-1.5">
+                          <Label htmlFor={`qty-${line.key}`}>Quantity</Label>
+                          <Input
+                            id={`qty-${line.key}`}
+                            type="number"
+                            inputMode="decimal"
+                            step="0.01"
+                            min="0.01"
+                            className="w-32"
+                            value={line.quantity}
+                            onChange={(e) => update(line.key, { quantity: e.target.value })}
+                            aria-invalid={Boolean(error)}
+                          />
+                        </div>
+                        {converts ? (
+                          <Select
+                            value={line.unit}
+                            onValueChange={(unit) => update(line.key, { unit: unit as IssueLine["unit"] })}
+                          >
+                            <SelectTrigger className="w-44" aria-label="Unit">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="CONSUMPTION">{line.item.consumption_uom}</SelectItem>
+                              <SelectItem value="STOCK">{line.item.stock_uom}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <span className="pb-2 text-sm text-muted-foreground">{line.item.consumption_uom}</span>
+                        )}
+                        {converts && line.unit === "STOCK" && Number(line.quantity) > 0 && (
+                          <span className="pb-2 text-xs text-muted-foreground">
+                            = {formatQuantity(Number(line.quantity) * line.item.conversion_factor, line.item.consumption_uom)}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {error && <p className="text-xs text-destructive">{error}</p>}
+                  </div>
+                );
+              })}
+
+              <AddItemPicker
+                open={pickerOpen}
+                onOpenChange={setPickerOpen}
+                label={lines.length ? "Add another item" : "Add item"}
+                disabled={busy}
+                options={items
+                  .filter((item) => !lines.some((line) => line.item.id === item.id))
+                  .map((item) => ({
+                    id: item.id,
+                    label: item.name,
+                    code: item.code,
+                    group: item.category,
+                    serialized: item.serialized,
+                  }))}
+                onPick={addItem}
               />
+              {showErrors && !lines.length && <p className="text-xs text-destructive">Add at least one item.</p>}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="issue-notes">Notes (optional)</Label>
+              <Input id="issue-notes" value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} />
             </div>
           </div>
 
-          <div className="space-y-3">
-            {lines.map((line, index) => {
-              const error = showErrors ? errors[index] : "";
-              const serials = line.item.serialized ? parseSerials(line.serials) : [];
-              const converts = !line.item.serialized && line.item.conversion_factor !== 1;
-              return (
-                <div key={line.key} className="space-y-2 rounded-lg border p-3">
-                  <div className="flex items-start gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="font-medium">{line.item.name}</div>
-                      <div className="font-mono text-[11px] text-muted-foreground">{line.item.code}</div>
-                    </div>
-                    {line.item.serialized && <Badge variant="info">Serial required</Badge>}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Remove ${line.item.name}`}
-                      onClick={() => setLines((list) => list.filter((other) => other.key !== line.key))}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  {line.item.serialized ? (
-                    <div className="space-y-1.5">
-                      <Label htmlFor={`serials-${line.key}`}>
-                        Serial numbers · {serials.length} unit{serials.length === 1 ? "" : "s"}
-                      </Label>
-                      <textarea
-                        id={`serials-${line.key}`}
-                        className={textareaClass}
-                        value={line.serials}
-                        onChange={(e) => update(line.key, { serials: e.target.value })}
-                        placeholder="Scan or type one serial per line"
-                        aria-invalid={Boolean(error)}
-                        spellCheck={false}
-                        autoCapitalize="characters"
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex flex-wrap items-end gap-2">
-                      <div className="space-y-1.5">
-                        <Label htmlFor={`qty-${line.key}`}>Quantity</Label>
-                        <Input
-                          id={`qty-${line.key}`}
-                          type="number"
-                          inputMode="decimal"
-                          step="0.01"
-                          min="0.01"
-                          className="w-32"
-                          value={line.quantity}
-                          onChange={(e) => update(line.key, { quantity: e.target.value })}
-                          aria-invalid={Boolean(error)}
-                        />
-                      </div>
-                      {converts ? (
-                        <Select
-                          value={line.unit}
-                          onValueChange={(unit) => update(line.key, { unit: unit as IssueLine["unit"] })}
-                        >
-                          <SelectTrigger className="w-44" aria-label="Unit">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="CONSUMPTION">{line.item.consumption_uom}</SelectItem>
-                            <SelectItem value="STOCK">{line.item.stock_uom}</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <span className="pb-2 text-sm text-muted-foreground">{line.item.consumption_uom}</span>
-                      )}
-                      {converts && line.unit === "STOCK" && Number(line.quantity) > 0 && (
-                        <span className="pb-2 text-xs text-muted-foreground">
-                          = {formatQuantity(Number(line.quantity) * line.item.conversion_factor, line.item.consumption_uom)}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  {error && <p className="text-xs text-destructive">{error}</p>}
-                </div>
-              );
-            })}
-
-            <Select value={picker} onValueChange={addItem}>
-              <SelectTrigger aria-label="Add item" className="border-dashed">
-                <span className="flex items-center gap-2 text-muted-foreground">
-                  <Plus className="h-4 w-4" />
-                  Add item
-                </span>
-              </SelectTrigger>
-              <SelectContent>
-                {items
-                  .filter((item) => !lines.some((line) => line.item.id === item.id))
-                  .map((item) => (
-                    <SelectItem key={item.id} value={item.id}>
-                      {item.name}
-                      {item.serialized ? " · serial" : ""}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
-            {showErrors && !lines.length && <p className="text-xs text-destructive">Add at least one item.</p>}
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="issue-notes">Notes (optional)</Label>
-            <Input id="issue-notes" value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} />
-          </div>
-
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2 border-t px-6 py-4 sm:gap-0">
             <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
               Cancel
             </Button>
@@ -361,7 +370,7 @@ export function ReturnStockDialog({
   const [loading, setLoading] = React.useState(false);
   const [lines, setLines] = React.useState<ReturnLine[]>([]);
   const [notes, setNotes] = React.useState("");
-  const [picker, setPicker] = React.useState("");
+  const [pickerOpen, setPickerOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [showErrors, setShowErrors] = React.useState(false);
   const slipKey = React.useRef(newSlipKey("ret"));
@@ -370,6 +379,7 @@ export function ReturnStockDialog({
     if (!open) return;
     setTechnician(defaultTechnician ?? "");
     setNotes("");
+    setPickerOpen(false);
     setShowErrors(false);
     slipKey.current = newSlipKey("ret");
   }, [open, defaultTechnician]);
@@ -410,7 +420,6 @@ export function ReturnStockDialog({
   const chosenSerials = new Set(lines.flatMap((line) => line.serials));
 
   function addHolding(itemId: string) {
-    setPicker("");
     const holding = holdings.find((row) => row.item_id === itemId);
     if (!holding) return;
     setLines((list) => [
@@ -454,9 +463,17 @@ export function ReturnStockDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && !busy && onClose()}>
-      <DialogContent className="max-h-[90dvh] max-w-2xl overflow-y-auto">
-        <form onSubmit={submit} className="space-y-4">
-          <DialogHeader>
+      <DialogContent
+        className="flex max-h-[90dvh] max-w-2xl flex-col gap-0 overflow-hidden p-0"
+        onEscapeKeyDown={(event) => {
+          if (pickerOpen) {
+            event.preventDefault();
+            setPickerOpen(false);
+          }
+        }}
+      >
+        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+          <DialogHeader className="border-b px-6 py-4 pr-12">
             <DialogTitle>Record a return</DialogTitle>
             <DialogDescription>
               Items the technician hands back. Good items go back to the store; faulty ones are kept apart and can&apos;t be
@@ -464,138 +481,140 @@ export function ReturnStockDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <TechnicianSelect technicians={technicians} value={technician} onChange={setTechnician} disabled={busy} />
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-6 py-4">
+            <TechnicianSelect technicians={technicians} value={technician} onChange={setTechnician} disabled={busy} />
 
-          {technician && (
-            <div className="space-y-3">
-              {loading ? (
-                <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading what they hold…
-                </p>
-              ) : !holdings.length ? (
-                <p className="text-sm text-muted-foreground">This technician holds no issued stock.</p>
-              ) : null}
+            {technician && (
+              <div className="space-y-3">
+                {loading ? (
+                  <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading what they hold…
+                  </p>
+                ) : !holdings.length ? (
+                  <p className="text-sm text-muted-foreground">This technician holds no issued stock.</p>
+                ) : null}
 
-              {lines.map((line, index) => {
-                const error = showErrors ? errors[index] : "";
-                const available = serials.filter(
-                  (unit) =>
-                    unit.item_code === line.holding.item_code &&
-                    (line.serials.includes(unit.serial_number) || !chosenSerials.has(unit.serial_number)),
-                );
-                return (
-                  <div key={line.key} className="space-y-2 rounded-lg border p-3">
-                    <div className="flex items-start gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="font-medium">{line.holding.item_name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          Holds {formatQuantity(line.holding.in_hand, line.holding.uom)}
+                {lines.map((line, index) => {
+                  const error = showErrors ? errors[index] : "";
+                  const available = serials.filter(
+                    (unit) =>
+                      unit.item_code === line.holding.item_code &&
+                      (line.serials.includes(unit.serial_number) || !chosenSerials.has(unit.serial_number)),
+                  );
+                  return (
+                    <div key={line.key} className="space-y-2 rounded-lg border p-3">
+                      <div className="flex items-start gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium">{line.holding.item_name}</div>
+                          <div className="text-xs text-muted-foreground">
+                            Holds {formatQuantity(line.holding.in_hand, line.holding.uom)}
+                          </div>
                         </div>
+                        <Select value={line.condition} onValueChange={(value) => update(line.key, { condition: value as Condition })}>
+                          <SelectTrigger className="w-32" aria-label="Condition">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="GOOD">Good</SelectItem>
+                            <SelectItem value="FAULTY">Faulty</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Remove ${line.holding.item_name}`}
+                          onClick={() => setLines((list) => list.filter((other) => other.key !== line.key))}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
-                      <Select value={line.condition} onValueChange={(value) => update(line.key, { condition: value as Condition })}>
-                        <SelectTrigger className="w-32" aria-label="Condition">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="GOOD">Good</SelectItem>
-                          <SelectItem value="FAULTY">Faulty</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`Remove ${line.holding.item_name}`}
-                        onClick={() => setLines((list) => list.filter((other) => other.key !== line.key))}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      {line.holding.serialized ? (
+                        <div className="flex flex-wrap gap-2">
+                          {available.map((unit) => {
+                            const checked = line.serials.includes(unit.serial_number);
+                            return (
+                              <label
+                                key={unit.serial_number}
+                                className={cn(
+                                  "flex cursor-pointer items-center gap-2 rounded-md border px-2.5 py-1.5 font-mono text-xs",
+                                  checked && "border-primary bg-accent",
+                                )}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() =>
+                                    update(line.key, {
+                                      serials: checked
+                                        ? line.serials.filter((serial) => serial !== unit.serial_number)
+                                        : [...line.serials, unit.serial_number],
+                                    })
+                                  }
+                                />
+                                {unit.serial_number}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="flex items-end gap-2">
+                          <div className="space-y-1.5">
+                            <Label htmlFor={`ret-${line.key}`}>Quantity returned</Label>
+                            <Input
+                              id={`ret-${line.key}`}
+                              type="number"
+                              inputMode="decimal"
+                              step="0.01"
+                              min="0.01"
+                              className="w-32"
+                              value={line.quantity}
+                              onChange={(e) => update(line.key, { quantity: e.target.value })}
+                              aria-invalid={Boolean(error)}
+                            />
+                          </div>
+                          <span className="pb-2 text-sm text-muted-foreground">{line.holding.uom}</span>
+                        </div>
+                      )}
+                      {error && <p className="text-xs text-destructive">{error}</p>}
                     </div>
-                    {line.holding.serialized ? (
-                      <div className="flex flex-wrap gap-2">
-                        {available.map((unit) => {
-                          const checked = line.serials.includes(unit.serial_number);
-                          return (
-                            <label
-                              key={unit.serial_number}
-                              className={cn(
-                                "flex cursor-pointer items-center gap-2 rounded-md border px-2.5 py-1.5 font-mono text-xs",
-                                checked && "border-primary bg-accent",
-                              )}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() =>
-                                  update(line.key, {
-                                    serials: checked
-                                      ? line.serials.filter((serial) => serial !== unit.serial_number)
-                                      : [...line.serials, unit.serial_number],
-                                  })
-                                }
-                              />
-                              {unit.serial_number}
-                            </label>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="flex items-end gap-2">
-                        <div className="space-y-1.5">
-                          <Label htmlFor={`ret-${line.key}`}>Quantity returned</Label>
-                          <Input
-                            id={`ret-${line.key}`}
-                            type="number"
-                            inputMode="decimal"
-                            step="0.01"
-                            min="0.01"
-                            className="w-32"
-                            value={line.quantity}
-                            onChange={(e) => update(line.key, { quantity: e.target.value })}
-                            aria-invalid={Boolean(error)}
-                          />
-                        </div>
-                        <span className="pb-2 text-sm text-muted-foreground">{line.holding.uom}</span>
-                      </div>
-                    )}
-                    {error && <p className="text-xs text-destructive">{error}</p>}
-                  </div>
-                );
-              })}
+                  );
+                })}
 
-              {holdings.length > 0 && (
-                <Select value={picker} onValueChange={addHolding}>
-                  <SelectTrigger aria-label="Add returned item" className="border-dashed">
-                    <span className="flex items-center gap-2 text-muted-foreground">
-                      <Plus className="h-4 w-4" />
-                      Add returned item
-                    </span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {holdings.map((row) => (
-                      <SelectItem key={row.item_id} value={row.item_id}>
-                        {row.item_name} · holds {formatQuantity(row.in_hand, row.uom)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
+                {holdings.length > 0 && (
+                  <AddItemPicker
+                    open={pickerOpen}
+                    onOpenChange={setPickerOpen}
+                    label={lines.length ? "Add another returned item" : "Add returned item"}
+                    placeholder="Search what this technician holds…"
+                    disabled={busy}
+                    options={holdings.map((row) => ({
+                      id: row.item_id,
+                      label: row.item_name,
+                      code: row.item_code,
+                      hint: `Holds ${formatQuantity(row.in_hand, row.uom)}`,
+                      serialized: row.serialized,
+                    }))}
+                    onPick={addHolding}
+                  />
+                )}
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <Label htmlFor="return-notes">Notes (optional)</Label>
+              <Input
+                id="return-notes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="e.g. ONT dead on arrival"
+                maxLength={500}
+              />
             </div>
-          )}
-
-          <div className="space-y-1.5">
-            <Label htmlFor="return-notes">Notes (optional)</Label>
-            <Input
-              id="return-notes"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="e.g. ONT dead on arrival"
-              maxLength={500}
-            />
           </div>
 
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2 border-t px-6 py-4 sm:gap-0">
             <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
               Cancel
             </Button>

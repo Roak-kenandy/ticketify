@@ -4,8 +4,10 @@ import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { TechnicianStockService } from './technician-stock.service';
 import {
   displayDate,
+  displayDateOrBlank,
   parseDate,
   ReportColumn,
+  ReportMeta,
   round2,
   splitList,
 } from './report-format';
@@ -34,6 +36,9 @@ export type StockSummaryRow = {
   returned_good: number;
   returned_faulty: number;
   in_hand: number;
+  last_issued_at: Date | null;
+  last_used_at: Date | null;
+  last_returned_at: Date | null;
 };
 
 export type StockMovementRow = {
@@ -67,6 +72,9 @@ const SUMMARY_COLUMNS: ReportColumn<StockSummaryRow>[] = [
   { header: 'Returned (good)', value: (row) => row.returned_good },
   { header: 'Returned (faulty)', value: (row) => row.returned_faulty },
   { header: 'In hand now', value: (row) => row.in_hand },
+  { header: 'Last issued (date / time)', value: (row) => displayDateOrBlank(row.last_issued_at) },
+  { header: 'Last used on a ticket (date / time)', value: (row) => displayDateOrBlank(row.last_used_at) },
+  { header: 'Last returned (date / time)', value: (row) => displayDateOrBlank(row.last_returned_at) },
 ];
 
 const MOVEMENT_COLUMNS: ReportColumn<StockMovementRow>[] = [
@@ -134,6 +142,9 @@ export class StockReportService {
           returned_good: shown?.returned_good ?? 0,
           returned_faulty: shown?.returned_faulty ?? 0,
           in_hand: balances.get(key)?.in_hand ?? 0,
+          last_issued_at: shown?.last_issued_at ?? null,
+          last_used_at: shown?.last_used_at ?? null,
+          last_returned_at: shown?.last_returned_at ?? null,
         };
       })
       .filter((row) => row.issued || row.consumed || row.returned_good || row.returned_faulty || row.in_hand)
@@ -144,7 +155,10 @@ export class StockReportService {
 
     const byItem = new Map<
       string,
-      Omit<StockSummaryRow, 'technician_user_id' | 'technician_name'> & { technicians: number }
+      Omit<
+        StockSummaryRow,
+        'technician_user_id' | 'technician_name' | 'last_issued_at' | 'last_used_at' | 'last_returned_at'
+      > & { technicians: number }
     >();
     for (const row of rows) {
       const entry = byItem.get(row.item_id) ?? {
@@ -286,6 +300,31 @@ export class StockReportService {
         updated_at: unit.updated_at,
       };
     });
+  }
+
+  /** Title, period, filters and generation time printed above an exported table. */
+  async exportMeta(title: string, query: StockReportQuery, periodNote: string): Promise<ReportMeta> {
+    const from = parseDate(query.from);
+    const to = parseDate(query.to, true);
+    const technicianIds = splitList(query.technician_ids);
+    const itemIds = splitList(query.item_ids);
+    const [names, items] = await Promise.all([
+      this.userNames(technicianIds),
+      itemIds.length
+        ? this.prisma.inventoryItem.findMany({ where: { id: { in: itemIds } }, select: { name: true } })
+        : Promise.resolve([]),
+    ]);
+    const period =
+      from || to
+        ? `${from ? displayDate(from).slice(0, 10) : 'Beginning'} to ${to ? displayDate(to).slice(0, 10) : 'today'}`
+        : 'All time';
+    return [
+      ['Report', title],
+      ['Period', `${period} (${periodNote})`],
+      ['Technicians', technicianIds.length ? [...names.values()].join(', ') : 'All technicians'],
+      ['Items', items.length ? items.map((item) => item.name).join(', ') : 'All items'],
+      ['Generated', `${displayDate(new Date())} (Maldives time)`],
+    ];
   }
 
   private async userNames(ids: string[]): Promise<Map<string, string>> {
