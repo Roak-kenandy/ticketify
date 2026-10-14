@@ -154,7 +154,9 @@ export default function TrackingPage() {
                   .
                 </Step>
                 <Step n={2}>
-                  Open it and paste the <b>Device identifier</b> and <b>Server URL</b> shown above.
+                  Open it and paste the <b>Device identifier</b> and <b>Server URL</b> shown above. Use the
+                  copy buttons: the URL must start with <b>https://</b> and end with <b>/tracking/traccar</b>, and
+                  the identifier must match exactly (it starts with <b>tk-</b>).
                 </Step>
                 <Step n={3}>
                   Set <b>Location accuracy</b> to High, <b>Distance</b> to {setup.recommended.distance_m} m and{" "}

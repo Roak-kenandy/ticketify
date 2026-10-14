@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   NotFoundException,
   Post,
@@ -28,6 +29,19 @@ export class TrackingController {
   @Post('traccar')
   @HttpCode(200)
   async traccar(@Query() query: unknown, @Body() body: unknown) {
+    return this.ingest(query, body);
+  }
+
+  // An http:// server URL is 301-redirected to https, and the phone replays the POST as a GET
+  // with the same query string; OsmAnd-style clients can also be set to send GET.
+  @Throttle({ default: { limit: 1200, ttl: 60000 } })
+  @Get('traccar')
+  @HttpCode(200)
+  async traccarGet(@Query() query: unknown) {
+    return this.ingest(query, undefined);
+  }
+
+  private async ingest(query: unknown, body: unknown) {
     const parsed = parseTraccarPayload(query, body);
     if ('reason' in parsed) {
       this.logger.warn('Tracking', `Ignored Traccar post: ${parsed.reason}`);
