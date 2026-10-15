@@ -484,12 +484,13 @@ export class UserService {
       motion_since: user.tracking_device?.motion_since ?? null,
       battery_level: user.tracking_device?.battery_level ?? null,
       is_charging: user.tracking_device?.is_charging ?? null,
-      // Moving: a point every minute (Android applies Interval only when Distance is 0).
+      // Moving: a point every 15 s so dispatch follows a rider in near real time (Android
+      // applies Interval only when Distance is 0).
       // Stopped: stop detection pauses GPS to save battery and the heartbeat keeps checking in;
       // Android may stretch the heartbeat to ~10 min, which the signal rules allow for.
       recommended: {
         distance_m: 0,
-        interval_s: 60,
+        interval_s: 15,
         stop_detection: true,
         heartbeat_s: 300,
         wake_lock: true,

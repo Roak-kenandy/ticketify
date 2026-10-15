@@ -31,7 +31,7 @@ export type TrackingState = {
 };
 
 /**
- * Traccar Client sends every 60 s while moving. Once stop detection decides the phone is
+ * Traccar Client sends every 15 s while moving (60 s on older setups). Once stop detection decides the phone is
  * stationary it pauses GPS and only sends a heartbeat (set to 5 min; Android may stretch it to
  * ~10 min). Silence is therefore judged against what the phone last said it was doing.
  */

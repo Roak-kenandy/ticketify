@@ -4,7 +4,8 @@
  * Phones fall back to Wi-Fi / cell positioning indoors. Those fixes can be kilometres off
  * (e.g. in the sea) while still reporting a small accuracy radius, so accuracy alone is not
  * enough: a fix that implies an impossible speed, or a jump over 1 km, from the last stored
- * point is held back until several distinct fixes agree on the new place.
+ * point is held back until several distinct fixes agree on the new place, or form a
+ * plausible track (a technician riding away keeps moving, so never settles in one spot).
  */
 
 export type LocationFix = {
@@ -26,9 +27,11 @@ export type PendingMove = {
   longitude: number;
   last_latitude: number;
   last_longitude: number;
-  /** Distinct fixes seen at the new place. */
+  /** Distinct fixes seen at the new place, or along a plausible track from it. */
   count: number;
   first_at: Date;
+  /** Time of the latest held-back fix; absent on moves held before tracks were accepted. */
+  last_at?: Date;
 };
 
 export const LOCATION_RULES = {
@@ -128,7 +131,9 @@ export function evaluateFix(
     fix.at.getTime() - pending.first_at.getTime() <= rules.pendingTtlMs
       ? pending
       : null;
-  if (fresh && distanceM(fresh, fix) <= rules.confirmRadiusM) {
+  const settled = fresh && distanceM(fresh, fix) <= rules.confirmRadiusM;
+  const onTrack = fresh && !settled && followsTrack(fix, fresh, rules);
+  if (fresh && (settled || onTrack)) {
     // A stuck network / cached fix repeats the exact same coordinates; real GPS always jitters.
     const repeated =
       fix.latitude === fresh.last_latitude &&
@@ -136,11 +141,13 @@ export function evaluateFix(
     if (repeated) {
       return { action: 'hold', pending: fresh };
     }
-    const next = {
+    const next: PendingMove = {
       ...fresh,
+      ...(onTrack ? { latitude: fix.latitude, longitude: fix.longitude } : {}),
       count: fresh.count + 1,
       last_latitude: fix.latitude,
       last_longitude: fix.longitude,
+      last_at: fix.at,
     };
     if (
       next.count >= rules.confirmFixes &&
@@ -159,6 +166,37 @@ export function evaluateFix(
       last_longitude: fix.longitude,
       count: 1,
       first_at: fix.at,
+      last_at: fix.at,
     },
   };
+}
+
+/** An accurate fix reachable at road speed from the previous held-back fix. */
+function followsTrack(
+  fix: LocationFix,
+  pending: PendingMove,
+  rules: typeof LOCATION_RULES,
+): boolean {
+  if (
+    !pending.last_at ||
+    fix.accuracy === null ||
+    fix.accuracy > rules.goodAccuracyM
+  ) {
+    return false;
+  }
+  const stepMs = fix.at.getTime() - pending.last_at.getTime();
+  if (stepMs <= 0) {
+    return false;
+  }
+  const step = distanceM(
+    { latitude: pending.last_latitude, longitude: pending.last_longitude },
+    fix,
+  );
+  return (
+    step <=
+    Math.min(
+      (rules.maxSpeedMps * stepMs) / 1000 + rules.jumpToleranceM + fix.accuracy,
+      rules.confirmJumpOverM,
+    )
+  );
 }

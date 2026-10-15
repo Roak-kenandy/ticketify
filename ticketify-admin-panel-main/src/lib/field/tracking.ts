@@ -27,7 +27,7 @@ export type TrackingSetup = {
 };
 
 /**
- * Same rules as the admin live map: a moving phone sends every 60 s; a stationary one only
+ * Same rules as the admin live map: a moving phone sends every 15 s (60 s on older setups); a stationary one only
  * sends its heartbeat (5 min, which Android may stretch to ~10 min).
  */
 export const TRACKING_RULES = {

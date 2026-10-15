@@ -105,6 +105,42 @@ describe('evaluateFix', () => {
     });
   });
 
+  it('follows a technician riding away after a gap instead of waiting for them to stop', () => {
+    // ~600 m per minute heading south from 1.3 km away: never settles within 150 m.
+    const fixes = [120, 180, 240, 300, 360].map((s, i) => ({
+      latitude: 4.166 - i * 0.0054,
+      longitude: 73.515,
+      accuracy: 8,
+      at: at(s),
+    }));
+    expect(replay(fixes)).toEqual(['hold', 'hold', 'store', 'store', 'store']);
+  });
+
+  it('does not treat scattered fixes as a track', () => {
+    const spots = [SEA, MALE, SEA, { latitude: 4.22, longitude: 73.54 }];
+    const fixes = spots.map((spot, i) => ({
+      ...spot,
+      accuracy: 20,
+      at: at(16 + i * 15),
+    }));
+    const from: StoredPoint = {
+      latitude: 4.25,
+      longitude: 73.45,
+      created_at: t0,
+    };
+    expect(replay(fixes, from).every((action) => action === 'hold')).toBe(true);
+  });
+
+  it('does not build a track from coarse fixes', () => {
+    const fixes = [120, 180, 240].map((s, i) => ({
+      latitude: 4.166 - i * 0.0054,
+      longitude: 73.515,
+      accuracy: null,
+      at: at(s),
+    }));
+    expect(replay(fixes)).toEqual(['hold', 'hold', 'hold']);
+  });
+
   it('treats a missing accuracy as unknown, not perfect', () => {
     expect(normalizeAccuracy(0)).toBeNull();
     expect(normalizeAccuracy(undefined)).toBeNull();
