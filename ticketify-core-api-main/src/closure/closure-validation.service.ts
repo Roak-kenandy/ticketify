@@ -53,6 +53,15 @@ export class ClosureValidationService {
     );
   }
 
+  /** An ONT installed through INCA must be declared before closing, even while Phase 2 rules are off. */
+  private ontInventoryEnforced(): boolean {
+    return (
+      String(this.config.get('CLOSURE_ONT_INVENTORY_ENFORCED') ?? 'true')
+        .trim()
+        .toLowerCase() !== 'false'
+    );
+  }
+
   async evaluate(crmTicketId: string): Promise<ClosureEvaluation> {
     const snapshot = await this.snapshots.get(crmTicketId);
     const [stock, prov] = await Promise.all([
@@ -159,21 +168,35 @@ export class ClosureValidationService {
       });
     }
 
+    const phase2 = this.enforced();
+    const scoped = phase2
+      ? checks
+      : checks.map((check) =>
+          check.key === 'ont_inventory' || check.severity !== 'block'
+            ? check
+            : { ...check, severity: 'warn' as const },
+        );
     return {
       crm_ticket_id: crmTicketId,
-      enforced: this.enforced(),
-      ready: checks.every((check) => check.ok || check.severity === 'warn'),
-      checks,
+      enforced:
+        phase2 ||
+        (this.ontInventoryEnforced() &&
+          scoped.some((check) => check.key === 'ont_inventory')),
+      ready: scoped.every((check) => check.ok || check.severity === 'warn'),
+      checks: scoped,
     };
   }
 
   async assertReadyToClose(
     crmTicketId: string,
   ): Promise<ClosureEvaluation | null> {
-    if (!this.enforced()) {
+    if (!this.enforced() && !this.ontInventoryEnforced()) {
       return null;
     }
     const evaluation = await this.evaluate(crmTicketId);
+    if (!evaluation.enforced) {
+      return null;
+    }
     if (!evaluation.ready) {
       const reasons = evaluation.checks
         .filter((check) => !check.ok && check.severity === 'block')

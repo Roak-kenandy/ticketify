@@ -20,6 +20,7 @@ function build(options: {
   failedOptional?: string[];
   signal?: { required: boolean; captured: boolean };
   enforced?: string;
+  ontEnforced?: string;
 }) {
   const category = options.category ?? 'new_connections';
   const policy = provisioningPolicy(
@@ -55,7 +56,11 @@ function build(options: {
   const audit = { log: jest.fn().mockResolvedValue(true) };
   const config = {
     get: jest.fn((key: string) =>
-      key === 'PHASE2_CLOSURE_ENFORCED' ? options.enforced : undefined,
+      key === 'PHASE2_CLOSURE_ENFORCED'
+        ? options.enforced
+        : key === 'CLOSURE_ONT_INVENTORY_ENFORCED'
+          ? options.ontEnforced
+          : undefined,
     ),
   };
   const service = new ClosureValidationService(
@@ -167,5 +172,41 @@ describe('ClosureValidationService', () => {
   it('can be switched off for a staged rollout', async () => {
     const { service } = build({ category: 'fault', enforced: 'false' });
     await expect(service.assertReadyToClose('sr-1')).resolves.toBeNull();
+  });
+
+  it('still demands the installed ONT be declared while other rules are off', async () => {
+    const undeclared = build({
+      enforced: 'false',
+      required: { status: 'SUCCEEDED' },
+      installed: ['HWTC0001'],
+    });
+    const result = await undeclared.service.evaluate('sr-1');
+    expect(result).toMatchObject({ enforced: true, ready: false });
+    expect(
+      result.checks.find((check) => check.key === 'inventory_declaration')
+        ?.severity,
+    ).toBe('warn');
+    await expect(undeclared.service.assertReadyToClose('sr-1')).rejects.toThrow(
+      /Post ONT HWTC0001/,
+    );
+
+    const declared = build({
+      enforced: 'false',
+      stock: {
+        declaration: 'USED',
+        posted: [{ serialized: true, serial_number: 'HWTC0001', quantity: 1 }],
+      },
+      installed: ['HWTC0001'],
+    });
+    await expect(
+      declared.service.assertReadyToClose('sr-1'),
+    ).resolves.toMatchObject({ ready: true });
+
+    const off = build({
+      enforced: 'false',
+      ontEnforced: 'false',
+      installed: ['HWTC0001'],
+    });
+    await expect(off.service.assertReadyToClose('sr-1')).resolves.toBeNull();
   });
 });
