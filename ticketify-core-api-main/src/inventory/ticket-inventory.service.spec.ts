@@ -93,6 +93,7 @@ function build(
     assertCanDraw: jest.fn().mockResolvedValue(undefined),
     markConsumed: jest.fn().mockResolvedValue(undefined),
     releaseConsumption: jest.fn().mockResolvedValue(undefined),
+    holderOf: jest.fn().mockResolvedValue(null),
   };
   const service = new TicketInventoryService(
     prisma as never,
@@ -153,7 +154,11 @@ describe('TicketInventoryService', () => {
       ],
     );
     expect(created.every((line) => line.stock_tracked === true)).toBe(true);
-    expect(stock.markConsumed).toHaveBeenCalledWith(expect.anything(), 'HWTC0001ABCD', 'line-2');
+    expect(stock.markConsumed).toHaveBeenCalledWith(
+      expect.anything(),
+      'HWTC0001ABCD',
+      'line-2',
+    );
   });
 
   it('posts nothing when the technician does not hold the stock', async () => {
@@ -176,6 +181,32 @@ describe('TicketInventoryService', () => {
     );
     expect(stock.assertCanDraw).not.toHaveBeenCalled();
     expect(created[0].stock_tracked).toBe(false);
+  });
+
+  it('consumes an inventory-team correction from the technician holding the serial', async () => {
+    const { service, created, stock } = build();
+    stock.holderOf.mockResolvedValueOnce('tech-7');
+    await service.declare(
+      'sr-1',
+      { id: 'inv-1', role: ['Inventory'] },
+      dto([
+        { item_id: 'ont', quantity: 1, serial_number: 'HWTC0001ABCD' },
+        { item_id: 'cable', quantity: 3 },
+      ]),
+    );
+    expect(created[0]).toMatchObject({
+      technician_user_id: 'tech-7',
+      stock_tracked: true,
+    });
+    expect(stock.markConsumed).toHaveBeenCalledWith(
+      expect.anything(),
+      'HWTC0001ABCD',
+      'line-1',
+    );
+    expect(created[1]).toMatchObject({
+      technician_user_id: 'inv-1',
+      stock_tracked: false,
+    });
   });
 
   it('rejects decimals on whole-unit items and more than 2 decimals', async () => {

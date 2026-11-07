@@ -456,6 +456,15 @@ export class TechnicianStockService {
     return unit?.status === 'WITH_TECHNICIAN' && unit.technician_user_id === technicianId;
   }
 
+  /** The technician a serial is currently issued to (not yet installed), if any. */
+  async holderOf(tx: Prisma.TransactionClient, serial: string): Promise<string | null> {
+    const unit = await tx.serialUnit.findUnique({
+      where: { serial_number: serial },
+      select: { status: true, technician_user_id: true },
+    });
+    return unit?.status === 'WITH_TECHNICIAN' ? unit.technician_user_id : null;
+  }
+
   markConsumed(tx: Prisma.TransactionClient, serial: string, consumptionId: string) {
     return tx.serialUnit.update({
       where: { serial_number: serial },

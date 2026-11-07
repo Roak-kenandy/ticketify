@@ -227,9 +227,16 @@ export class TicketInventoryService {
           },
         });
         for (const [index, line] of prepared.entries()) {
+          // An inventory-team correction of a serial still out with a technician
+          // consumes it from that technician's stock.
+          const holder =
+            !fromIssuedStock && line.serial
+              ? await this.stock.holderOf(tx, line.serial)
+              : null;
+          const tracked = fromIssuedStock || Boolean(holder);
           const created = await tx.ticketInventoryConsumption.create({
             data: {
-              stock_tracked: fromIssuedStock,
+              stock_tracked: tracked,
               crm_ticket_id: crmTicketId,
               sr_number: snapshot.sr_number,
               item_id: line.item.id,
@@ -238,7 +245,7 @@ export class TicketInventoryService {
               uom: line.item.consumption_uom,
               serial_number: line.serial,
               remarks: line.remarks,
-              technician_user_id: actor.id,
+              technician_user_id: holder ?? actor.id,
               department: snapshot.department,
               service_type: snapshot.service_type,
               area: snapshot.area,
@@ -247,7 +254,7 @@ export class TicketInventoryService {
               idempotency_key: `${key}:${index}`,
             },
           });
-          if (fromIssuedStock && line.serial) {
+          if (tracked && line.serial) {
             await this.stock.markConsumed(tx, line.serial, created.id);
           }
         }
