@@ -23,6 +23,7 @@ import moment from "moment";
 import { useParams } from "next/navigation";
 import React from "react";
 import { StackHeader } from "@/components/field/shell/headers";
+import { AdminAuth } from "@/lib/admin-auth";
 import CompletionChecklist from "@/components/field/ticket/completion-checklist";
 import ActivityDetailModal from "@/components/field/ticket/modals/activity-details";
 import AddAttachmentModal from "@/components/field/ticket/modals/add-attachment";
@@ -202,6 +203,10 @@ export default function TicketDetailsPage() {
   const isMine = Boolean(user?.crm_user_id) && user?.crm_user_id === view?.assigned_to?.user?.id;
   const isClosed = view?.state === "CLOSED" || view?.stage?.name === "Closed";
   const canEdit = isMine && !isClosed;
+  const [inventoryTeam, setInventoryTeam] = React.useState(false);
+  React.useEffect(() => setInventoryTeam(AdminAuth.canAccessInventory()), []);
+  /** The inventory team corrects materials on closed requests; technicians are locked out. */
+  const correctsInventory = isClosed && inventoryTeam;
   const activities: any[] = data?.activities?.content ?? [];
   const notes: any[] = data?.notes?.content ?? [];
   const attachments: any[] = data?.attachments?.content ?? [];
@@ -630,7 +635,7 @@ export default function TicketDetailsPage() {
             {canEdit && view?.state === "IN_PROGRESS" ? (
               <ActionChip icon={CreditCard} label="Charges" onClick={() => setModal("billing")} />
             ) : null}
-            {canEdit && view?.state === "IN_PROGRESS" ? (
+            {(canEdit && view?.state === "IN_PROGRESS") || correctsInventory ? (
               <ActionChip icon={Box} label="Inventory" onClick={() => setModal("inventory")} />
             ) : null}
             {canEdit && view?.state === "IN_PROGRESS" ? (

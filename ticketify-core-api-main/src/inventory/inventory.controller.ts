@@ -98,8 +98,11 @@ export class InventoryController {
   @TicketScope('crmTicketId')
   @Roles(TICKET_ROLES)
   @Get('tickets/:crmTicketId')
-  ticketInventory(@Param('crmTicketId') crmTicketId: string) {
-    return this.tickets.view(crmTicketId);
+  ticketInventory(
+    @Req() req: AuthedRequest,
+    @Param('crmTicketId') crmTicketId: string,
+  ) {
+    return this.tickets.view(crmTicketId, req.user);
   }
 
   @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)

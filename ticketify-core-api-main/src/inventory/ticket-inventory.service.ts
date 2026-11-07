@@ -128,8 +128,12 @@ export class TicketInventoryService {
     private readonly stock: TechnicianStockService,
   ) {}
 
-  async view(crmTicketId: string): Promise<TicketInventoryView> {
-    const [declaration, lines, locked, header] = await Promise.all([
+  /** `locked`: closed for technicians; the inventory team can still correct it. */
+  async view(
+    crmTicketId: string,
+    actor?: InventoryActor,
+  ): Promise<TicketInventoryView> {
+    const [declaration, lines, closed, header] = await Promise.all([
       this.prisma.ticketInventoryDeclaration.findUnique({
         where: { crm_ticket_id: crmTicketId },
       }),
@@ -137,6 +141,7 @@ export class TicketInventoryService {
       this.isClosed(crmTicketId),
       this.header(crmTicketId),
     ]);
+    const locked = closed && !(actor && this.isInventoryTeam(actor));
     const views = lines.map(toLineView);
     return {
       crm_ticket_id: crmTicketId,
@@ -167,7 +172,7 @@ export class TicketInventoryService {
       select: { id: true },
     });
     if (replayed) {
-      return this.view(crmTicketId);
+      return this.view(crmTicketId, actor);
     }
 
     const lines = dto.lines ?? [];
@@ -281,7 +286,7 @@ export class TicketInventoryService {
       },
       idempotency_key: key,
     });
-    return this.view(crmTicketId);
+    return this.view(crmTicketId, actor);
   }
 
   async reverse(lineId: string, actor: InventoryActor, reason: string) {
@@ -326,7 +331,7 @@ export class TicketInventoryService {
       },
       new_state: { status: 'REVERSED', reason: reason.trim() },
     });
-    return this.view(line.crm_ticket_id);
+    return this.view(line.crm_ticket_id, actor);
   }
 
   async adjust(
@@ -374,7 +379,7 @@ export class TicketInventoryService {
       old_state: { line_id: lineId, quantity: before },
       new_state: { quantity, delta, reason: reason.trim() },
     });
-    return this.view(line.crm_ticket_id);
+    return this.view(line.crm_ticket_id, actor);
   }
 
   private async header(
