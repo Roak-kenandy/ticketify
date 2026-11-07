@@ -8,6 +8,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { JwtGuard } from 'src/auth/guard';
 import { RolesGuard } from 'src/auth/guard/roles.guard';
 import { Roles } from 'src/infrastructure/decorators/roles.decorator';
@@ -56,12 +57,55 @@ export class ProvisioningController {
     return this.provisioning.start(crmTicketId, req.user, body);
   }
 
+  // Each detect is a live INCA query; cap it so serials cannot be enumerated through it.
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
   @TicketScope('crmTicketId')
   @Roles(FIELD_ROLES)
   @Post('tickets/:crmTicketId/detect')
-  detect(@Body() body: DetectOntDto) {
-    return this.provisioning.detect(body.ont_serial);
+  detect(
+    @Req() req: AuthedRequest,
+    @Param('crmTicketId') crmTicketId: string,
+    @Body() body: DetectOntDto,
+  ) {
+    return this.provisioning.detect(crmTicketId, req.user, body.ont_serial);
+  }
+
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
+  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @TicketScope('crmTicketId')
+  @Roles(FIELD_ROLES)
+  @Get('tickets/:crmTicketId/inca/streets')
+  streets(@Query('city_id') cityId = '') {
+    return this.provisioning.streets(cityId);
+  }
+
+  // Client lookup reveals whether an ID card is an INCA customer; keep it slow and ticket-scoped.
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @TicketScope('crmTicketId')
+  @Roles(FIELD_ROLES)
+  @Get('tickets/:crmTicketId/inca/clients')
+  client(
+    @Req() req: AuthedRequest,
+    @Param('crmTicketId') crmTicketId: string,
+    @Query('identity') identity = '',
+  ) {
+    return this.provisioning.findClient(crmTicketId, req.user, identity);
+  }
+
+  // Reveals which customer an ONT serial belongs to; keep it slow and ticket-scoped.
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @TicketScope('crmTicketId')
+  @Roles(FIELD_ROLES)
+  @Get('tickets/:crmTicketId/inca/subscriber')
+  subscriberBySerial(
+    @Req() req: AuthedRequest,
+    @Param('crmTicketId') crmTicketId: string,
+    @Query('serial') serial = '',
+  ) {
+    return this.provisioning.subscriberBySerial(crmTicketId, req.user, serial);
   }
 
   @UseGuards(JwtGuard, RolesGuard)

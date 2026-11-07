@@ -23,9 +23,12 @@ import { LoggerService } from 'src/infrastructure/logger/logger.service';
 import {
   INCA_CLIENT,
   IncaClient,
+  IncaLocationInput,
+  IncaNotIntegratedError,
   IncaOption,
   IncaRejectedError,
   IncaSubscriber,
+  IncaTerminalNodeInput,
   IncaUnavailableError,
 } from 'src/infrastructure/inca/inca.types';
 import {
@@ -35,6 +38,7 @@ import {
 import { normalizeSerial } from 'src/inventory/ticket-inventory.service';
 import { TechnicianStockService } from 'src/inventory/technician-stock.service';
 import {
+  LocationDto,
   RetryProvisioningDto,
   SignalAfterDto,
   StartProvisioningDto,
@@ -66,9 +70,9 @@ const SERIAL_PATTERN = /^[A-Z0-9][A-Z0-9:._/-]{3,63}$/;
 export const STATUS_LABELS: Record<ProvisioningStatus, string> = {
   VALIDATING: 'Validating',
   REGISTERING_ONT: 'Registering ONT',
-  APPLYING_CONFIG: 'Applying subscriber configuration',
+  APPLYING_CONFIG: 'Terminal node, ONU & package',
   WAITING_TODO: 'Waiting for INCA Todo',
-  VERIFYING: 'Verifying service',
+  VERIFYING: 'Optical info',
   SUCCEEDED: 'Successful',
   FAILED: 'Failed',
 };
@@ -152,19 +156,36 @@ export class ProvisioningService implements OnModuleInit {
       service_areas: IncaOption[];
       device_types: IncaOption[];
       packages: IncaOption[];
+      cities: IncaOption[];
     } = {
       service_areas: [],
       device_types: [],
       packages: [],
+      cities: [],
     };
+    const needsCities =
+      policy.actions.includes('NEW_CONNECTION') ||
+      policy.actions.includes('RELOCATION');
     try {
-      const [areas, devices, packages, found] = await Promise.all([
+      const [areas, devices, packages, cities, found] = await Promise.all([
         this.inca.serviceAreas(),
         this.inca.deviceTypes(),
         this.inca.packages(),
-        this.inca.findSubscriber(this.clientIdentifier(snapshot), purpose),
+        needsCities ? this.inca.cities() : [],
+        // A lookup INCA is not integrated for yet must not take the whole screen offline.
+        this.inca
+          .findSubscriber(this.clientIdentifier(snapshot), purpose)
+          .catch((error: unknown) => {
+            if (error instanceof IncaNotIntegratedError) return null;
+            throw error;
+          }),
       ]);
-      options = { service_areas: areas, device_types: devices, packages };
+      options = {
+        service_areas: areas,
+        device_types: devices,
+        packages,
+        cities,
+      };
       subscriber = found;
     } catch (error) {
       available = false;
@@ -182,7 +203,13 @@ export class ProvisioningService implements OnModuleInit {
       category: snapshot.category,
       area: snapshot.area,
       address: snapshot.address,
-      inca: { mode: this.inca.mode, available, error: incaError },
+      inca: {
+        mode: this.inca.mode,
+        available,
+        error: incaError,
+        pppoe_required: this.pppoeRequired,
+        current_ont_required: this.currentOntRequired,
+      },
       policy: {
         ...policy,
         actions: policy.actions.map((action) => ({
@@ -190,26 +217,21 @@ export class ProvisioningService implements OnModuleInit {
           label: ACTION_LABELS[action],
         })),
       },
-      subscriber: subscriber
-        ? {
-            terminal_node_id: subscriber.terminal_node_id,
-            client_identifier: subscriber.client_identifier,
-            service_area: subscriber.service_area,
-            address: subscriber.address,
-            package: subscriber.package,
-            pppoe_username: subscriber.pppoe_username,
-            pppoe_password_masked: '••••••••',
-            pppoe_enabled: subscriber.pppoe_enabled,
-            connected: subscriber.connected,
-            onu_serials: subscriber.onu_serials,
-            olt_id: subscriber.olt_id,
-            pon: subscriber.pon,
-          }
-        : null,
+      subscriber: subscriber ? subscriberView(subscriber) : null,
       options,
       suggested: {
         pppoe_username: digits ? `mn${digits}` : null,
         service_area: this.matchArea(options.service_areas, snapshot.area),
+        terminal_node: {
+          name: snapshot.customer_name ?? '',
+          number: this.terminalNumber(snapshot.customer_phone),
+          phone: snapshot.customer_phone?.trim() || null,
+          city_id:
+            options.cities.find(
+              (city) =>
+                city.label === this.matchArea(options.cities, snapshot.area),
+            )?.code ?? null,
+        },
       },
       range: this.range(),
       status: this.ticketStatus(policy, transactions, available),
@@ -221,49 +243,100 @@ export class ProvisioningService implements OnModuleInit {
    * Read-only Active Device lookup so the technician can confirm the detected
    * OLT / PON and device type before provisioning.
    */
-  async detect(rawSerial: string) {
+  async detect(crmTicketId: string, actor: Actor, rawSerial: string) {
     const serial = normalizeSerial(rawSerial);
     if (!serial || !SERIAL_PATTERN.test(serial)) {
       throw new BadRequestException(
         `"${rawSerial}" is not a valid ONT serial number.`,
       );
     }
+    await this.assertCanAct(crmTicketId, actor);
     try {
-      const device = await this.inca.findDevice(serial);
+      const [record, active] = await Promise.allSettled([
+        this.inca.findDevice(serial),
+        this.inca.detectOnOlt(serial),
+      ]);
+      if (record.status === 'rejected') throw record.reason;
+      const device = record.value;
+      const onOlt = active.status === 'fulfilled' ? active.value : null;
+      const runState = describeRunState(onOlt);
+      const operator = {
+        operator: onOlt?.operator ?? null,
+        pppoe_required: onOlt?.pppoe_required === true,
+      };
+      const pppoeNote = operator.pppoe_required
+        ? ` ${onOlt?.operator ?? 'Operator'} firmware: this ONT only gets service over PPPoE.`
+        : '';
+
       if (device?.registered) {
+        const pon =
+          device.pon ?? (onOlt?.olt_id === device.olt_id ? onOlt.pon : null);
+        const where = describeLocation(device.olt_name ?? device.olt_id, pon);
+        const elsewhere =
+          onOlt && device.olt_id && onOlt.olt_id !== device.olt_id
+            ? ` The OLT currently sees it${describeLocation(onOlt.olt_name ?? onOlt.olt_id, onOlt.pon)}.`
+            : '';
+        const waiting =
+          onOlt?.olt_state === 'UNREGISTERED'
+            ? ' The OLT lists it as unregistered: it will be configured when it is added to the Terminal Node.'
+            : '';
         return {
           serial,
           status: 'REGISTERED' as const,
           olt_id: device.olt_id,
-          pon: device.pon,
+          olt_name: device.olt_name ?? null,
+          pon,
           device_type: device.device_type,
           terminal_node_id: device.terminal_node_id,
-          message: device.terminal_node_id
-            ? `Already registered on ${device.olt_id} PON ${device.pon} and bound to Terminal Node ${device.terminal_node_id}.`
-            : `Already registered on ${device.olt_id} PON ${device.pon}; the registration will be reused.`,
+          olt_state: onOlt?.olt_state ?? null,
+          online: onOlt?.online ?? null,
+          ...operator,
+          message:
+            (device.terminal_node_id
+              ? `In INCA${where} and bound to Terminal Node ${device.terminal_node_id}.`
+              : `In INCA${where}, not on any Terminal Node; the INCA record will be reused.`) +
+            runState +
+            waiting +
+            elsewhere +
+            pppoeNote,
         };
       }
-      const detected = await this.inca.detectUnregistered(serial);
-      if (!detected) {
+      if (active.status === 'rejected') throw active.reason;
+      if (!onOlt) {
         return {
           serial,
           status: 'NOT_DETECTED' as const,
           olt_id: null,
+          olt_name: null,
           pon: null,
           device_type: null,
           terminal_node_id: null,
+          olt_state: null,
+          online: null,
+          ...operator,
           message:
-            'Not detected on any OLT. Check ONT power and the fibre connection, then detect again.',
+            'Not detected on any OLT (registered or unregistered). Check ONT power and the fibre connection, then detect again.',
         };
       }
+      const where = describeLocation(onOlt.olt_name ?? onOlt.olt_id, onOlt.pon);
       return {
         serial,
-        status: 'UNREGISTERED' as const,
-        olt_id: detected.olt_id,
-        pon: detected.pon,
-        device_type: detected.device_type ?? null,
+        status:
+          onOlt.olt_state === 'REGISTERED'
+            ? ('OLT_REGISTERED' as const)
+            : ('UNREGISTERED' as const),
+        olt_id: onOlt.olt_id,
+        olt_name: onOlt.olt_name ?? null,
+        pon: onOlt.pon,
+        device_type: onOlt.device_type ?? null,
         terminal_node_id: null,
-        message: `Detected as unregistered on ${detected.olt_id} PON ${detected.pon}.`,
+        olt_state: onOlt.olt_state ?? 'UNREGISTERED',
+        online: onOlt.online ?? null,
+        ...operator,
+        message:
+          onOlt.olt_state === 'REGISTERED'
+            ? `Still configured${where} from an earlier registration, but has no INCA record.${runState} INCA can only add ONTs from the autofind list: have the NOC remove it from the OLT, then detect again.`
+            : `Detected as unregistered${where}.${pppoeNote}`,
       };
     } catch (error) {
       if (error instanceof IncaUnavailableError) {
@@ -278,15 +351,37 @@ export class ProvisioningService implements OnModuleInit {
     }
   }
 
+  /**
+   * INCA changes and customer lookups belong to the technician working the job: the CRM
+   * assignee, on a request in progress. Others with ticket access can still read runs.
+   */
+  async assertCanAct(crmTicketId: string, actor: Actor) {
+    const snapshot = await this.snapshots.get(crmTicketId, true);
+    if (
+      !actor.crm_user_id ||
+      snapshot.assigned_crm_user_id !== actor.crm_user_id
+    ) {
+      throw new ForbiddenException(
+        'Only the technician assigned to this service request can use INCA provisioning.',
+      );
+    }
+    if (snapshot.state !== 'IN_PROGRESS') {
+      throw new BadRequestException(
+        'INCA provisioning is only available while the service request is in progress.',
+      );
+    }
+    return snapshot;
+  }
+
   async start(crmTicketId: string, actor: Actor, dto: StartProvisioningDto) {
-    const snapshot = await this.snapshots.get(crmTicketId);
+    const snapshot = await this.assertCanAct(crmTicketId, actor);
     const policy = this.policy(snapshot);
     if (!policy.actions.includes(dto.action)) {
       throw new BadRequestException(
         `${ACTION_LABELS[dto.action]} is not available for this service request.`,
       );
     }
-    const input = this.buildInput(snapshot, dto);
+    const input = this.buildInput(snapshot, dto, await this.offeredChoices());
     const installsOnt =
       dto.action === 'NEW_CONNECTION' ||
       dto.action === 'ONT_REPLACEMENT' ||
@@ -300,6 +395,21 @@ export class ProvisioningService implements OnModuleInit {
       throw new BadRequestException(
         `ONT ${input.ont_serial} is not issued to you. Pick one of your issued ONTs, or ask the inventory team to issue it.`,
       );
+    }
+    if (installsOnt && input.ont_serial) {
+      const elsewhere = await this.prisma.provisioningTransaction.findFirst({
+        where: {
+          ont_serial: input.ont_serial,
+          status: { in: IN_FLIGHT },
+          crm_ticket_id: { not: crmTicketId },
+        },
+        select: { sr_number: true },
+      });
+      if (elsewhere) {
+        throw new ConflictException(
+          `ONT ${input.ont_serial} is being provisioned on ${elsewhere.sr_number ?? 'another service request'}. Wait for that run to finish.`,
+        );
+      }
     }
     const deviceItemCode = input.device_type
       ? await this.inca
@@ -337,7 +447,11 @@ export class ProvisioningService implements OnModuleInit {
       entity_id: crmTicketId,
       action: 'PROVISIONING_STARTED',
       actor_user_id: actor.id,
-      new_state: { transaction_id: txn.id, action: dto.action, submitted },
+      new_state: {
+        transaction_id: txn.id,
+        action: dto.action,
+        submitted: publicSubmitted(submitted),
+      },
     });
     this.launch(txn.id, input, null, dto.pppoe_password ?? null);
     return this.view(txn.id);
@@ -345,6 +459,7 @@ export class ProvisioningService implements OnModuleInit {
 
   async retry(transactionId: string, actor: Actor, dto: RetryProvisioningDto) {
     const txn = await this.findAccessible(transactionId, actor);
+    await this.assertCanAct(txn.crm_ticket_id, actor);
     if (txn.status !== 'FAILED') {
       throw new BadRequestException(
         'Only a failed provisioning run can be retried.',
@@ -363,9 +478,11 @@ export class ProvisioningService implements OnModuleInit {
         'A newer run exists for this action. Retry that one instead.',
       );
     }
+    // Claimed only while still FAILED, so two simultaneous retries cannot both run it.
+    let claimed: { count: number };
     try {
-      await this.prisma.provisioningTransaction.update({
-        where: { id: txn.id },
+      claimed = await this.prisma.provisioningTransaction.updateMany({
+        where: { id: txn.id, status: 'FAILED' },
         data: {
           status: 'VALIDATING',
           attempts: { increment: 1 },
@@ -376,6 +493,9 @@ export class ProvisioningService implements OnModuleInit {
       });
     } catch (error) {
       throw this.inFlightConflict(error);
+    }
+    if (!claimed.count) {
+      throw new ConflictException('This run is already being retried.');
     }
     await this.audit.log({
       entity_type: 'provisioning',
@@ -402,6 +522,7 @@ export class ProvisioningService implements OnModuleInit {
 
   async signalAfter(transactionId: string, actor: Actor, dto: SignalAfterDto) {
     const txn = await this.findAccessible(transactionId, actor);
+    await this.assertCanAct(txn.crm_ticket_id, actor);
     if (txn.action !== 'SIGNAL_CHECK' || txn.status !== 'SUCCEEDED') {
       throw new BadRequestException(
         'After readings are taken on a completed signal check.',
@@ -728,14 +849,170 @@ export class ProvisioningService implements OnModuleInit {
     }
   }
 
+  private terminalNodeInput(dto: StartProvisioningDto): IncaTerminalNodeInput {
+    const node = dto.terminal_node;
+    if (!node) {
+      throw new BadRequestException('Enter the terminal node details.');
+    }
+    const text = (value?: string) => value?.trim() || null;
+    return {
+      ...this.locationInput(node),
+      name: node.name.trim(),
+      client_identity: node.client_identity.trim().toUpperCase(),
+      client_name: node.client_name.trim(),
+      phone: text(node.phone),
+      email: text(node.email),
+    };
+  }
+
+  /** City and street are each either picked from INCA or added by name, never both. */
+  private locationInput(node?: LocationDto): IncaLocationInput {
+    if (!node) {
+      throw new BadRequestException('Enter the city, street and number.');
+    }
+    const text = (value?: string) => value?.trim() || null;
+    const newCity = text(node.new_city_name);
+    const newStreet = text(node.new_street_name);
+    if (Boolean(node.city_id) === Boolean(newCity)) {
+      throw new BadRequestException('Choose a city or add a new one.');
+    }
+    if (newCity && !node.new_city_area_code) {
+      throw new BadRequestException('Enter the area code for the new city.');
+    }
+    if (Boolean(node.street_id) === Boolean(newStreet)) {
+      throw new BadRequestException('Choose a street or add a new one.');
+    }
+    if (newCity && node.street_id) {
+      throw new BadRequestException(
+        'A new city has no streets yet; add the street too.',
+      );
+    }
+    return {
+      number: node.number,
+      city_id: node.city_id ?? null,
+      new_city: newCity
+        ? { name: newCity, area_code: node.new_city_area_code as string }
+        : null,
+      street_id: node.street_id ?? null,
+      new_street: newStreet,
+    };
+  }
+
+  /** INCA streets of a city, for the terminal node form. */
+  async streets(cityId: string) {
+    if (!/^\d{1,10}$/.test(cityId)) {
+      throw new BadRequestException('Choose a valid city.');
+    }
+    return this.incaRead(() => this.inca.streets(cityId));
+  }
+
+  /** Is the customer already an INCA client? Matched on ID card / passport number. */
+  async findClient(crmTicketId: string, actor: Actor, identity: string) {
+    const value = identity?.trim().toUpperCase() ?? '';
+    if (!/^[A-Z0-9-]{3,30}$/.test(value)) {
+      throw new BadRequestException(
+        'Enter a valid ID card or passport number.',
+      );
+    }
+    await this.assertCanAct(crmTicketId, actor);
+    const client = await this.incaRead(() => this.inca.findClient(value));
+    await this.audit.log({
+      entity_type: 'provisioning',
+      entity_id: crmTicketId,
+      action: 'INCA_CLIENT_LOOKUP',
+      actor_user_id: actor.id,
+      new_state: { identity: maskIdentity(value), found: Boolean(client) },
+    });
+    return {
+      identity: value,
+      found: Boolean(client),
+      name: client?.name ?? null,
+    };
+  }
+
+  /** Replacement / relocation preview: the INCA Terminal Node the current ONT is attached to. */
+  async subscriberBySerial(
+    crmTicketId: string,
+    actor: Actor,
+    rawSerial: string,
+  ) {
+    const serial = normalizeSerial(rawSerial);
+    if (!serial || !SERIAL_PATTERN.test(serial)) {
+      throw new BadRequestException(
+        `"${rawSerial}" is not a valid ONT serial number.`,
+      );
+    }
+    await this.assertCanAct(crmTicketId, actor);
+    const subscriber = await this.incaRead(() =>
+      this.inca.findSubscriberBySerial(serial),
+    );
+    await this.audit.log({
+      entity_type: 'provisioning',
+      entity_id: crmTicketId,
+      action: 'INCA_SUBSCRIBER_LOOKUP',
+      actor_user_id: actor.id,
+      new_state: {
+        serial,
+        terminal_node_id: subscriber?.terminal_node_id ?? null,
+      },
+    });
+    return {
+      serial,
+      found: Boolean(subscriber),
+      subscriber: subscriber ? subscriberView(subscriber) : null,
+    };
+  }
+
+  private async incaRead<T>(call: () => Promise<T>): Promise<T> {
+    try {
+      return await call();
+    } catch (error) {
+      if (error instanceof IncaUnavailableError) {
+        throw new ServiceUnavailableException(
+          `INCA unavailable: ${error.message}`,
+        );
+      }
+      if (error instanceof IncaRejectedError) {
+        throw new BadRequestException(error.message);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * A choice is only demanded when INCA offers options for it (the live adapter has no
+   * package catalogue yet and the INCA account may have no service areas). If INCA cannot
+   * be asked, both stay required.
+   */
+  private async offeredChoices() {
+    const [areas, packages] = await Promise.all([
+      this.inca.serviceAreas().catch(() => null),
+      this.inca.packages().catch(() => null),
+    ]);
+    return {
+      service_area: areas === null || areas.length > 0,
+      package: packages === null || packages.length > 0,
+    };
+  }
+
   private buildInput(
     snapshot: TicketSnapshot,
     dto: StartProvisioningDto,
+    offered: { service_area: boolean; package: boolean },
   ): RunInput {
     const serial = normalizeSerial(dto.ont_serial);
     if (serial && !SERIAL_PATTERN.test(serial)) {
       throw new BadRequestException(
         `"${serial}" is not a valid ONT serial number.`,
+      );
+    }
+    const oldSerial =
+      dto.action === 'ONT_REPLACEMENT' || dto.action === 'RELOCATION'
+        ? normalizeSerial(dto.old_ont_serial)
+        : null;
+    if (oldSerial && !SERIAL_PATTERN.test(oldSerial)) {
+      throw new BadRequestException(
+        `"${oldSerial}" is not a valid ONT serial number.`,
       );
     }
     const text = (value?: string) => value?.trim() || null;
@@ -744,6 +1021,7 @@ export class ProvisioningService implements OnModuleInit {
       client_identifier: this.clientIdentifier(snapshot),
       customer_name: snapshot.customer_name ?? snapshot.sr_number ?? 'Customer',
       ont_serial: serial,
+      old_ont_serial: oldSerial,
       service_area: text(dto.service_area),
       device_type: text(dto.device_type),
       package: text(dto.package),
@@ -752,6 +1030,10 @@ export class ProvisioningService implements OnModuleInit {
       new_ont: Boolean(dto.new_ont),
       confirmed_olt_id: text(dto.confirmed_olt_id),
       confirmed_pon: text(dto.confirmed_pon),
+      terminal_node:
+        dto.action === 'NEW_CONNECTION' ? this.terminalNodeInput(dto) : null,
+      location:
+        dto.action === 'RELOCATION' ? this.locationInput(dto.location) : null,
     };
     const missing: string[] = [];
     const need = (value: unknown, label: string) =>
@@ -759,20 +1041,31 @@ export class ProvisioningService implements OnModuleInit {
     switch (dto.action) {
       case 'NEW_CONNECTION':
         need(input.ont_serial, 'ONT serial');
-        need(input.service_area, 'service area');
+        if (offered.service_area) need(input.service_area, 'service area');
         need(input.device_type, 'device type');
-        need(input.package, 'package');
-        need(input.pppoe_username, 'PPPoE username');
+        if (offered.package) need(input.package, 'package');
+        if (this.pppoeRequired) need(input.pppoe_username, 'PPPoE username');
         break;
       case 'ONT_REPLACEMENT':
+        if (this.currentOntRequired) need(oldSerial, 'current ONT serial');
         need(input.ont_serial, 'replacement ONT serial');
         need(input.device_type, 'device type');
+        if (oldSerial && oldSerial === serial) {
+          throw new BadRequestException(
+            'The replacement ONT must be a different device from the current ONT.',
+          );
+        }
         break;
       case 'RELOCATION':
-        need(input.service_area, 'destination service area');
+        if (this.currentOntRequired) need(oldSerial, 'current ONT serial');
         if (input.new_ont) {
           need(input.ont_serial, 'new ONT serial');
           need(input.device_type, 'device type');
+          if (oldSerial && oldSerial === serial) {
+            throw new BadRequestException(
+              'The new ONT must be a different device from the current ONT.',
+            );
+          }
         }
         break;
       case 'SIGNAL_CHECK':
@@ -780,6 +1073,11 @@ export class ProvisioningService implements OnModuleInit {
     }
     if (missing.length) {
       throw new BadRequestException(`Missing ${missing.join(', ')}.`);
+    }
+    if (dto.pppoe_password && !input.pppoe_username) {
+      throw new BadRequestException(
+        'Enter the PPPoE username for this password.',
+      );
     }
     return input;
   }
@@ -855,7 +1153,7 @@ export class ProvisioningService implements OnModuleInit {
           : null,
         error_message: txn.error_message,
         can_retry: txn.status === 'FAILED' && isLatest,
-        submitted: txn.submitted,
+        submitted: publicSubmitted(txn.submitted),
         result:
           publicResult && Object.keys(publicResult).length
             ? publicResult
@@ -912,6 +1210,7 @@ export class ProvisioningService implements OnModuleInit {
       range: this.range(),
       todoTimeoutMs: Number(this.config.get('INCA_TODO_TIMEOUT_MS') ?? 120_000),
       todoPollMs: Number(this.config.get('INCA_TODO_POLL_MS') ?? 2_000),
+      requireOltConfirmation: true,
     };
   }
 
@@ -927,6 +1226,25 @@ export class ProvisioningService implements OnModuleInit {
     return snapshot.contact_id ?? snapshot.sr_number ?? snapshot.crm_ticket_id;
   }
 
+  /**
+   * Live INCA asks for PPPoE only for operator-firmware ONTs, which Detect and the runner
+   * flag per serial; the simulator always applies it.
+   */
+  private get pppoeRequired() {
+    return this.inca.mode !== 'live';
+  }
+
+  /** Live INCA has no customer lookup, so replacement finds the node by the current ONT. */
+  private get currentOntRequired() {
+    return this.inca.mode === 'live';
+  }
+
+  /** INCA numbers terminal nodes by the customer's 7-digit local phone number. */
+  private terminalNumber(phone: string | null) {
+    const digits = (phone ?? '').replace(/\D/g, '');
+    return digits.length > 7 ? digits.slice(-7) : digits;
+  }
+
   private matchArea(areas: IncaOption[], area: string | null) {
     if (!area) return null;
     const needle = area.toLowerCase().replace(/[^a-z]/g, '');
@@ -937,6 +1255,73 @@ export class ProvisioningService implements OnModuleInit {
       )?.label ?? null
     );
   }
+}
+
+function describeLocation(olt: string | null, pon: string | null): string {
+  if (!olt) return '';
+  return pon ? ` on ${olt} PON ${pon}` : ` on ${olt}`;
+}
+
+/**
+ * What a run shows back: the provisioning choices only. The new-connection client details
+ * (ID card, name, phone, e-mail) stay in the run record for retries and are not returned.
+ */
+function publicSubmitted(submitted: unknown) {
+  const value = (submitted ?? {}) as Record<string, unknown>;
+  const keys = [
+    'action',
+    'ont_serial',
+    'old_ont_serial',
+    'service_area',
+    'device_type',
+    'device_item_code',
+    'package',
+    'pppoe_username',
+    'new_ont',
+    'confirmed_olt_id',
+    'confirmed_pon',
+    'pppoe_password_provided',
+  ];
+  return Object.fromEntries(
+    keys.filter((key) => key in value).map((key) => [key, value[key]]),
+  );
+}
+
+/** Enough of an ID card number to recognise it in the audit log, not to reuse it. */
+function maskIdentity(identity: string) {
+  return identity.length <= 3
+    ? '***'
+    : `${'*'.repeat(identity.length - 3)}${identity.slice(-3)}`;
+}
+
+function subscriberView(subscriber: IncaSubscriber) {
+  return {
+    terminal_node_id: subscriber.terminal_node_id,
+    client_identifier: subscriber.client_identifier,
+    service_area: subscriber.service_area,
+    address: subscriber.address,
+    package: subscriber.package,
+    pppoe_username: subscriber.pppoe_username,
+    pppoe_password_masked: '••••••••',
+    pppoe_enabled: subscriber.pppoe_enabled,
+    pppoe_configured: subscriber.pppoe_configured ?? subscriber.pppoe_enabled,
+    connected: subscriber.connected,
+    onu_serials: subscriber.onu_serials,
+    olt_id: subscriber.olt_id,
+    pon: subscriber.pon,
+    location: subscriber.location ?? null,
+  };
+}
+
+function describeRunState(
+  detection: { olt_state?: string; online?: boolean | null } | null,
+): string {
+  if (detection?.olt_state !== 'REGISTERED' || detection.online == null) {
+    return '';
+  }
+  return detection.online
+    ? ' The OLT reports it online.'
+    : ' The OLT reports it offline.';
 }
 
 function parseDate(value?: string, endOfDay = false): Date | null {

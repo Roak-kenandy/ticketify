@@ -103,6 +103,8 @@ export type OpticalReading = {
   alarms: string[];
   read_at: string;
   result: SignalResult;
+  /** Every line INCA reports (voltage, bias current, temperature, CATV …). */
+  details?: Array<{label: string; value: string}>;
 };
 
 export type ProvisioningResult = {
@@ -164,6 +166,31 @@ export type ProvisioningTransaction = {
 
 export type IncaOption = {code: string; label: string; item_code?: string};
 
+export type IncaSubscriberView = {
+  terminal_node_id: string;
+  client_identifier?: string | null;
+  service_area: string | null;
+  address: string | null;
+  package: string | null;
+  pppoe_username: string | null;
+  pppoe_password_masked: string;
+  /** PPPoE credentials are set on the Terminal Node (independent of a live session). */
+  pppoe_configured?: boolean;
+  connected: boolean;
+  onu_serials: string[];
+  olt_id: string | null;
+  pon: string | null;
+  /** The node's address as INCA ids; prefills the relocation destination. */
+  location?: { city_id: string | null; street_id: string | null; number: string | null } | null;
+};
+
+/** GET /provisioning/tickets/:id/inca/subscriber?serial= */
+export type IncaSubscriberLookup = {
+  serial: string;
+  found: boolean;
+  subscriber: IncaSubscriberView | null;
+};
+
 export type ProvisioningContext = {
   crm_ticket_id: string;
   sr_number: string | null;
@@ -173,31 +200,37 @@ export type ProvisioningContext = {
   category: string | null;
   area: string | null;
   address: string | null;
-  inca: {mode: string; available: boolean; error: string | null};
+  inca: {
+    mode: string;
+    available: boolean;
+    error: string | null;
+    pppoe_required?: boolean;
+    /** Replacement locates the customer's Terminal Node by the current ONT serial. */
+    current_ont_required?: boolean;
+  };
   policy: {
     actions: Array<{action: ProvisioningAction; label: string}>;
     recommended: ProvisioningAction[];
     required_action: ProvisioningAction | null;
     signal_required: boolean;
   };
-  subscriber: {
-    terminal_node_id: string;
-    service_area: string | null;
-    address: string | null;
-    package: string | null;
-    pppoe_username: string | null;
-    pppoe_password_masked: string;
-    connected: boolean;
-    onu_serials: string[];
-    olt_id: string | null;
-    pon: string | null;
-  } | null;
+  subscriber: IncaSubscriberView | null;
   options: {
     service_areas: IncaOption[];
     device_types: IncaOption[];
     packages: IncaOption[];
+    cities: IncaOption[];
   };
-  suggested: {pppoe_username: string | null; service_area: string | null};
+  suggested: {
+    pppoe_username: string | null;
+    service_area: string | null;
+    terminal_node: {
+      name: string;
+      number: string;
+      phone: string | null;
+      city_id: string | null;
+    };
+  };
   range: {min_dbm: number; max_dbm: number};
   status: {code: string; label: string};
   transactions: ProvisioningTransaction[];
@@ -205,11 +238,23 @@ export type ProvisioningContext = {
 
 export type OntDetection = {
   serial: string;
-  status: 'UNREGISTERED' | 'REGISTERED' | 'NOT_DETECTED';
+  /**
+   * REGISTERED: has an INCA record. OLT_REGISTERED: still configured on the OLT without an
+   * INCA record; INCA cannot add it until it is removed from the OLT.
+   */
+  status: 'UNREGISTERED' | 'OLT_REGISTERED' | 'REGISTERED' | 'NOT_DETECTED';
   olt_id: string | null;
+  olt_name?: string | null;
   pon: string | null;
   device_type: string | null;
   terminal_node_id: string | null;
+  /** Active Device list the ONT was found on. */
+  olt_state?: 'UNREGISTERED' | 'REGISTERED' | null;
+  online?: boolean | null;
+  /** Firmware customisation the OLT reports, e.g. MVOOREDOO. */
+  operator?: string | null;
+  /** Operator-firmware ONT: registration needs the customer's PPPoE username and password. */
+  pppoe_required?: boolean;
   message: string;
 };
 

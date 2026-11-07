@@ -201,7 +201,11 @@ export class TicketInventoryService {
           await this.stock.assertCanDraw(
             tx,
             actor.id,
-            prepared.map((line) => ({ item: line.item, quantity: line.quantity, serial: line.serial })),
+            prepared.map((line) => ({
+              item: line.item,
+              quantity: line.quantity,
+              serial: line.serial,
+            })),
           );
         }
         await tx.ticketInventoryDeclaration.upsert({
@@ -581,6 +585,22 @@ export class TicketInventoryService {
       where: { serialized: true, active: true },
       orderBy: { sort_order: 'asc' },
     });
+    // The stock record knows which item a serial really is; INCA device types
+    // (live mode) carry no Ticketify item code.
+    const stocked = new Map(
+      (
+        await this.prisma.serialUnit.findMany({
+          where: {
+            serial_number: {
+              in: installs
+                .map((install) => normalizeSerial(install.ont_serial))
+                .filter((serial): serial is string => Boolean(serial)),
+            },
+          },
+          select: { serial_number: true, item_id: true },
+        })
+      ).map((unit) => [unit.serial_number, unit.item_id]),
+    );
     const proposals: ProposedInventoryLine[] = [];
     const seen = new Set<string>();
     for (const install of installs) {
@@ -590,6 +610,9 @@ export class TicketInventoryService {
       const code = (install.submitted as { device_item_code?: string } | null)
         ?.device_item_code;
       const item =
+        serializedItems.find(
+          (candidate) => candidate.id === stocked.get(serial),
+        ) ??
         serializedItems.find((candidate) => candidate.code === code) ??
         serializedItems[0];
       if (!item) continue;

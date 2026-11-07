@@ -28,8 +28,16 @@ const RECOMMENDED_BY_CATEGORY: Record<
   ProvisioningAction[]
 > = {
   new_connections: ['NEW_CONNECTION', 'SIGNAL_CHECK'],
-  relocation: ['RELOCATION', 'SIGNAL_CHECK'],
-  fault: ['SIGNAL_CHECK', 'ONT_REPLACEMENT'],
+  relocation: ['RELOCATION'],
+  fault: ['ONT_REPLACEMENT'],
+};
+
+/** Categories limited to these actions; every other category offers all of them. */
+const ONLY_BY_CATEGORY: Partial<
+  Record<AutoAssignCategory, ProvisioningAction[]>
+> = {
+  fault: ['ONT_REPLACEMENT'],
+  relocation: ['RELOCATION'],
 };
 
 const REQUIRED_BY_CATEGORY: Partial<
@@ -56,14 +64,18 @@ export function provisioningPolicy(
   const recommended: ProvisioningAction[] = category
     ? RECOMMENDED_BY_CATEGORY[category]
     : ['SIGNAL_CHECK', 'ONT_REPLACEMENT'];
+  const actions = (category && ONLY_BY_CATEGORY[category]) || [
+    ...recommended,
+    ...ALL_ACTIONS.filter((action) => !recommended.includes(action)),
+  ];
   return {
-    actions: [
-      ...recommended,
-      ...ALL_ACTIONS.filter((action) => !recommended.includes(action)),
-    ],
+    actions,
     recommended,
     required_action: category ? REQUIRED_BY_CATEGORY[category] ?? null : null,
-    signal_required: Boolean(category && required.has(category)),
+    // A signal check that is not offered can never be demanded at closure.
+    signal_required: Boolean(
+      category && required.has(category) && actions.includes('SIGNAL_CHECK'),
+    ),
   };
 }
 

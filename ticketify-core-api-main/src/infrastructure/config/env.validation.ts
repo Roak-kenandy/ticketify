@@ -37,6 +37,33 @@ export function validateEnv(
     }
   }
 
+  const incaMode = String(config.INCA_MODE ?? 'dummy')
+    .trim()
+    .toLowerCase();
+  if (incaMode === 'live') {
+    const value = (key: string) => String(config[key] ?? '').trim();
+    if (!/^https:\/\/[^\s/]+/i.test(value('INCA_BASE_URL'))) {
+      problems.push(
+        'INCA_BASE_URL must be an https:// URL when INCA_MODE=live',
+      );
+    }
+    if (!value('INCA_USERNAME') || !String(config.INCA_PASSWORD ?? '')) {
+      problems.push(
+        'INCA_USERNAME and INCA_PASSWORD are required when INCA_MODE=live',
+      );
+    }
+    if (!value('INCA_TLS_CA_FILE')) {
+      problems.push('INCA_TLS_CA_FILE is required when INCA_MODE=live');
+    }
+    if (
+      value('INCA_TLS_FINGERPRINT').replace(/[^0-9a-f]/gi, '').length !== 64
+    ) {
+      problems.push(
+        'INCA_TLS_FINGERPRINT must be the SHA-256 fingerprint of the INCA certificate',
+      );
+    }
+  }
+
   if (problems.length) {
     throw new Error(
       `Invalid environment configuration: ${problems.join('; ')}`,

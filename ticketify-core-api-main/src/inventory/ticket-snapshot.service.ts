@@ -59,9 +59,10 @@ export class TicketSnapshotService {
 
   constructor(private readonly crm: CrmApiClient) {}
 
-  async get(crmTicketId: string): Promise<TicketSnapshot> {
+  /** @param fresh skip the cache, for decisions that must see the current assignee / state. */
+  async get(crmTicketId: string, fresh = false): Promise<TicketSnapshot> {
     const cached = this.cache.get(crmTicketId);
-    if (cached && Date.now() - cached.at < TTL_MS) {
+    if (!fresh && cached && Date.now() - cached.at < TTL_MS) {
       return cached.value;
     }
     const result = await this.crm

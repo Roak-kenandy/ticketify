@@ -28,7 +28,8 @@ export function Overlay({
     lockCount += 1;
     document.body.style.overflow = "hidden";
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      // A nested control (e.g. an open dropdown) that consumed Escape marks it handled.
+      if (event.key === "Escape" && !event.defaultPrevented) {
         escapeRef.current?.();
       }
     };

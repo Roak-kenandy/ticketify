@@ -153,7 +153,7 @@ describe('ClosureValidationService', () => {
 
   it('requires a signal reading when configured for the category', async () => {
     const { service } = build({
-      category: 'fault',
+      category: 'new_connections',
       stock: { declaration: 'NONE_USED' },
       signal: { required: true, captured: false },
     });

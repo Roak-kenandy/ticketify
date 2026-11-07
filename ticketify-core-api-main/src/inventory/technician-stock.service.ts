@@ -78,7 +78,7 @@ const ITEM_VIEW_SELECT = {
 } as const;
 
 const SERIAL_STATUS_TEXT: Record<SerialUnitStatus, string> = {
-  WITH_TECHNICIAN: 'is already issued to a technician',
+  WITH_TECHNICIAN: 'is already issued to a technician. Use "Record return" to take it back first',
   CONSUMED: 'is already installed on a service request',
   RETURNED: 'is in the store',
   FAULTY: 'was returned as faulty',

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, Search, X } from "lucide-react";
 import React from "react";
 import { cn } from "@/lib/field/cn";
 import { Overlay } from "./overlay";
@@ -143,6 +143,194 @@ export function ChipSelect<T extends string>({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+function searchKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Searchable dropdown styled like `.input`. */
+export function SelectInput({
+  value,
+  options,
+  placeholder,
+  onChange,
+  error,
+  disabled,
+  label,
+  extra,
+}: {
+  value: string | null;
+  options: Array<{ value: string; label: string }>;
+  placeholder: string;
+  onChange: (value: string | null) => void;
+  error?: boolean;
+  disabled?: boolean;
+  /** Accessible name; the visible label comes from the surrounding field. */
+  label: string;
+  /** Trailing action option such as "+ Add new city"; always listed. */
+  extra?: { value: string; label: string };
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [query, setQuery] = React.useState("");
+  const [active, setActive] = React.useState(0);
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  const listRef = React.useRef<HTMLUListElement>(null);
+  const listId = React.useId();
+  const selected = options.find((option) => option.value === value);
+  const needle = searchKey(query);
+  const matches = needle ? options.filter((option) => searchKey(option.label).includes(needle)) : options;
+  const items = extra ? [...matches, extra] : matches;
+
+  const close = React.useCallback(() => {
+    setOpen(false);
+    setQuery("");
+  }, []);
+
+  React.useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onPointer = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) close();
+    };
+    document.addEventListener("pointerdown", onPointer);
+    return () => document.removeEventListener("pointerdown", onPointer);
+  }, [open, close]);
+
+  React.useEffect(() => {
+    listRef.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [active, open]);
+
+  const openList = () => {
+    if (disabled) return;
+    const index = options.findIndex((option) => option.value === value);
+    setActive(Math.max(0, index));
+    setOpen(true);
+  };
+
+  const choose = (next: string) => {
+    onChange(next);
+    close();
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActive((index) => Math.min(items.length - 1, index + 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActive((index) => Math.max(0, index - 1));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      const item = items[active];
+      if (item) choose(item.value);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+    }
+  };
+
+  return (
+    <div ref={rootRef} className="relative">
+      {open ? (
+        <div className={cn("input flex items-center gap-2 border-primary pr-3", error && "border-error")}>
+          <Search className="h-4 w-4 shrink-0 text-gray2" />
+          <input
+            autoFocus
+            role="combobox"
+            aria-expanded
+            aria-controls={listId}
+            aria-label={label}
+            className="h-full min-w-0 flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-gray3"
+            placeholder={selected ? selected.label : "Type to search…"}
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setActive(0);
+            }}
+            onKeyDown={onKeyDown}
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+          <button type="button" onClick={close} aria-label="Close list" className="shrink-0">
+            <X className="h-4 w-4 text-gray2" />
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={openList}
+          disabled={disabled}
+          aria-haspopup="listbox"
+          aria-label={label}
+          className={cn(
+            "input flex items-center justify-between gap-2 text-left disabled:cursor-not-allowed",
+            error && "border-error",
+          )}
+        >
+          <span className={cn("truncate", selected ? "text-ink" : "text-gray3")}>
+            {selected?.label ?? placeholder}
+          </span>
+          <ChevronDown className="h-5 w-5 shrink-0 text-gray2" />
+        </button>
+      )}
+      {open ? (
+        <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-20 overflow-hidden rounded-md border border-borderlight bg-white shadow-lg">
+          <ul
+            ref={listRef}
+            id={listId}
+            role="listbox"
+            aria-label={label}
+            className="max-h-64 overflow-y-auto py-1"
+          >
+            {matches.map((item, index) => {
+              const isSelected = item.value === value;
+              return (
+                <li
+                  key={item.value}
+                  data-index={index}
+                  role="option"
+                  aria-selected={isSelected}
+                  onPointerDown={(event) => event.preventDefault()}
+                  onClick={() => choose(item.value)}
+                  onMouseEnter={() => setActive(index)}
+                  className={cn(
+                    "flex cursor-pointer items-center justify-between gap-2 px-3 py-2.5 text-[14px] text-ink",
+                    index === active && "bg-surface",
+                    isSelected && "font-semibold",
+                  )}
+                >
+                  <span className="truncate">{item.label}</span>
+                  {isSelected ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+                </li>
+              );
+            })}
+            {!matches.length ? (
+              <li className="px-3 py-2.5 text-[13px] text-gray2" role="presentation">
+                No match for “{query}”
+              </li>
+            ) : null}
+          </ul>
+          {extra ? (
+            <button
+              type="button"
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => choose(extra.value)}
+              onMouseEnter={() => setActive(matches.length)}
+              className={cn(
+                "flex w-full items-center gap-2 border-t border-borderlight px-3 py-3 text-left text-[14px] font-semibold text-primary",
+                active === matches.length && "bg-surface",
+              )}
+            >
+              {extra.label}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

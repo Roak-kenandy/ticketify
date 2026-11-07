@@ -1,15 +1,20 @@
 import { createHash, randomBytes } from 'crypto';
 import {
   IncaClient,
+  IncaClientRecord,
   IncaCreateSubscriber,
+  IncaDetection,
   IncaDevice,
+  IncaLocationInput,
   IncaLookupPurpose,
   IncaOpticalInfo,
   IncaOption,
+  IncaPppoeCredentials,
   IncaRejectedError,
   IncaSubscriber,
   IncaTodo,
   IncaUnavailableError,
+  operatorNeedsPppoe,
 } from './inca.types';
 
 type DummyOptions = { latencyMs: number; offline: boolean };
@@ -54,6 +59,24 @@ const PACKAGES: IncaOption[] = [
   label: `${name} Mbps`.replace('1G Mbps', '1 Gbps'),
 }));
 
+const CITIES: IncaOption[] = [
+  { code: '46', label: 'Male' },
+  { code: '47', label: 'Hulhumale' },
+  { code: '48', label: 'Vilimale' },
+  { code: '49', label: 'Addu' },
+];
+
+const STREETS: Record<string, IncaOption[]> = {
+  '46': ['Asaree Hingun', 'Majeedhee Magu', 'Orchid Magu'].map((label, i) => ({
+    code: String(4000 + i),
+    label,
+  })),
+  '47': ['Nirolhu Magu', 'Huvandhumaa Hingun'].map((label, i) => ({
+    code: String(4100 + i),
+    label,
+  })),
+};
+
 /**
  * In-memory stand-in for INCA so the whole workflow can be built and tested
  * before the integration interface is approved. State lives for the process.
@@ -66,6 +89,7 @@ export class DummyIncaClient implements IncaClient {
   readonly mode = 'dummy';
   private readonly subscribers = new Map<string, IncaSubscriber>();
   private readonly devices = new Map<string, IncaDevice>();
+  private readonly clients = new Map<string, IncaClientRecord>();
   private readonly todos = new Map<
     string,
     (IncaTodo & { ready_at: number; serial: string })[]
@@ -94,6 +118,22 @@ export class DummyIncaClient implements IncaClient {
     return PACKAGES;
   }
 
+  async cities() {
+    await this.call(0.2);
+    return CITIES;
+  }
+
+  async streets(cityId: string) {
+    await this.call(0.2);
+    return STREETS[cityId] ?? [];
+  }
+
+  async findClient(identity: string): Promise<IncaClientRecord | null> {
+    await this.call(0.3);
+    const client = this.clients.get(identity.toUpperCase());
+    return client ? { ...client } : null;
+  }
+
   async findSubscriber(clientIdentifier: string, purpose: IncaLookupPurpose) {
     await this.call();
     const existing = [...this.subscribers.values()].find(
@@ -111,22 +151,46 @@ export class DummyIncaClient implements IncaClient {
     return sub ? clone(sub) : null;
   }
 
+  async findSubscriberBySerial(serial: string) {
+    await this.call();
+    const sub = [...this.subscribers.values()].find((item) =>
+      item.onu_serials.includes(serial),
+    );
+    return sub ? clone(sub) : null;
+  }
+
   async findDevice(serial: string) {
     await this.call();
     const device = this.devices.get(serial);
     return device ? { ...device } : null;
   }
 
-  async detectUnregistered(serial: string) {
+  async detectOnOlt(serial: string): Promise<IncaDetection | null> {
     await this.call();
-    if (serial.includes('NODETECT') || this.devices.get(serial)?.registered) {
-      return null;
+    if (serial.includes('NODETECT')) return null;
+    const device = this.devices.get(serial);
+    if (device?.registered) {
+      return {
+        olt_id: device.olt_id ?? '',
+        olt_name: device.olt_name ?? null,
+        pon: device.pon ?? '',
+        device_type: device.device_type,
+        olt_state: 'REGISTERED' as const,
+        online: true,
+      };
     }
     const h = hash(serial);
+    const operator = serial.includes('OOREDOO') ? 'MVOOREDOO' : 'COMMON';
     return {
       olt_id: `OLT-${(h % 6) + 1}`,
       pon: `0/${h % 4}/${h % 16}`,
       device_type: guessDeviceType(serial),
+      olt_state: (serial.includes('ONOLT') ? 'REGISTERED' : 'UNREGISTERED') as
+        | 'REGISTERED'
+        | 'UNREGISTERED',
+      online: serial.includes('ONOLT') ? false : null,
+      operator,
+      pppoe_required: operatorNeedsPppoe(operator),
     };
   }
 
@@ -165,7 +229,7 @@ export class DummyIncaClient implements IncaClient {
     this.failFirst(
       input.onu_serial,
       'FAILCFG',
-      'Simple Subscriber Registration failed: Radius did not respond',
+      'Terminal node creation failed: Radius did not respond',
     );
     if (
       [...this.subscribers.values()].some(
@@ -190,6 +254,7 @@ export class DummyIncaClient implements IncaClient {
       package: input.package,
       pppoe_username: input.pppoe_username,
       pppoe_enabled: true,
+      pppoe_configured: Boolean(input.pppoe_username),
       connected: true,
       onu_serials: [input.onu_serial],
       olt_id: device.olt_id,
@@ -197,6 +262,17 @@ export class DummyIncaClient implements IncaClient {
     };
     device.terminal_node_id = terminalNodeId;
     this.subscribers.set(terminalNodeId, sub);
+    const node = input.terminal_node;
+    if (node) {
+      const identity = node.client_identity.toUpperCase();
+      if (!this.clients.has(identity)) {
+        this.clients.set(identity, {
+          id: String(50000 + this.clients.size),
+          identity,
+          name: node.client_name,
+        });
+      }
+    }
     this.queueTodo(terminalNodeId, 'SERVICE_ACTIVATION', input.onu_serial);
     return clone(sub);
   }
@@ -227,31 +303,85 @@ export class DummyIncaClient implements IncaClient {
     this.queueTodo(terminalNodeId, 'WAN_CONFIGURATION', serial);
   }
 
-  async updateLocation(
-    terminalNodeId: string,
-    input: {
-      service_area: string;
-      address: string | null;
-      olt_id: string;
-      pon: string;
-    },
-  ) {
+  async setPppoe(terminalNodeId: string, credentials: IncaPppoeCredentials) {
     await this.call();
     const sub = this.mustGet(terminalNodeId);
-    sub.service_area = input.service_area;
-    sub.address = input.address ?? sub.address;
-    sub.olt_id = input.olt_id;
-    sub.pon = input.pon;
-    for (const serial of sub.onu_serials) {
-      const device = this.devices.get(serial);
-      if (device)
-        Object.assign(device, {
-          service_area: input.service_area,
-          olt_id: input.olt_id,
-          pon: input.pon,
-        });
+    sub.pppoe_username = credentials.username;
+    sub.pppoe_configured = true;
+    sub.pppoe_enabled = true;
+  }
+
+  async assignPackage(terminalNodeId: string, packageCode: string) {
+    await this.call();
+    const sub = this.mustGet(terminalNodeId);
+    const label =
+      PACKAGES.find((pkg) => pkg.code === packageCode)?.label ?? packageCode;
+    const changed = sub.package !== label && sub.package !== packageCode;
+    sub.package = label;
+    return { label, changed };
+  }
+
+  async markConnected(terminalNodeId: string) {
+    await this.call();
+    const sub = this.mustGet(terminalNodeId);
+    const changed = !sub.connected;
+    sub.connected = true;
+    return { changed };
+  }
+
+  async updateLocation(terminalNodeId: string, input: IncaLocationInput) {
+    await this.call();
+    const sub = this.mustGet(terminalNodeId);
+    const city =
+      CITIES.find((item) => item.code === input.city_id) ??
+      (input.new_city
+        ? {
+            code: `C${hash(input.new_city.name) % 1000}`,
+            label: input.new_city.name,
+          }
+        : null);
+    if (!city) throw new IncaRejectedError('Choose or add the city');
+    const street =
+      (STREETS[city.code] ?? []).find(
+        (item) => item.code === input.street_id,
+      ) ??
+      (input.new_street
+        ? {
+            code: `S${hash(input.new_street) % 10000}`,
+            label: input.new_street,
+          }
+        : null);
+    if (!street) throw new IncaRejectedError('Choose or add the street');
+    const location = {
+      city_id: city.code,
+      street_id: street.code,
+      number: input.number.trim(),
+    };
+    const address = `${street.label} ${location.number}, ${city.label}`;
+    const current = sub.location;
+    const changed = !(
+      current?.city_id === location.city_id &&
+      current.street_id === location.street_id &&
+      current.number === location.number
+    );
+    sub.location = location;
+    sub.address = address;
+    return { address, location, changed, notes: [] };
+  }
+
+  async moveDevice(serial: string, oltId: string) {
+    await this.call();
+    const device = this.devices.get(serial);
+    if (!device?.registered)
+      throw new IncaRejectedError(`ONT ${serial} is not registered in INCA`);
+    if (device.olt_id === oltId) return { changed: false };
+    if (device.terminal_node_id) {
+      throw new IncaRejectedError(
+        `ONT ${serial} is still on Terminal Node ${device.terminal_node_id}; revoke it before moving it to another OLT`,
+      );
     }
-    this.queueTodo(terminalNodeId, 'LOCATION_UPDATE', sub.onu_serials[0] ?? '');
+    device.olt_id = oltId;
+    return { changed: true };
   }
 
   async listTodo(terminalNodeId: string) {
@@ -331,11 +461,13 @@ export class DummyIncaClient implements IncaClient {
       terminal_node_id: terminalNodeId,
       client_identifier: clientIdentifier,
       name: 'Existing subscriber',
-      address: null,
+      address: 'Asaree Hingun 1001, Male',
+      location: { city_id: '46', street_id: '4000', number: '1001' },
       service_area: area.label,
       package: PACKAGES[h % PACKAGES.length].label,
       pppoe_username: `mn${(h % 900000) + 100000}`,
       pppoe_enabled: true,
+      pppoe_configured: true,
       connected: true,
       onu_serials: [serial],
       olt_id: device.olt_id,
