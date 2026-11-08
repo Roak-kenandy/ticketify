@@ -25,6 +25,7 @@ type RecentPayment = {
   invoice_no: string;
   receipt_no: string;
   bml_reference_id: string;
+  bml_local_id: string;
   ticket_no: string;
   amount_paid: string;
   paid_date: string;
@@ -153,6 +154,7 @@ export default function FinanceDashboardPage() {
                     <TableHead>Invoice</TableHead>
                     <TableHead>Ticket</TableHead>
                     <TableHead className="hidden md:table-cell">BML reference</TableHead>
+                    <TableHead className="hidden xl:table-cell">BML local id</TableHead>
                     <TableHead className="text-right">Amount paid</TableHead>
                     <TableHead className="hidden sm:table-cell">Paid</TableHead>
                     <TableHead className="hidden lg:table-cell">Issued by</TableHead>
@@ -160,7 +162,7 @@ export default function FinanceDashboardPage() {
                 </TableHeader>
                 <TableBody>
                   {loading ? (
-                    <TableSkeletonRows columns={7} rows={5} />
+                    <TableSkeletonRows columns={8} rows={5} />
                   ) : (
                     summary?.recent.map((row, index) => (
                       <TableRow key={`${row.receipt_no || row.invoice_no}-${index}`}>
@@ -169,6 +171,9 @@ export default function FinanceDashboardPage() {
                         <TableCell className="tabular-nums">{row.ticket_no || "—"}</TableCell>
                         <TableCell className="hidden font-mono text-xs text-muted-foreground md:table-cell">
                           {row.bml_reference_id || "—"}
+                        </TableCell>
+                        <TableCell className="hidden whitespace-nowrap font-mono text-xs text-muted-foreground xl:table-cell">
+                          {row.bml_local_id || "—"}
                         </TableCell>
                         <TableCell className="text-right font-medium tabular-nums">
                           {formatMvr(row.amount_paid)}

@@ -102,6 +102,8 @@ describe('FinanceReportService', () => {
     expect(rest).toHaveLength(0);
     expect(row).toMatchObject({
       receipt_no: 'RCPT-9',
+      bml_reference_id: 'bml-1',
+      bml_local_id: 'ref1',
       product_name: 'ONT',
       product_amount: '50.00',
       gst_amount: '4.00',
@@ -116,6 +118,8 @@ describe('FinanceReportService', () => {
     expect(xml).toContain('<Data ss:Type="Number">100</Data>');
     expect(xml).toContain('<Data ss:Type="String">2026-10-02 01:30</Data>');
     expect(xml).toContain('<Data ss:Type="String">Total</Data>');
+    expect(xml).toContain('<Data ss:Type="String">BML local id</Data>');
+    expect(xml).toContain('<Data ss:Type="String">ref1</Data>');
   });
 
   it('summary only aggregates confirmed payments', async () => {

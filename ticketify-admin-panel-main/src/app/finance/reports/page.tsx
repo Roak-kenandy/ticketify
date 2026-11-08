@@ -27,6 +27,7 @@ type FinanceRow = {
   invoice_no: string;
   receipt_no: string;
   bml_reference_id: string;
+  bml_local_id: string;
   ticket_no: string;
   ticket_category: string;
   customer_name: string;
@@ -154,7 +155,7 @@ export default function FinanceReportsPage() {
               id="service-request-id"
               value={draft.serviceRequestId}
               onChange={(e) => setDraft((prev) => ({ ...prev, serviceRequestId: e.target.value }))}
-              placeholder="Ticket, invoice, receipt or BML ref"
+              placeholder="Ticket, invoice, receipt, BML ref or local id"
               className="pl-9"
             />
           </div>
@@ -255,6 +256,7 @@ export default function FinanceReportsPage() {
                   <TableHead>Receipt</TableHead>
                   <TableHead>Invoice</TableHead>
                   <TableHead>BML reference</TableHead>
+                  <TableHead>BML local id</TableHead>
                   <TableHead>Ticket</TableHead>
                   <TableHead>Category</TableHead>
                   <TableHead>Customer</TableHead>
@@ -269,7 +271,7 @@ export default function FinanceReportsPage() {
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  <TableSkeletonRows columns={14} rows={8} />
+                  <TableSkeletonRows columns={15} rows={8} />
                 ) : (
                   pageRows.map((row, index) => (
                     <TableRow key={`${row.receipt_no || row.invoice_no}-${row.product_name}-${index}`}>
@@ -280,6 +282,9 @@ export default function FinanceReportsPage() {
                       <TableCell className="whitespace-nowrap">{row.invoice_no || "—"}</TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">
                         {row.bml_reference_id || "—"}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
+                        {row.bml_local_id || "—"}
                       </TableCell>
                       <TableCell className="tabular-nums">{row.ticket_no || "—"}</TableCell>
                       <TableCell className="whitespace-nowrap">{row.ticket_category || "—"}</TableCell>

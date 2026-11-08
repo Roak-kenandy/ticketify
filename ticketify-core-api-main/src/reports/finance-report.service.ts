@@ -7,6 +7,8 @@ export type FinancePaymentRow = {
   invoice_no: string;
   receipt_no: string;
   bml_reference_id: string;
+  /** The `localId` Ticketify sent to BML (the payment reference). */
+  bml_local_id: string;
   ticket_no: string;
   service_request_id: string;
   ticket_category: string;
@@ -102,6 +104,7 @@ export class FinanceReportService {
           invoice_no: payment.invoice?.invoice_number ?? '',
           receipt_no: payment.receipt?.receipt_number ?? '',
           bml_reference_id: payment.bml_transaction_id ?? '',
+          bml_local_id: payment.reference,
           ticket_no: payment.invoice?.sr_number ?? '',
           amount_paid: this.money(this.amountPaidCents(payment)),
           paid_date: (payment.confirmed_at ?? payment.updated_at).toISOString(),
@@ -143,6 +146,7 @@ export class FinanceReportService {
         invoice_no: payment.invoice?.invoice_number ?? '',
         receipt_no: payment.receipt?.receipt_number ?? '',
         bml_reference_id: payment.bml_transaction_id ?? '',
+        bml_local_id: payment.reference,
         ticket_no:
           payment.receipt?.sr_number ?? payment.invoice?.sr_number ?? '',
         service_request_id: payment.crm_ticket_id,
@@ -166,6 +170,7 @@ export class FinanceReportService {
       'Invoice no',
       'Receipt no',
       'BML reference id',
+      'BML local id',
       'Ticket no',
       'Ticket category',
       'Customer name',
@@ -185,6 +190,7 @@ export class FinanceReportService {
           this.cell(row.invoice_no),
           this.cell(row.receipt_no),
           this.cell(row.bml_reference_id),
+          this.cell(row.bml_local_id),
           this.cell(row.ticket_no),
           this.cell(row.ticket_category),
           this.cell(row.customer_name),
@@ -205,7 +211,7 @@ export class FinanceReportService {
     const totals = rows.length
       ? `<Row>${[
           this.cell('Total'),
-          ...Array.from({ length: 9 }, () => this.cell('')),
+          ...Array.from({ length: 10 }, () => this.cell('')),
           this.numberCell(sum((row) => row.product_amount)),
           this.numberCell(sum((row) => row.gst_amount)),
           this.numberCell(sum((row) => row.total_amount)),
@@ -317,6 +323,7 @@ ${totals}
         OR: [
           { crm_ticket_id: contains },
           { bml_transaction_id: contains },
+          { reference: contains },
           { invoice: { sr_number: contains } },
           { invoice: { invoice_number: contains } },
           { receipt: { is: { receipt_number: contains } } },
