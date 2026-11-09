@@ -664,11 +664,11 @@ export class ProvisioningRunner {
 
   private async signalCheck(input: RunInput): Promise<RunOutcome> {
     await this.enter('VALIDATING');
-    const subscriber = await this.existingSubscriber(input, null);
+    const subscriber = await this.signalSubscriber(input);
     const attached = subscriber.onu_serials;
     const serial = input.ont_serial ?? attached[0];
     if (!serial) this.fail('No ONT is attached to this customer in INCA.');
-    if (!attached.includes(serial)) {
+    if (!input.ont_serial && !attached.includes(serial)) {
       this.fail(
         `ONT ${serial} is not attached to this customer (attached: ${attached.join(', ') || 'none'}).`,
       );
@@ -705,6 +705,29 @@ export class ProvisioningRunner {
       old_ont_serial: null,
       installs_ont: false,
     };
+  }
+
+  /** The ONT serial finds its Terminal Node directly; INCA may not support the customer lookup. */
+  private async signalSubscriber(input: RunInput): Promise<IncaSubscriber> {
+    if (input.ont_serial) {
+      const subscriber = await this.inca.findSubscriberBySerial(
+        input.ont_serial,
+      );
+      if (!subscriber) {
+        this.fail(
+          `ONT ${input.ont_serial} is not attached to any Terminal Node in INCA. Check the serial.`,
+        );
+      }
+      return subscriber;
+    }
+    try {
+      return await this.existingSubscriber(input, null);
+    } catch (error) {
+      if (error instanceof IncaNotIntegratedError) {
+        this.fail('Enter or scan the ONT serial to read its signal.');
+      }
+      throw error;
+    }
   }
 
   private async existingSubscriber(

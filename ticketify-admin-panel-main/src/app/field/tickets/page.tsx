@@ -6,6 +6,7 @@ import React, { Suspense } from "react";
 import { ScreenHeader } from "@/components/field/shell/headers";
 import TicketCard from "@/components/field/ticket-card";
 import { EmptyState, ErrorState, InlineBanner, TicketCardSkeleton } from "@/components/field/ui/state-views";
+import { matchesQueue, QueueFilter, useQueueFilter } from "@/components/field/ui/queue-filter";
 import { cn } from "@/lib/field/cn";
 import { fieldCardGrid, fieldContainer } from "@/lib/field/layout";
 import { showError } from "@/lib/field/notify";
@@ -48,18 +49,20 @@ function MyTickets() {
   const params = useSearchParams();
   const { tickets, syncedAt, error, refresh } = useTickets();
   const [refreshing, setRefreshing] = React.useState(false);
+  const [queue, setQueue] = useQueueFilter();
   const requested = params.get("tab");
   const active: TabKey = TABS.some((tab) => tab.key === requested) ? (requested as TabKey) : "NEW";
   const loaded = syncedAt != null;
 
-  const groups = React.useMemo(
-    () => ({
-      NEW: tickets.filter((t) => t.state === "NEW"),
-      IN_PROGRESS: tickets.filter((t) => t.state === "IN_PROGRESS"),
-      CLOSED: tickets.filter((t) => t.state === "CLOSED"),
-    }),
-    [tickets],
-  );
+  const groups = React.useMemo(() => {
+    const ofType = tickets.filter((t) => matchesQueue(t, queue));
+    return {
+      NEW: ofType.filter((t) => t.state === "NEW"),
+      IN_PROGRESS: ofType.filter((t) => t.state === "IN_PROGRESS"),
+      CLOSED: ofType.filter((t) => t.state === "CLOSED"),
+    };
+  }, [tickets, queue]);
+  const inTab = React.useMemo(() => tickets.filter((t) => t.state === active), [tickets, active]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -111,6 +114,7 @@ function MyTickets() {
           </div>
       </ScreenHeader>
       <main className={cn(fieldContainer.wide, "flex flex-col gap-2 p-4 pb-16")}>
+        <QueueFilter value={queue} onChange={setQueue} tickets={loaded ? inTab : undefined} className="mb-1" />
         {loaded && error ? (
           <div className="mb-2">
             <InlineBanner tone="error" message={error} actionLabel="Retry" onAction={onRefresh} />
@@ -129,6 +133,12 @@ function MyTickets() {
           </div>
         ) : !loaded && error ? (
           <ErrorState message={error} onRetry={onRefresh} />
+        ) : queue !== "ALL" && inTab.length ? (
+          <EmptyState
+            icon={tab.emptyIcon}
+            title="Nothing of this type"
+            message="No tickets of this type here. Choose All to see every ticket."
+          />
         ) : (
           <EmptyState icon={tab.emptyIcon} title={tab.emptyTitle} message={tab.emptyMessage} />
         )}

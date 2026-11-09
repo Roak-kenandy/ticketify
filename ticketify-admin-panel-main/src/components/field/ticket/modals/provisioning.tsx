@@ -30,7 +30,7 @@ import React from "react";
 import { PrimaryButton, SecondaryButton } from "@/components/field/ui/button";
 import SerialScanner from "@/components/field/ui/serial-scanner";
 import { ErrorState, InlineBanner } from "@/components/field/ui/state-views";
-import { Switch } from "@/components/field/ui/switch";
+import { SwitchRow } from "@/components/field/ui/switch";
 import WorkflowSheet, {
   Fact,
   SectionTitle,
@@ -1012,13 +1012,12 @@ function FormView({
           subtitle="The new address of the customer's Terminal Node. It starts from the current address."
         >
           <LocationFields ticketId={ticketId} ctx={ctx} form={form} errors={errors} onChange={onChange} withNumber />
-          <div className="flex items-center gap-3 rounded-md bg-surface px-3 py-2.5">
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-ink">New ONT installed</p>
-              <p className="text-xs text-gray2">Turn on if you are fitting a different ONT at the new address.</p>
-            </div>
-            <Switch checked={form.newOnt} onChange={(newOnt) => onChange({ newOnt })} label="New ONT installed" />
-          </div>
+          <SwitchRow
+            title="New ONT installed"
+            hint="Turn on if you are fitting a different ONT at the new address."
+            checked={form.newOnt}
+            onChange={(newOnt) => onChange({ newOnt })}
+          />
         </FormSection>
       ) : null}
 
@@ -1043,7 +1042,13 @@ function FormView({
                 : "ONT serial"
           }
           error={errors.serial}
-          hint={action === "SIGNAL_CHECK" ? "Leave as is to read the ONT on the customer record." : undefined}
+          hint={
+            action === "SIGNAL_CHECK"
+              ? sub?.onu_serials[0]
+                ? "Leave as is to read the ONT on the customer record."
+                : "Scan or type the PON SN printed on the ONT."
+              : undefined
+          }
         >
           {issued && showDevice ? (
             issued.length ? (
@@ -1949,13 +1954,12 @@ function RunView({
                 placeholder="e.g. Re-terminated drop cable connector"
                 maxLength={500}
               />
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <p className="text-sm font-semibold text-ink">Service working</p>
-                  <p className="text-xs text-gray2">Confirm the customer&apos;s internet works after the fix.</p>
-                </div>
-                <Switch checked={serviceConfirmed} onChange={setServiceConfirmed} label="Service working" />
-              </div>
+              <SwitchRow
+                title="Service working"
+                hint="Confirm the customer's internet works after the fix."
+                checked={serviceConfirmed}
+                onChange={setServiceConfirmed}
+              />
               <PrimaryButton
                 text="Take after reading"
                 onClick={takeAfter}

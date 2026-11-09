@@ -6,7 +6,7 @@ import React from "react";
 import { DateChips } from "@/components/field/ui/date-time-chips";
 import FormModal from "@/components/field/ui/form-modal";
 import { EmptyState, ErrorState, Skeleton } from "@/components/field/ui/state-views";
-import { Switch } from "@/components/field/ui/switch";
+import { SwitchRow } from "@/components/field/ui/switch";
 import { apiGet, apiPost } from "@/lib/field/api";
 import { cn } from "@/lib/field/cn";
 import { showError, showSuccess } from "@/lib/field/notify";
@@ -38,6 +38,10 @@ export default function LmHandoffModal({
   const [resolutionDays, setResolutionDays] = React.useState(7);
   const [notifyCustomer, setNotifyCustomer] = React.useState(true);
   const [error, setError] = React.useState("");
+  const [missing, setMissing] = React.useState<"name" | "description" | "address" | null>(null);
+  const nameRef = React.useRef<HTMLInputElement>(null);
+  const descriptionRef = React.useRef<HTMLTextAreaElement>(null);
+  const addressRef = React.useRef<HTMLDivElement>(null);
 
   const load = React.useCallback(async () => {
     if (!ticketId || !token) {
@@ -62,26 +66,39 @@ export default function LmHandoffModal({
   React.useEffect(() => {
     if (visible) {
       setError("");
+      setMissing(null);
       load();
     }
   }, [visible, load]);
 
   async function submit() {
-    if (!addressId) {
-      setError("Select the site address.");
+    const problem = !name.trim()
+      ? { field: "name" as const, text: "Enter an activity name.", el: nameRef.current }
+      : !description.trim()
+        ? { field: "description" as const, text: "Describe the cabling work needed.", el: descriptionRef.current }
+        : !addressId
+          ? {
+              field: "address" as const,
+              text: addresses.length ? "Select the site address." : "The customer has no address in the CRM. Add one there first.",
+              el: addressRef.current,
+            }
+          : null;
+    if (problem) {
+      setMissing(problem.field);
+      setError(problem.text);
+      showError(problem.text);
+      problem.el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (problem.el instanceof HTMLInputElement || problem.el instanceof HTMLTextAreaElement) problem.el.focus();
       return;
     }
-    if (!name.trim() || !description.trim()) {
-      setError("Name and description are required.");
-      return;
-    }
+    setMissing(null);
     setError("");
     setSubmitting(true);
     try {
       const body: Record<string, string | number | boolean> = {
         name: name.trim(),
         description: description.trim(),
-        address_id: addressId,
+        address_id: addressId as string,
         activity_date: activityDate,
         resolution_days: resolutionDays,
         notify_customer: notifyCustomer,
@@ -129,21 +146,35 @@ export default function LmHandoffModal({
         <>
           <div className="flex flex-col gap-1">
             <label className="field-label" htmlFor="lm-name">
-              Activity name
+              Activity name <span className="text-error">*</span>
             </label>
-            <input id="lm-name" className="input" value={name} onChange={(e) => setName(e.target.value)} />
+            <input
+              id="lm-name"
+              ref={nameRef}
+              className={cn("input", missing === "name" && "border-error")}
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                if (missing === "name") setMissing(null);
+              }}
+            />
           </div>
           <div className="flex flex-col gap-1">
             <label className="field-label" htmlFor="lm-description">
-              Description
+              Description <span className="text-error">*</span>
             </label>
             <textarea
               id="lm-description"
-              className="textarea"
+              ref={descriptionRef}
+              className={cn("textarea", missing === "description" && "border-error")}
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                if (missing === "description") setMissing(null);
+              }}
               placeholder="What cabling work is needed?"
             />
+            {missing === "description" ? <p className="field-error">{error}</p> : null}
           </div>
           <div className="flex flex-col gap-1">
             <label className="field-label" htmlFor="lm-notes">
@@ -178,18 +209,16 @@ export default function LmHandoffModal({
               })}
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-ink">Send SMS to customer</p>
-              <p className="mt-0.5 text-xs text-gray2">
-                Tells the customer the ticket is with the Last Mile team and will be resolved within {resolutionDays} working
-                days.
-              </p>
-            </div>
-            <Switch checked={notifyCustomer} onChange={setNotifyCustomer} label="Send SMS to customer" />
-          </div>
-          <div className="flex flex-col gap-2">
-            <span className="field-label">Site address</span>
+          <SwitchRow
+            title="Send SMS to customer"
+            hint={`Tells the customer the ticket is with the Last Mile team and will be resolved within ${resolutionDays} working days.`}
+            checked={notifyCustomer}
+            onChange={setNotifyCustomer}
+          />
+          <div ref={addressRef} className="flex flex-col gap-2">
+            <span className="field-label">
+              Site address <span className="text-error">*</span>
+            </span>
             {addresses.length === 0 ? (
               <EmptyState
                 compact
@@ -206,7 +235,10 @@ export default function LmHandoffModal({
                     type="button"
                     role="radio"
                     aria-checked={active}
-                    onClick={() => setAddressId(addr.id)}
+                    onClick={() => {
+                      setAddressId(addr.id);
+                      if (missing === "address") setMissing(null);
+                    }}
                     className={cn(
                       "flex items-center gap-3 rounded-md border p-3 text-left",
                       active ? "border-primary bg-info-bg" : "border-borderlight",
@@ -227,7 +259,7 @@ export default function LmHandoffModal({
               })
             )}
           </div>
-          {error ? <p className="field-error">{error}</p> : null}
+          {error && missing !== "description" ? <p className="field-error">{error}</p> : null}
         </>
       )}
     </FormModal>

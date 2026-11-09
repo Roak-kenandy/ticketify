@@ -1,3 +1,5 @@
+import { Check } from "lucide-react";
+import type { ReactNode } from "react";
 import { cn } from "@/lib/field/cn";
 
 export function Switch({
@@ -18,41 +20,58 @@ export function Switch({
       aria-checked={checked}
       aria-label={label}
       disabled={disabled}
-      onClick={() => onChange(!checked)}
+      onClick={(event) => {
+        event.stopPropagation();
+        onChange(!checked);
+      }}
       className={cn(
-        "relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-50",
-        checked ? "bg-primary" : "bg-bordergray",
+        "relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-0.5 transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        checked ? "bg-primary" : "bg-gray3",
       )}
     >
       <span
         className={cn(
-          "absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform",
-          checked ? "translate-x-[22px]" : "translate-x-0.5",
+          "flex h-6 w-6 items-center justify-center rounded-full bg-white shadow-sm transition-transform duration-200",
+          checked ? "translate-x-5" : "translate-x-0",
         )}
-      />
+      >
+        {checked ? <Check className="h-3.5 w-3.5 text-primary" strokeWidth={3} /> : null}
+      </span>
     </button>
   );
 }
 
-/** Surface-coloured row with a title, hint and a switch (Notify customer, etc.). */
+/** A setting row (Notify customer, New ONT installed, …): tapping anywhere on it flips the switch. */
 export function SwitchRow({
   title,
   hint,
   checked,
   onChange,
   disabled,
+  className,
 }: {
   title: string;
-  hint?: string;
+  hint?: ReactNode;
   checked: boolean;
   onChange: (value: boolean) => void;
   disabled?: boolean;
+  className?: string;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-md bg-surface p-3">
-      <div className="flex-1 space-y-0.5">
-        <p className="field-label">{title}</p>
-        {hint ? <p className="field-hint">{hint}</p> : null}
+    <div
+      onClick={() => !disabled && onChange(!checked)}
+      className={cn(
+        "flex cursor-pointer select-none items-center gap-3 rounded-md border px-3 py-3 transition-colors",
+        checked ? "border-primary/40 bg-tertiary/40" : "border-borderlight bg-white",
+        disabled && "cursor-not-allowed opacity-60",
+        className,
+      )}
+    >
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <p className="text-sm font-semibold text-ink">{title}</p>
+        {hint ? <p className="text-xs leading-snug text-gray2">{hint}</p> : null}
       </div>
       <Switch checked={checked} onChange={onChange} disabled={disabled} label={title} />
     </div>

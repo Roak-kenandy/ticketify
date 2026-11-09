@@ -655,6 +655,42 @@ describe('ProvisioningRunner', () => {
     expect(outcome.installs_ont).toBe(false);
   });
 
+  it('reads the signal by ONT serial when INCA has no customer lookup', async () => {
+    class LiveLikeInca extends DummyIncaClient {
+      findSubscriber(): Promise<null> {
+        return Promise.reject(new IncaNotIntegratedError('Subscriber lookup'));
+      }
+    }
+    const live = new LiveLikeInca({ latencyMs: 0, offline: false });
+    const seeded = await DummyIncaClient.prototype.findSubscriber.call(
+      live,
+      'contact-5',
+      'existing_service',
+    );
+    const check = (ont_serial: string | null) =>
+      new ProvisioningRunner(live, recorder().rec, config).run(
+        input({
+          action: 'SIGNAL_CHECK',
+          client_identifier: 'unknown-to-inca',
+          ont_serial,
+        }),
+        null,
+        null,
+      );
+
+    const outcome = await check(seeded!.onu_serials[0]);
+    expect(outcome.result.terminal_node_id).toBe(seeded!.terminal_node_id);
+    expect(outcome.result.signal_result).toBe('WITHIN_RANGE');
+
+    await expect(check(null)).rejects.toMatchObject({
+      stage: 'VALIDATING',
+      message: 'Enter or scan the ONT serial to read its signal.',
+    });
+    await expect(check('HWTCMISSING1')).rejects.toMatchObject({
+      message: expect.stringContaining('not attached to any Terminal Node'),
+    });
+  });
+
   it('fails with an integration error when INCA is down', async () => {
     const offline = new DummyIncaClient({ latencyMs: 0, offline: true });
     const { rec } = recorder();

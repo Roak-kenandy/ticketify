@@ -26,6 +26,8 @@ import { NotificationTemplateService } from 'src/notifications/notification-temp
 import { IntegrationAuditService } from 'src/infrastructure/audit/integration-audit.service';
 import { WorkflowConfigService } from 'src/config/workflow-config.service';
 import { ClosureValidationService } from 'src/closure/closure-validation.service';
+import { ServiceRequestRequeueService } from 'src/requeue/service-request-requeue.service';
+import { lmRequeueKey } from 'src/requeue/requeue-scheduler.service';
 import { TicketBillingService } from 'src/finance/ticket-billing.service';
 import { LmHandoffDto } from './dto/lm-handoff.dto';
 import { signReviewLink } from 'src/infrastructure/security/review-link';
@@ -52,6 +54,7 @@ export class TicketsService {
     private workflowConfig: WorkflowConfigService,
     private ticketBilling: TicketBillingService,
     private closure: ClosureValidationService,
+    private requeue: ServiceRequestRequeueService,
   ) {}
 
   async createNewTicket(dto: CreateTicketDto) {
@@ -2392,6 +2395,19 @@ Medianet Support Team`;
         crm_sync_ok: true,
         idempotency_key: `lm-complete:${activityId}`,
       });
+      const requeued = await this.requeue.moveToNew(
+        ticketId,
+        `Last Mile cabling completed by ${actor.name ?? 'the Transport team'}. Ticket moved back to New for the Access team.`,
+        {
+          action: 'LM_COMPLETED_REQUEUE',
+          key: lmRequeueKey(activityId),
+          actorUserId: actor.id,
+          details: { activity_id: activityId },
+        },
+      );
+      if ('reason' in requeued) {
+        this.logger.warn('Ticket Service', `LM complete: ticket ${ticketId} not moved to New (${requeued.reason})`);
+      }
     }
 
     this.invalidateLastMileOpsCache();
@@ -2535,10 +2551,13 @@ Medianet Support Team`;
     };
 
     const techName = reqUser.name ?? 'Technician';
-    const dateStr = scheduledAt.toLocaleDateString('en-GB');
+    const dateStr = scheduledAt.toLocaleDateString('en-GB', {
+      timeZone: 'Indian/Maldives',
+    });
     const timeStr = scheduledAt.toLocaleTimeString('en-GB', {
       hour: '2-digit',
       minute: '2-digit',
+      timeZone: 'Indian/Maldives',
     });
 
     const comment = `Ticket scheduled for approximately ${timeStr} on ${dateStr} by ${techName}.`;

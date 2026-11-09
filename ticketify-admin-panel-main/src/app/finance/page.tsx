@@ -3,7 +3,9 @@
 import * as React from "react";
 import Link from "next/link";
 import moment from "moment";
-import { ArrowRight, CalendarDays, Landmark, Receipt, RefreshCw, Wallet } from "lucide-react";
+import { ArrowRight, CalendarDays, Clock, Landmark, Receipt, RefreshCw, Wallet } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Tabs } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -20,6 +22,7 @@ import { EmptyState } from "@/components/app/empty-state";
 import { TableSkeletonRows } from "@/components/app/filter-bar";
 import axiosInterceptorInstance from "@/lib/axios-interceptor";
 import { formatMvr } from "@/lib/format";
+import { PendingPaymentsTable, type PendingPayment } from "./pending-payments-table";
 
 type RecentPayment = {
   invoice_no: string;
@@ -39,6 +42,8 @@ type FinanceSummary = {
   net_collected: string;
   month_count: number;
   month_collected: string;
+  pending_count: number;
+  pending_total: string;
   recent: RecentPayment[];
 };
 
@@ -46,13 +51,22 @@ export default function FinanceDashboardPage() {
   const [summary, setSummary] = React.useState<FinanceSummary | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(false);
+  const [pending, setPending] = React.useState<PendingPayment[]>([]);
+  const [view, setView] = React.useState<"pending" | "paid" | null>(null);
 
   const load = React.useCallback(() => {
     setLoading(true);
     setError(false);
-    axiosInterceptorInstance
-      .get("/reports/finance/summary")
-      .then((response) => setSummary(response.data))
+    Promise.all([
+      axiosInterceptorInstance.get("/reports/finance/summary"),
+      axiosInterceptorInstance.get<PendingPayment[]>("/reports/finance/pending"),
+    ])
+      .then(([summaryResponse, pendingResponse]) => {
+        setSummary(summaryResponse.data);
+        const rows = pendingResponse.data ?? [];
+        setPending(rows);
+        setView((current) => current ?? (rows.length ? "pending" : "paid"));
+      })
       .catch(() => setError(true))
       .finally(() => setLoading(false));
   }, []);
@@ -65,7 +79,7 @@ export default function FinanceDashboardPage() {
     <>
       <PageHeader
         title="Finance overview"
-        description="Payments received from customers and confirmed by Bank of Maldives."
+        description="Payments confirmed by Bank of Maldives, and payment links customers have not paid yet."
         actions={
           <>
             <Button variant="outline" onClick={load} disabled={loading}>
@@ -93,7 +107,7 @@ export default function FinanceDashboardPage() {
         </Card>
       ) : (
         <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
             <StatCard
               label="Total collected"
               value={summary ? formatMvr(summary.total_collected) : "—"}
@@ -128,19 +142,40 @@ export default function FinanceDashboardPage() {
               tone="success"
               loading={loading}
             />
+            <StatCard
+              label="Pending payments"
+              value={summary?.pending_count ?? 0}
+              icon={Clock}
+              tone="warning"
+              loading={loading}
+              hint={summary?.pending_count ? `${formatMvr(summary.pending_total)} not paid yet` : undefined}
+            />
           </div>
 
           <Card className="overflow-hidden">
-            <CardHeader className="flex-row items-center justify-between space-y-0 border-b py-4">
-              <CardTitle>Recent payments received</CardTitle>
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/finance/reports">
-                  View all
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </Link>
-              </Button>
+            <CardHeader className="flex-row flex-wrap items-center justify-between gap-3 space-y-0 border-b py-3">
+              <Tabs<"pending" | "paid">
+                label="Payments"
+                className="sm:w-auto"
+                value={view ?? "pending"}
+                onValueChange={setView}
+                items={[
+                  { value: "pending", label: "Pending", count: pending.length },
+                  { value: "paid", label: "Paid" },
+                ]}
+              />
+              {view === "paid" && (
+                <Button variant="ghost" size="sm" asChild>
+                  <Link href="/finance/reports">
+                    View all
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                </Button>
+              )}
             </CardHeader>
-            {!loading && (summary?.recent.length ?? 0) === 0 ? (
+            {view !== "paid" ? (
+              <PendingPaymentsTable rows={pending} loading={loading} onChanged={load} />
+            ) : !loading && (summary?.recent.length ?? 0) === 0 ? (
               <EmptyState
                 icon={Receipt}
                 title="No payments received yet"
@@ -156,13 +191,14 @@ export default function FinanceDashboardPage() {
                     <TableHead className="hidden md:table-cell">BML reference</TableHead>
                     <TableHead className="hidden xl:table-cell">BML local id</TableHead>
                     <TableHead className="text-right">Amount paid</TableHead>
+                    <TableHead>Status</TableHead>
                     <TableHead className="hidden sm:table-cell">Paid</TableHead>
                     <TableHead className="hidden lg:table-cell">Issued by</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loading ? (
-                    <TableSkeletonRows columns={8} rows={5} />
+                    <TableSkeletonRows columns={9} rows={5} />
                   ) : (
                     summary?.recent.map((row, index) => (
                       <TableRow key={`${row.receipt_no || row.invoice_no}-${index}`}>
@@ -177,6 +213,11 @@ export default function FinanceDashboardPage() {
                         </TableCell>
                         <TableCell className="text-right font-medium tabular-nums">
                           {formatMvr(row.amount_paid)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="success" dot>
+                            Paid
+                          </Badge>
                         </TableCell>
                         <TableCell className="hidden whitespace-nowrap text-muted-foreground sm:table-cell">
                           {row.paid_date ? moment(row.paid_date).format("DD MMM YYYY, HH:mm") : "—"}

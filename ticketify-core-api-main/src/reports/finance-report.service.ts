@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma, TicketPaymentStatus } from '@prisma/client';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { CrmApiClient } from 'src/infrastructure/crm/crm-api.client';
+import { PAYMENT_REMINDER_GAP_MS } from 'src/payments/ticket-payment.service';
 
 export type FinancePaymentRow = {
   invoice_no: string;
@@ -25,6 +26,27 @@ export type FinancePaymentRow = {
   paid_date: string;
   issued_by: string;
 };
+
+export type PendingPaymentRow = {
+  reference: string;
+  invoice_no: string;
+  ticket_no: string;
+  service_request_id: string;
+  customer_name: string;
+  customer_phone: string;
+  amount: string;
+  /** When the payment link was sent to the customer. */
+  sent_at: string;
+  issued_by: string;
+  /** Set once the ticket went back to New for not being paid within 8 hours. */
+  moved_to_new_at: string | null;
+  reminders_sent: number;
+  last_reminder_at: string | null;
+  next_reminder_at: string | null;
+};
+
+/** BML links last about 7 days; older unpaid links are no longer worth chasing here. */
+const PENDING_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 type ChargeLine = {
   code?: string;
@@ -66,7 +88,7 @@ export class FinanceReportService {
   ) {}
 
   async summary() {
-    const [all, month, recent] = await Promise.all([
+    const [all, month, recent, pending] = await Promise.all([
       this.prisma.ticketPayment.aggregate({
         where: PAID,
         _count: { _all: true },
@@ -83,6 +105,14 @@ export class FinanceReportService {
         orderBy: { confirmed_at: 'desc' },
         take: 6,
       }),
+      this.prisma.ticketPayment.aggregate({
+        where: {
+          status: TicketPaymentStatus.PENDING,
+          created_at: { gte: new Date(Date.now() - PENDING_WINDOW_MS) },
+        },
+        _count: { _all: true },
+        _sum: { amount_mvr: true },
+      }),
     ]);
 
     const usersById = await this.usersById(recent);
@@ -96,6 +126,8 @@ export class FinanceReportService {
       net_collected: this.money(totalCents - gstCents),
       month_count: month._count._all,
       month_collected: this.money(this.cents(month._sum.amount_mvr)),
+      pending_count: pending._count._all,
+      pending_total: this.money(this.cents(pending._sum.amount_mvr)),
       recent: recent.map((payment) => {
         const issuer = payment.created_by_user_id
           ? usersById.get(payment.created_by_user_id)
@@ -112,6 +144,53 @@ export class FinanceReportService {
         };
       }),
     };
+  }
+
+  /** Payment links sent to customers that are not paid yet, newest first. */
+  async pending(): Promise<PendingPaymentRow[]> {
+    const payments = await this.prisma.ticketPayment.findMany({
+      where: {
+        status: TicketPaymentStatus.PENDING,
+        created_at: { gte: new Date(Date.now() - PENDING_WINDOW_MS) },
+      },
+      include: { invoice: true },
+      orderBy: { created_at: 'desc' },
+      take: 200,
+    });
+    const usersById = await this.usersById(payments);
+    const ticketIds = [...new Set(payments.map((payment) => payment.crm_ticket_id))];
+    const details = new Map<string, { customer_name: string; customer_phone: string }>();
+    await Promise.all(
+      ticketIds.map(async (ticketId) => details.set(ticketId, await this.ticketDetails(ticketId))),
+    );
+
+    return payments.map((payment) => {
+      const meta = (payment.metadata ?? {}) as {
+        reminders?: { at: string }[];
+        requeued_at?: string;
+      };
+      const reminders = meta.reminders ?? [];
+      const lastReminder = reminders[reminders.length - 1]?.at ?? null;
+      const issuer = payment.created_by_user_id ? usersById.get(payment.created_by_user_id) : undefined;
+      const detail = details.get(payment.crm_ticket_id);
+      return {
+        reference: payment.reference,
+        invoice_no: payment.invoice?.invoice_number ?? '',
+        ticket_no: payment.invoice?.sr_number ?? '',
+        service_request_id: payment.crm_ticket_id,
+        customer_name: detail?.customer_name ?? '',
+        customer_phone: this.paymentPhone(payment.metadata) || detail?.customer_phone || '',
+        amount: this.money(this.cents(payment.amount_mvr)),
+        sent_at: payment.created_at.toISOString(),
+        issued_by: issuer?.name || issuer?.email || '',
+        moved_to_new_at: meta.requeued_at ?? null,
+        reminders_sent: reminders.length,
+        last_reminder_at: lastReminder,
+        next_reminder_at: lastReminder
+          ? new Date(new Date(lastReminder).getTime() + PAYMENT_REMINDER_GAP_MS).toISOString()
+          : null,
+      };
+    });
   }
 
   async list(query: FinanceReportQuery): Promise<FinancePaymentRow[]> {

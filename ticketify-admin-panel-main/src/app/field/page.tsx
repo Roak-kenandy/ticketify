@@ -8,6 +8,7 @@ import ProfileCard from "@/components/field/home/profile-card";
 import StatsCard from "@/components/field/home/stats-card";
 import TicketCard from "@/components/field/ticket-card";
 import { EmptyState, ErrorState, InlineBanner, TicketCardSkeleton } from "@/components/field/ui/state-views";
+import { matchesQueue, QueueFilter, useQueueFilter } from "@/components/field/ui/queue-filter";
 import { apiGet } from "@/lib/field/api";
 import { cn } from "@/lib/field/cn";
 import { fieldCardGrid, fieldContainer } from "@/lib/field/layout";
@@ -32,6 +33,7 @@ export default function DashboardPage() {
   const { tickets, teamTickets, syncedAt, error: syncError, refresh } = useTickets();
   const { setup: tracking } = useTrackingSetup();
   const [query, setQuery] = React.useState("");
+  const [queue, setQueue] = useQueueFilter();
   const [refreshing, setRefreshing] = React.useState(false);
 
   const onShift = presenceFromUser(user) !== "OFFLINE";
@@ -62,18 +64,24 @@ export default function DashboardPage() {
     }
   };
 
+  const groups = React.useMemo(
+    () => (Array.isArray(teamTickets) ? teamTickets : []).filter((group: any) => group?.team?.name),
+    [teamTickets],
+  );
+  const allTeamTickets = React.useMemo(() => groups.flatMap((group: any) => teamTicketList(group)), [groups]);
+
   const sections = React.useMemo(() => {
     const q = query.trim().toLowerCase();
-    return (Array.isArray(teamTickets) ? teamTickets : [])
-      .filter((group: any) => group?.team?.name)
+    const filtering = Boolean(q) || queue !== "ALL";
+    return groups
       .map((group: any) => ({
         key: String(group.team.id ?? group.team.name),
         title: group.team.name as string,
         unavailable: Boolean(group.error),
-        data: teamTicketList(group).filter((ticket) => matchesQuery(ticket, q)),
+        data: teamTicketList(group).filter((ticket) => matchesQuery(ticket, q) && matchesQueue(ticket, queue)),
       }))
-      .filter((section) => section.data.length > 0 || (!q && section.unavailable));
-  }, [teamTickets, query]);
+      .filter((section) => section.data.length > 0 || (!filtering && section.unavailable));
+  }, [groups, query, queue]);
 
   let empty: React.ReactNode = null;
   if (!sections.length) {
@@ -89,6 +97,14 @@ export default function DashboardPage() {
       empty = <ErrorState message={syncError} onRetry={onRefresh} />;
     } else if (query.trim()) {
       empty = <EmptyState icon={Search} title="No matches" message="Try a different ticket number or customer name." />;
+    } else if (queue !== "ALL") {
+      empty = (
+        <EmptyState
+          icon={CheckCheck}
+          title="Nothing of this type"
+          message="There are no new tickets of this type in your teams. Choose All to see every ticket."
+        />
+      );
     } else {
       empty = (
         <EmptyState icon={CheckCheck} title="Queue is clear" message="There are no new tickets in your teams right now." />
@@ -159,6 +175,8 @@ export default function DashboardPage() {
             </button>
           ) : null}
         </div>
+
+        <QueueFilter value={queue} onChange={setQueue} tickets={loaded ? allTeamTickets : undefined} />
 
         <div className="-mt-2">
           {sections.map((section) => (

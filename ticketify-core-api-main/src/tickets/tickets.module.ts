@@ -8,6 +8,7 @@ import { NotificationTemplateModule } from 'src/notifications/notification-templ
 import { IntegrationAuditModule } from 'src/infrastructure/audit/integration-audit.module';
 import { FinanceModule } from 'src/finance/finance.module';
 import { ClosureModule } from 'src/closure/closure.module';
+import { RequeueModule } from 'src/requeue/requeue.module';
 
 @Module({
   controllers: [TicketsController],
@@ -20,6 +21,7 @@ import { ClosureModule } from 'src/closure/closure.module';
     IntegrationAuditModule,
     FinanceModule,
     ClosureModule,
+    RequeueModule,
   ],
   exports: [TicketsService],
 })

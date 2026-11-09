@@ -2,11 +2,16 @@ import {
   Controller,
   Get,
   Header,
+  Param,
+  Post,
   Query,
+  Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { Response } from 'express';
+import { TicketPaymentService } from 'src/payments/ticket-payment.service';
 import { JwtGuard } from 'src/auth/guard';
 import { RolesGuard } from 'src/auth/guard/roles.guard';
 import { Roles } from 'src/infrastructure/decorators/roles.decorator';
@@ -28,6 +33,7 @@ export class ReportsController {
     private readonly reportsService: ReportsService,
     private readonly financeReport: FinanceReportService,
     private readonly masterReport: MasterReportService,
+    private readonly payments: TicketPaymentService,
   ) {}
 
   @UseGuards(JwtGuard, RolesGuard)
@@ -35,6 +41,24 @@ export class ReportsController {
   @Get('finance/summary')
   financeSummary() {
     return this.financeReport.summary();
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(FINANCE_REPORT_ROLES)
+  @Get('finance/pending')
+  financePending() {
+    return this.financeReport.pending();
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(FINANCE_REPORT_ROLES)
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @Post('finance/pending/:reference/remind')
+  remindPendingPayment(
+    @Param('reference') reference: string,
+    @Req() req: { user: { id: string } },
+  ) {
+    return this.payments.sendPaymentReminder(reference, req.user.id);
   }
 
   @UseGuards(JwtGuard, RolesGuard)

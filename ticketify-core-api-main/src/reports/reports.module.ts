@@ -5,9 +5,10 @@ import { FinanceReportService } from './finance-report.service';
 import { MasterReportService } from './master-report.service';
 import { AuthModule } from 'src/auth/auth.module';
 import { CrmMongoService } from './crm-mongo.service';
+import { PaymentsModule } from 'src/payments/payments.module';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, PaymentsModule],
   controllers: [ReportsController],
   providers: [ReportsService, FinanceReportService, MasterReportService, CrmMongoService],
 })

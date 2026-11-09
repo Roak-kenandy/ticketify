@@ -122,13 +122,12 @@ describe('FinanceReportService', () => {
     expect(xml).toContain('<Data ss:Type="String">ref1</Data>');
   });
 
-  it('summary only aggregates confirmed payments', async () => {
+  it('summary totals count confirmed payments; pending links are counted apart', async () => {
     const { service, prisma } = setup([]);
     await service.summary();
 
-    for (const [args] of prisma.ticketPayment.aggregate.mock.calls) {
-      expect(args.where.status).toBe('CONFIRMED');
-    }
+    const statuses = prisma.ticketPayment.aggregate.mock.calls.map(([args]) => args.where.status);
+    expect(statuses).toEqual(['CONFIRMED', 'CONFIRMED', 'PENDING']);
     expect(prisma.ticketPayment.findMany.mock.calls[0][0].where.status).toBe(
       'CONFIRMED',
     );

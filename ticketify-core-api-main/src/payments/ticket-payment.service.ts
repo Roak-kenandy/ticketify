@@ -46,7 +46,11 @@ type PaymentMetadata = {
   review_reason?: string;
   last_bml_check_at?: string;
   error?: string;
+  reminders?: { at: string; by: string | null }[];
+  requeued_at?: string;
 };
+
+export const PAYMENT_REMINDER_GAP_MS = 60 * 60 * 1000;
 
 export type SyncSource =
   | 'webhook'
@@ -1169,6 +1173,88 @@ export class TicketPaymentService {
       sms_sent: true,
       resent: true,
     };
+  }
+
+  /** Finance "Send reminder": texts the customer the open payment link again, at most once an hour. */
+  async sendPaymentReminder(reference: string, actorUserId?: string) {
+    let payment = await this.prisma.ticketPayment.findUnique({
+      where: { reference },
+      include: { invoice: true },
+    });
+    if (!payment) throw new NotFoundException('Payment not found');
+    if (payment.status !== TicketPaymentStatus.PENDING) {
+      throw new BadRequestException('This payment is not pending any more.');
+    }
+    const previous = this.meta(payment).reminders ?? [];
+    const last = previous[previous.length - 1]?.at;
+    if (last && Date.now() - new Date(last).getTime() < PAYMENT_REMINDER_GAP_MS) {
+      throw new BadRequestException(
+        'A reminder was sent less than an hour ago. Try again later.',
+      );
+    }
+
+    let bmlPayUrl: string | null = null;
+    if (this.bml.canUseGateway()) {
+      bmlPayUrl = await this.ensureBmlCheckoutUrl(reference);
+      payment = (await this.prisma.ticketPayment.findUnique({
+        where: { reference },
+        include: { invoice: true },
+      }))!;
+      if (payment.status === TicketPaymentStatus.CONFIRMED) {
+        throw new BadRequestException('The customer has already paid.');
+      }
+    }
+    const meta = this.meta(payment);
+
+    const sr = await this.crm.getServiceRequest(payment.crm_ticket_id);
+    const srData = (sr.ok ? sr.data : {}) as {
+      number?: string;
+      contact?: { phone?: { number?: string }; person_name?: { full_name?: string } };
+    };
+    const phone = meta.payment_phone || this.defaultPhoneFromSr(srData);
+    if (!phone) throw new BadRequestException('Customer mobile number not found in CRM');
+
+    const gatewayMode = bmlPayUrl || meta.bml_pay_url ? 'bml' : meta.gateway_mode ?? 'invoice_only';
+    const resolvedBmlPay =
+      (bmlPayUrl && this.isBmlHostedPayUrl(bmlPayUrl) ? bmlPayUrl : null) ||
+      (meta.bml_pay_url && this.isBmlHostedPayUrl(meta.bml_pay_url) ? meta.bml_pay_url : null);
+    const link = this.normalizeSmsPaymentUrl(
+      this.smsPaymentUrl({ reference, bmlPayUrl: resolvedBmlPay, gatewayMode }),
+    );
+    if (gatewayMode !== 'bml') this.assertSmsLinkReachable(link);
+
+    const srNumber = srData.number ?? payment.crm_ticket_id;
+    const name = srData.contact?.person_name?.full_name?.trim();
+    const amount = Number(payment.amount_mvr).toFixed(2);
+    const message =
+      (await this.templates.render('PAYMENT_REMINDER', {
+        NAME: name ?? 'Customer',
+        SR_ID: srNumber,
+        INV_NO: payment.invoice?.invoice_number ?? reference,
+        TOTAL: amount,
+        LINK: link,
+      })) ??
+      `Dear ${name ?? 'Customer'}, a charge of MVR ${amount} was generated for your Medianet service request ${srNumber} and is still unpaid. Please pay here: ${link}. Thank you, Medianet.`;
+    await this.sms.publishSMS({ phone, message });
+
+    const sentAt = new Date().toISOString();
+    const reminders = [...(meta.reminders ?? []), { at: sentAt, by: actorUserId ?? null }];
+    await this.prisma.ticketPayment.update({
+      where: { id: payment.id },
+      data: { metadata: { ...meta, reminders } as Prisma.InputJsonValue },
+    });
+    void this.audit
+      .log({
+        entity_type: 'ticket_payment',
+        entity_id: payment.id,
+        action: 'PAYMENT_REMINDER_SMS',
+        actor_user_id: actorUserId,
+        new_state: { reference, sr_number: srNumber },
+        crm_sync_ok: true,
+      })
+      .catch(() => undefined);
+
+    return { reference, reminders_sent: reminders.length, last_reminder_at: sentAt };
   }
 
   async reconcile(reference: string, actorUserId?: string) {
