@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, SerialUnitStatus, StockMovementType } from '@prisma/client';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
+import { normalizeSerial } from './serial';
 import { TechnicianStockService } from './technician-stock.service';
 import {
   displayDate,
@@ -63,6 +64,48 @@ export type StockMovementRow = {
   performed_by_name: string;
 };
 
+export type StockLogKind = 'STORE_ISSUE' | 'HANDOUT' | 'TAKE_BACK' | 'STORE_RETURN';
+
+export const STOCK_LOG_LABEL: Record<StockLogKind, string> = {
+  STORE_ISSUE: 'Issued by store',
+  HANDOUT: 'Handed to technician',
+  TAKE_BACK: 'Taken back by supervisor',
+  STORE_RETURN: 'Returned to store',
+};
+
+export type StockLogLine = {
+  item_code: string;
+  item_name: string;
+  uom: string;
+  quantity: number;
+  serials: string[];
+  faulty: number;
+};
+
+/** One slip: everything that changed hands together, and the request it answered. */
+export type StockLogEntry = {
+  batch_id: string;
+  at: Date;
+  kind: StockLogKind;
+  kind_label: string;
+  from_name: string;
+  to_name: string;
+  performed_by_name: string;
+  reference: string | null;
+  notes: string | null;
+  lines: StockLogLine[];
+  request: {
+    id: string;
+    requested_by_name: string;
+    requested_at: Date;
+    notes: string | null;
+    lines: { item_name: string; quantity: number; uom: string }[];
+  } | null;
+};
+
+/** Export: one row per item on a slip. */
+type StockLogExportRow = Omit<StockLogEntry, 'lines'> & StockLogLine;
+
 const MAX_ROWS = 10_000;
 const MAX_SERIALS = 2_000;
 
@@ -99,10 +142,35 @@ const MOVEMENT_COLUMNS: ReportColumn<StockMovementRow>[] = [
   { header: 'Recorded by', value: (row) => row.performed_by_name },
 ];
 
+const LOG_COLUMNS: ReportColumn<StockLogExportRow>[] = [
+  { header: 'Date / time', value: (row) => displayDate(row.at) },
+  { header: 'Action', value: (row) => row.kind_label },
+  { header: 'From', value: (row) => row.from_name },
+  { header: 'To', value: (row) => row.to_name },
+  { header: 'Item code', value: (row) => row.item_code },
+  { header: 'Item', value: (row) => row.item_name },
+  { header: 'Quantity', value: (row) => row.quantity },
+  { header: 'UOM', value: (row) => row.uom },
+  { header: 'Faulty', value: (row) => row.faulty || null },
+  { header: 'Serial numbers', value: (row) => row.serials.join(', ') },
+  { header: 'Requested by', value: (row) => row.request?.requested_by_name ?? null },
+  { header: 'Requested (date / time)', value: (row) => (row.request ? displayDate(row.request.requested_at) : null) },
+  { header: 'Request note', value: (row) => row.request?.notes ?? null },
+  { header: 'Recorded by', value: (row) => row.performed_by_name },
+  { header: 'Reference', value: (row) => row.reference },
+  { header: 'Notes', value: (row) => row.notes },
+];
+
+function logKind(type: StockMovementType, counterparty: string | null): StockLogKind {
+  if (type === 'ISSUE') return counterparty ? 'HANDOUT' : 'STORE_ISSUE';
+  return counterparty ? 'TAKE_BACK' : 'STORE_RETURN';
+}
+
 @Injectable()
 export class StockReportService {
   readonly summaryColumns = SUMMARY_COLUMNS;
   readonly movementColumns = MOVEMENT_COLUMNS;
+  readonly logColumns = LOG_COLUMNS;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -241,7 +309,7 @@ export class StockReportService {
     if (search) {
       where.push({
         OR: [
-          { serial_number: { contains: search, mode: 'insensitive' } },
+          { serial_number: { contains: normalizeSerial(search) ?? search, mode: 'insensitive' } },
           { reference: { contains: search, mode: 'insensitive' } },
           { item_name: { contains: search, mode: 'insensitive' } },
         ],
@@ -282,11 +350,125 @@ export class StockReportService {
     }));
   }
 
+  /**
+   * Who gave what to whom, one entry per slip, newest first, with the supervisor
+   * request it fulfilled. `type` filters by StockLogKind.
+   */
+  async log(query: StockReportQuery): Promise<StockLogEntry[]> {
+    const where: Prisma.TechnicianStockMovementWhereInput[] = [];
+    const from = parseDate(query.from);
+    const to = parseDate(query.to, true);
+    if (from || to) where.push({ created_at: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } });
+    const holderIds = splitList(query.technician_ids);
+    if (holderIds.length) {
+      where.push({ OR: [{ technician_user_id: { in: holderIds } }, { counterparty_user_id: { in: holderIds } }] });
+    }
+    const itemIds = splitList(query.item_ids);
+    if (itemIds.length) where.push({ item_id: { in: itemIds } });
+    const kind = query.type?.trim().toUpperCase() as StockLogKind | undefined;
+    if (kind && kind in STOCK_LOG_LABEL) {
+      where.push({
+        type: kind === 'STORE_ISSUE' || kind === 'HANDOUT' ? 'ISSUE' : 'RETURN',
+        counterparty_user_id: kind === 'STORE_ISSUE' || kind === 'STORE_RETURN' ? null : { not: null },
+      });
+    }
+    const search = query.search?.trim();
+    if (search) {
+      where.push({
+        OR: [
+          { serial_number: { contains: normalizeSerial(search) ?? search, mode: 'insensitive' } },
+          { reference: { contains: search, mode: 'insensitive' } },
+          { item_name: { contains: search, mode: 'insensitive' } },
+        ],
+      });
+    }
+
+    const movements = await this.prisma.technicianStockMovement.findMany({
+      where: { AND: where },
+      orderBy: [{ created_at: 'desc' }, { item_name: 'asc' }],
+      take: MAX_ROWS,
+      include: { item: { select: { code: true } } },
+    });
+    const batchIds = [...new Set(movements.map((movement) => movement.batch_id))];
+    const requests = batchIds.length
+      ? await this.prisma.stockRequest.findMany({ where: { fulfilled_batch_id: { in: batchIds } } })
+      : [];
+    const names = await this.userNames([
+      ...movements.flatMap((movement) => [
+        movement.technician_user_id,
+        movement.performed_by_user_id,
+        movement.counterparty_user_id ?? '',
+      ]),
+      ...requests.map((request) => request.requested_by_user_id),
+    ]);
+    const nameOf = (id: string | null) => (id ? names.get(id) ?? 'Unknown user' : 'Store');
+    const requestByBatch = new Map(requests.map((request) => [request.fulfilled_batch_id, request]));
+
+    const entries = new Map<string, StockLogEntry>();
+    for (const movement of movements) {
+      let entry = entries.get(movement.batch_id);
+      if (!entry) {
+        const kindOf = logKind(movement.type, movement.counterparty_user_id);
+        const holder = nameOf(movement.technician_user_id);
+        const other = nameOf(movement.counterparty_user_id);
+        const request = requestByBatch.get(movement.batch_id);
+        entry = {
+          batch_id: movement.batch_id,
+          at: movement.created_at,
+          kind: kindOf,
+          kind_label: STOCK_LOG_LABEL[kindOf],
+          from_name: movement.type === 'ISSUE' ? other : holder,
+          to_name: movement.type === 'ISSUE' ? holder : other,
+          performed_by_name: nameOf(movement.performed_by_user_id),
+          reference: movement.reference,
+          notes: movement.notes,
+          lines: [],
+          request: request
+            ? {
+                id: request.id,
+                requested_by_name: nameOf(request.requested_by_user_id),
+                requested_at: request.created_at,
+                notes: request.notes,
+                lines: (request.lines as { item_name: string; quantity: number; uom: string }[]).map((line) => ({
+                  item_name: line.item_name,
+                  quantity: Number(line.quantity),
+                  uom: line.uom,
+                })),
+              }
+            : null,
+        };
+        entries.set(movement.batch_id, entry);
+      }
+      let line = entry.lines.find((existing) => existing.item_code === movement.item.code);
+      if (!line) {
+        line = {
+          item_code: movement.item.code,
+          item_name: movement.item_name,
+          uom: movement.uom,
+          quantity: 0,
+          serials: [],
+          faulty: 0,
+        };
+        entry.lines.push(line);
+      }
+      const quantity = Number(movement.quantity);
+      line.quantity = round2(line.quantity + quantity);
+      if (movement.condition === 'FAULTY') line.faulty = round2(line.faulty + quantity);
+      if (movement.serial_number) line.serials.push(movement.serial_number);
+    }
+    for (const entry of entries.values()) entry.lines.forEach((line) => line.serials.sort());
+    return [...entries.values()];
+  }
+
+  logRows(entries: StockLogEntry[]): StockLogExportRow[] {
+    return entries.flatMap(({ lines, ...entry }) => lines.map((line) => ({ ...entry, ...line })));
+  }
+
   /** Where every serialized unit is: with whom, or on which SR it was installed. */
   async serials(query: StockReportQuery) {
     const where: Prisma.SerialUnitWhereInput[] = [];
     const search = query.search?.trim();
-    if (search) where.push({ serial_number: { contains: search, mode: 'insensitive' } });
+    if (search) where.push({ serial_number: { contains: normalizeSerial(search) ?? search, mode: 'insensitive' } });
     const status = query.status?.trim().toUpperCase();
     if (status && status in SerialUnitStatus) where.push({ status: status as SerialUnitStatus });
     const technicianIds = splitList(query.technician_ids);

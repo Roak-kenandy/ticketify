@@ -32,7 +32,7 @@ import WorkflowSheet, {
 import { apiGet, apiPost } from "@/lib/field/api";
 import { cn } from "@/lib/field/cn";
 import { showError, showSuccess } from "@/lib/field/notify";
-import { isValidSerial, normalizeSerial } from "@/lib/field/serial";
+import { canonicalSerial as normalizeSerial, isValidSerial } from "@/lib/field/serial";
 import { useSession } from "@/lib/field/session";
 import type { InventoryItem, InventoryLine, MyStock, TicketInventory } from "@/types/field-workflow";
 

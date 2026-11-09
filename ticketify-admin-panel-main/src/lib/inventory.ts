@@ -101,6 +101,36 @@ export type StockSummary = {
   totals: { technicians: number; technicians_holding: number; items: number; overdrawn: number };
 };
 
+export type StockLogKind = "STORE_ISSUE" | "HANDOUT" | "TAKE_BACK" | "STORE_RETURN";
+
+export const STOCK_LOG_KIND_LABEL: Record<StockLogKind, string> = {
+  STORE_ISSUE: "Issued by store",
+  HANDOUT: "Handed to technician",
+  TAKE_BACK: "Taken back by supervisor",
+  STORE_RETURN: "Returned to store",
+};
+
+/** One slip: everything that changed hands together, and the request it answered. */
+export type StockLogEntry = {
+  batch_id: string;
+  at: string;
+  kind: StockLogKind;
+  kind_label: string;
+  from_name: string;
+  to_name: string;
+  performed_by_name: string;
+  reference: string | null;
+  notes: string | null;
+  lines: { item_code: string; item_name: string; uom: string; quantity: number; serials: string[]; faulty: number }[];
+  request: {
+    id: string;
+    requested_by_name: string;
+    requested_at: string;
+    notes: string | null;
+    lines: { item_name: string; quantity: number; uom: string }[];
+  } | null;
+};
+
 export type StockMovementRow = {
   id: string;
   created_at: string;

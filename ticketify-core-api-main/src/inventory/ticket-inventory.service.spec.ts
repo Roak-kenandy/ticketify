@@ -131,7 +131,7 @@ describe('TicketInventoryService', () => {
     expect(created).toHaveLength(2);
     expect(String(created[0].quantity)).toBe('12.5');
     expect(created[0].uom).toBe('Meter');
-    expect(created[1].serial_number).toBe('HWTC0001ABCD');
+    expect(created[1].serial_number).toBe('485754430001ABCD');
     expect(created[1].sr_number).toBe('SR-100');
   });
 
@@ -150,13 +150,13 @@ describe('TicketInventoryService', () => {
       'tech-1',
       [
         expect.objectContaining({ quantity: 12.5, serial: null }),
-        expect.objectContaining({ quantity: 1, serial: 'HWTC0001ABCD' }),
+        expect.objectContaining({ quantity: 1, serial: '485754430001ABCD' }),
       ],
     );
     expect(created.every((line) => line.stock_tracked === true)).toBe(true);
     expect(stock.markConsumed).toHaveBeenCalledWith(
       expect.anything(),
-      'HWTC0001ABCD',
+      '485754430001ABCD',
       'line-2',
     );
   });
@@ -200,7 +200,7 @@ describe('TicketInventoryService', () => {
     });
     expect(stock.markConsumed).toHaveBeenCalledWith(
       expect.anything(),
-      'HWTC0001ABCD',
+      '485754430001ABCD',
       'line-1',
     );
     expect(created[1]).toMatchObject({

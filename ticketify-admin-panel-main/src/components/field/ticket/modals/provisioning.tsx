@@ -42,7 +42,7 @@ import WorkflowSheet, {
 import { apiGet, apiPost } from "@/lib/field/api";
 import { cn } from "@/lib/field/cn";
 import { showError, showInfo, showSuccess } from "@/lib/field/notify";
-import { isValidSerial, normalizeSerial } from "@/lib/field/serial";
+import { canonicalSerial, isValidSerial, normalizeSerial } from "@/lib/field/serial";
 import { issuedSerials, useMyStock } from "@/lib/field/stock";
 import { useSession } from "@/lib/field/session";
 import type {
@@ -577,7 +577,7 @@ function validate(action: ProvisioningAction, form: Form, ctx: ProvisioningConte
   if (needsDetection(action) && !errors.serial) {
     const serial = normalizeSerial(detectionSerial(action, form, ctx));
     const detection = form.detection;
-    if (!detection || detection.serial !== serial) {
+    if (!detection || canonicalSerial(detection.serial) !== canonicalSerial(serial)) {
       errors.detection = "Detect the ONT to confirm its OLT / PON";
     } else if (detection.status === "NOT_DETECTED") {
       errors.detection = "ONT is not detected on any OLT";
@@ -597,7 +597,7 @@ function pppoeRequired(ctx: ProvisioningContext) {
 
 /** Detect found operator firmware (e.g. Ooredoo) on the ONT being installed. */
 function operatorPppoe(form: Form) {
-  return form.detection?.pppoe_required === true && form.detection.serial === normalizeSerial(form.serial);
+  return form.detection?.pppoe_required === true && canonicalSerial(form.detection.serial) === canonicalSerial(form.serial);
 }
 
 /**
@@ -612,7 +612,8 @@ function asksPppoe(ctx: ProvisioningContext, form: Form, action: ProvisioningAct
   if (!installsOnt || !operatorPppoe(form)) {
     return false;
   }
-  const looked = form.oldLookup?.serial === normalizeSerial(form.oldSerial) ? form.oldLookup : null;
+  const looked =
+    form.oldLookup && canonicalSerial(form.oldLookup.serial) === canonicalSerial(form.oldSerial) ? form.oldLookup : null;
   const sub = looked?.subscriber ?? ctx.subscriber;
   return Boolean(sub) && !(sub?.pppoe_configured ?? Boolean(sub?.pppoe_username));
 }
@@ -943,7 +944,9 @@ function FormView({
   const replacing = action === "ONT_REPLACEMENT";
   const relocating = action === "RELOCATION";
   const looked =
-    (replacing || relocating) && form.oldLookup?.serial === normalizeSerial(form.oldSerial) ? form.oldLookup : null;
+    (replacing || relocating) && form.oldLookup && canonicalSerial(form.oldLookup.serial) === canonicalSerial(form.oldSerial)
+      ? form.oldLookup
+      : null;
   const sub = looked?.subscriber ?? ctx.subscriber;
   const detectedType = ctx.options.device_types.find((type) => type.code === form.detection?.device_type);
   const showSerial = action !== "RELOCATION" || form.newOnt;
@@ -1196,7 +1199,7 @@ function CurrentOntSection({
   const { token } = useSession();
   const [lookingUp, setLookingUp] = React.useState(false);
   const serial = normalizeSerial(form.oldSerial);
-  const lookup = form.oldLookup?.serial === serial ? form.oldLookup : null;
+  const lookup = form.oldLookup && canonicalSerial(form.oldLookup.serial) === canonicalSerial(serial) ? form.oldLookup : null;
   const onChangeRef = React.useRef(onChange);
   onChangeRef.current = onChange;
 

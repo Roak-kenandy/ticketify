@@ -95,6 +95,52 @@ export class StockRequestService {
     }));
   }
 
+  /**
+   * Polled by the console. The store hears about open requests; a supervisor hears
+   * when the store issued or declined one of theirs (last 7 days).
+   */
+  async alerts(actor: StockActor) {
+    const store = this.isStore(actor);
+    const requests = await this.prisma.stockRequest.findMany({
+      where: store
+        ? { status: 'OPEN' }
+        : {
+            requested_by_user_id: actor.id,
+            status: { in: ['FULFILLED', 'CANCELLED'] },
+            closed_at: { gte: new Date(Date.now() - 7 * 24 * 3600 * 1000) },
+            NOT: { closed_by_user_id: actor.id },
+          },
+      orderBy: store ? { created_at: 'desc' } : { closed_at: 'desc' },
+      take: 50,
+    });
+    const userIds = [...new Set(requests.map((request) => request.requested_by_user_id))];
+    const users = userIds.length
+      ? await this.prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, email: true } })
+      : [];
+    const names = new Map(users.map((user) => [user.id, user.name?.trim() || user.email]));
+    const summary = (lines: RequestLine[]) =>
+      lines.map((line) => `${line.item_name} × ${Number(line.quantity)} ${line.uom}`).join(', ');
+    return {
+      audience: store ? 'STORE' : 'SUPERVISOR',
+      items: requests.map((request) => {
+        const lines = summary(request.lines as RequestLine[]);
+        return {
+          /** Changes when the request changes state, so each state is announced once. */
+          key: `${request.id}:${request.status}`,
+          request_id: request.id,
+          status: request.status,
+          title: store
+            ? `Stock request from ${names.get(request.requested_by_user_id) ?? 'a supervisor'}`
+            : request.status === 'FULFILLED'
+              ? 'Your stock request was issued'
+              : 'Your stock request was declined',
+          body: lines,
+          at: store ? request.created_at : request.closed_at,
+        };
+      }),
+    };
+  }
+
   async cancel(actor: StockActor, id: string) {
     const closed = await this.prisma.stockRequest.updateMany({
       where: { id, status: 'OPEN', ...(this.isStore(actor) ? {} : { requested_by_user_id: actor.id }) },

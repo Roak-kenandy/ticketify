@@ -3,6 +3,7 @@
 import * as React from "react";
 import { toast } from "sonner";
 import { Loader2, Trash2 } from "lucide-react";
+import { BarcodeScanDialog } from "@/components/app/barcode-scan-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,10 +18,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import axiosInterceptorInstance, { apiErrorMessage } from "@/lib/axios-interceptor";
+import { canonicalSerial, extractSerial, isOntItem, ponSerialsIn } from "@/lib/field/serial";
 import {
   formatQuantity,
   newSlipKey,
-  parseSerials,
   SERIAL_PATTERN,
   type InventoryItem,
   type SerialUnitRow,
@@ -30,9 +31,7 @@ import {
 } from "@/lib/inventory";
 import { cn } from "@/lib/utils";
 import { AddItemPicker } from "./add-item-picker";
-
-const textareaClass =
-  "flex min-h-[96px] w-full rounded-md border border-input bg-card px-3 py-2 font-mono text-sm uppercase shadow-sm placeholder:normal-case placeholder:font-sans placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 aria-[invalid=true]:border-destructive";
+import { NoticeLine, ScanField, SerialChips, SerialText, type Notice } from "./serial-scan";
 
 type Condition = "GOOD" | "FAULTY";
 
@@ -41,10 +40,38 @@ type IssueLine = {
   item: InventoryItem;
   quantity: string;
   unit: "CONSUMPTION" | "STOCK";
-  serials: string;
+  serials: string[];
   /** Quantity the supervisor asked for, when fulfilling a request. */
   requested?: number;
 };
+
+/** Why the store can't issue a unit that is already registered, from the store's point of view. */
+function unavailableReason(row: SerialUnitRow, item: InventoryItem): string | null {
+  switch (row.status) {
+    case "RETURNED":
+      return row.item_code === item.code ? null : `registered as ${row.item_name}, not ${item.name}`;
+    case "WITH_SUPERVISOR":
+      return `already issued to ${row.technician_name ?? "a supervisor"}`;
+    case "WITH_TECHNICIAN":
+      return `already with ${row.technician_name ?? "a technician"}`;
+    case "CONSUMED":
+      return `already installed on SR ${row.sr_number ?? row.crm_ticket_id ?? "—"}`;
+    default:
+      return "was returned faulty and can't be issued";
+  }
+}
+
+async function lookupSerial(serial: string): Promise<SerialUnitRow | null> {
+  const { data } = await axiosInterceptorInstance.get<SerialUnitRow[]>(
+    `/inventory/stock/serials?search=${encodeURIComponent(serial)}`,
+  );
+  return (data ?? []).find((row) => row.serial_number === serial) ?? null;
+}
+
+/** A PON SN anywhere in the scan wins; otherwise the best-looking serial. */
+function readSerial(raw: string) {
+  return ponSerialsIn(raw)[0] ?? extractSerial(raw) ?? canonicalSerial(raw);
+}
 type ReturnLine = {
   key: string;
   holding: StockSummaryRow;
@@ -55,17 +82,6 @@ type ReturnLine = {
 
 function lineKey() {
   return Math.random().toString(36).slice(2, 10);
-}
-
-function serialProblems(serials: string[], others: Set<string>) {
-  const seen = new Set<string>();
-  const problems = new Map<string, string>();
-  for (const serial of serials) {
-    if (!SERIAL_PATTERN.test(serial)) problems.set(serial, "Not a valid serial");
-    else if (seen.has(serial) || others.has(serial)) problems.set(serial, "Listed twice");
-    seen.add(serial);
-  }
-  return problems;
 }
 
 function HolderSelect({
@@ -131,7 +147,14 @@ export function IssueStockDialog({
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [showErrors, setShowErrors] = React.useState(false);
+  /** Serials the registry says can't be issued, with the reason. */
+  const [flags, setFlags] = React.useState<Record<string, string>>({});
+  const [notices, setNotices] = React.useState<Record<string, Notice>>({});
+  const [cameraLine, setCameraLine] = React.useState<string | null>(null);
   const slipKey = React.useRef(newSlipKey("iss"));
+  // Scanners fire faster than React re-renders; read the latest lines from here.
+  const linesRef = React.useRef(lines);
+  linesRef.current = lines;
 
   React.useEffect(() => {
     if (!open) return;
@@ -140,6 +163,9 @@ export function IssueStockDialog({
     setReference("");
     setNotes(request?.notes ? `Request: ${request.notes}` : "");
     setLines([]);
+    setFlags({});
+    setNotices({});
+    setCameraLine(null);
     setPickerOpen(false);
     setShowErrors(false);
     slipKey.current = newSlipKey("iss");
@@ -159,7 +185,7 @@ export function IssueStockDialog({
                     item,
                     quantity: item.serialized ? "" : String(wanted.quantity),
                     unit: "CONSUMPTION" as const,
-                    serials: "",
+                    serials: [],
                     requested: wanted.quantity,
                   },
                 ]
@@ -171,15 +197,13 @@ export function IssueStockDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, defaultTechnician, request]);
 
-  const errors = lines.map((line, index) => {
+  const errors = lines.map((line) => {
     if (line.item.serialized) {
-      const serials = parseSerials(line.serials);
-      const earlier = new Set(
-        lines.slice(0, index).flatMap((other) => (other.item.serialized ? parseSerials(other.serials) : [])),
-      );
-      const problems = serialProblems(serials, earlier);
-      if (!serials.length) return "Enter the serial number of every unit";
-      if (problems.size) return [...problems].map(([serial, problem]) => `${serial}: ${problem}`).join(" · ");
+      if (!line.serials.length) return "Scan the serial number of every unit";
+      const flagged = line.serials.filter((serial) => flags[serial]);
+      if (flagged.length) {
+        return `Remove ${flagged.map((serial) => `${serial} (${flags[serial]})`).join(" · ")}`;
+      }
       return "";
     }
     const value = Number(line.quantity);
@@ -197,7 +221,7 @@ export function IssueStockDialog({
     if (!item) return;
     setLines((list) => [
       ...list,
-      { key: lineKey(), item, quantity: item.serialized ? "" : "1", unit: "CONSUMPTION", serials: "" },
+      { key: lineKey(), item, quantity: item.serialized ? "" : "1", unit: "CONSUMPTION", serials: [] },
     ]);
   }
 
@@ -205,6 +229,63 @@ export function IssueStockDialog({
     setLines((list) => list.map((line) => (line.key === key ? { ...line, ...patch } : line)));
     slipKey.current = newSlipKey("iss");
   }
+
+  function addSerial(key: string, raw: string) {
+    const say = (notice: Notice) => setNotices((current) => ({ ...current, [key]: notice }));
+    const target = linesRef.current.find((line) => line.key === key);
+    if (!target) return;
+    const ont = isOntItem(target.item);
+    const serial = ont ? ponSerialsIn(raw)[0] : readSerial(raw);
+    if (!serial) {
+      say({
+        ok: false,
+        text: `"${raw.trim().slice(0, 40)}" is not a PON SN. Scan the barcode marked PON SN or SN (e.g. 48575443686AEC86), not the MAC or device code.`,
+      });
+      return;
+    }
+    if (!SERIAL_PATTERN.test(serial)) {
+      say({ ok: false, text: `"${raw}" doesn't look like a serial number` });
+      return;
+    }
+    const holder = linesRef.current.find((line) => line.serials.includes(serial));
+    if (holder) {
+      say(
+        holder.key === key
+          ? { ok: true, text: `${serial} is already on the list (${holder.serials.length} scanned)` }
+          : { ok: false, text: `${serial} is already on this slip under ${holder.item.name}` },
+      );
+      return;
+    }
+    linesRef.current = linesRef.current.map((line) =>
+      line.key === key ? { ...line, serials: [...line.serials, serial] } : line,
+    );
+    setLines(linesRef.current);
+    slipKey.current = newSlipKey("iss");
+    const count = target.serials.length + 1;
+    say({
+      ok: true,
+      text: `Added ${serial} · ${count}${target.requested ? ` of ${target.requested} requested` : ` unit${count === 1 ? "" : "s"}`}`,
+    });
+    lookupSerial(serial)
+      .then((row) => {
+        const problem = row ? unavailableReason(row, target.item) : null;
+        if (!problem) return;
+        setFlags((current) => ({ ...current, [serial]: problem }));
+        say({ ok: false, text: `${serial} ${problem}` });
+      })
+      .catch(() => undefined);
+  }
+
+  function removeSerial(key: string, serial: string) {
+    setLines((list) =>
+      list.map((line) => (line.key === key ? { ...line, serials: line.serials.filter((other) => other !== serial) } : line)),
+    );
+    setFlags(({ [serial]: _removed, ...rest }) => rest);
+    slipKey.current = newSlipKey("iss");
+  }
+
+  const cameraTarget = lines.find((line) => line.key === cameraLine);
+  const lastSerialLine = lines.filter((line) => line.item.serialized).at(-1)?.key;
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -222,7 +303,7 @@ export function IssueStockDialog({
         request_id: request?.id,
         lines: lines.map((line) =>
           line.item.serialized
-            ? { item_id: line.item.id, serial_numbers: parseSerials(line.serials) }
+            ? { item_id: line.item.id, serial_numbers: line.serials }
             : { item_id: line.item.id, quantity: Number(line.quantity), unit: line.unit },
         ),
       });
@@ -252,8 +333,8 @@ export function IssueStockDialog({
           <DialogHeader className="border-b px-6 py-4 pr-12">
             <DialogTitle>{request ? `Fulfil ${request.requested_by_name}'s request` : "Issue items to a supervisor"}</DialogTitle>
             <DialogDescription>
-              Supervisors hand these items out to their technicians. Scan each ONT box with a barcode scanner (or type the
-              serial) so every unit is tracked from the store to the customer.
+              Supervisors hand these items out to their technicians. Scan each ONT box with a handheld scanner or the
+              camera so every unit is tracked from the store to the customer.
             </DialogDescription>
           </DialogHeader>
 
@@ -281,7 +362,7 @@ export function IssueStockDialog({
             <div className="space-y-3">
               {lines.map((line, index) => {
                 const error = showErrors ? errors[index] : "";
-                const serials = line.item.serialized ? parseSerials(line.serials) : [];
+                const serials = line.serials;
                 const converts = !line.item.serialized && line.item.conversion_factor !== 1;
                 return (
                   <div key={line.key} className="space-y-2 rounded-lg border p-3">
@@ -302,20 +383,25 @@ export function IssueStockDialog({
                       </Button>
                     </div>
                     {line.item.serialized ? (
-                      <div className="space-y-1.5">
+                      <div className="space-y-2">
                         <Label htmlFor={`serials-${line.key}`}>
                           Serial numbers · {serials.length}
                           {line.requested ? ` of ${line.requested} requested` : ` unit${serials.length === 1 ? "" : "s"}`}
                         </Label>
-                        <textarea
+                        <ScanField
                           id={`serials-${line.key}`}
-                          className={textareaClass}
-                          value={line.serials}
-                          onChange={(e) => update(line.key, { serials: e.target.value })}
-                          placeholder="Scan or type one serial per line"
-                          aria-invalid={Boolean(error)}
-                          spellCheck={false}
-                          autoCapitalize="characters"
+                          autoFocus
+                          captureKeys={line.key === lastSerialLine}
+                          ponOnly={isOntItem(line.item)}
+                          disabled={busy}
+                          onScan={(raw) => addSerial(line.key, raw)}
+                          onCamera={() => setCameraLine(line.key)}
+                        />
+                        <NoticeLine notice={notices[line.key]} />
+                        <SerialChips
+                          serials={serials}
+                          flags={flags}
+                          onRemove={(serial) => removeSerial(line.key, serial)}
                         />
                       </div>
                     ) : (
@@ -398,6 +484,14 @@ export function IssueStockDialog({
           </DialogFooter>
         </form>
       </DialogContent>
+      <BarcodeScanDialog
+        open={Boolean(cameraTarget)}
+        ponOnly={cameraTarget ? isOntItem(cameraTarget.item) : true}
+        title={cameraTarget ? `Scan ${cameraTarget.item.name} · ${cameraTarget.serials.length} scanned` : "Scan"}
+        status={cameraLine ? <NoticeLine notice={notices[cameraLine]} /> : null}
+        onClose={() => setCameraLine(null)}
+        onScanned={(serial) => cameraLine && addSerial(cameraLine, serial)}
+      />
     </Dialog>
   );
 }
@@ -424,7 +518,11 @@ export function ReturnStockDialog({
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [showErrors, setShowErrors] = React.useState(false);
+  const [notice, setNotice] = React.useState<Notice | null>(null);
+  const [camera, setCamera] = React.useState(false);
   const slipKey = React.useRef(newSlipKey("ret"));
+  const linesRef = React.useRef(lines);
+  linesRef.current = lines;
 
   React.useEffect(() => {
     if (!open) return;
@@ -432,11 +530,13 @@ export function ReturnStockDialog({
     setNotes("");
     setPickerOpen(false);
     setShowErrors(false);
+    setCamera(false);
     slipKey.current = newSlipKey("ret");
   }, [open, defaultTechnician]);
 
   React.useEffect(() => {
     setLines([]);
+    setNotice(null);
     setHoldings([]);
     setSerials([]);
     if (!open || !technician) return;
@@ -484,6 +584,51 @@ export function ReturnStockDialog({
   function update(key: string, patch: Partial<ReturnLine>) {
     setLines((list) => list.map((line) => (line.key === key ? { ...line, ...patch } : line)));
     slipKey.current = newSlipKey("ret");
+  }
+
+  const holderName = technicians.find((holder) => holder.id === technician)?.name ?? "this person";
+  const hasSerialized = holdings.some((row) => row.serialized);
+
+  /** A scanned box ticks its serial, adding the item line if it isn't on the slip yet. */
+  function scanReturn(raw: string) {
+    const serial = readSerial(raw);
+    if (!SERIAL_PATTERN.test(serial)) {
+      setNotice({ ok: false, text: `"${raw}" doesn't look like a serial number` });
+      return;
+    }
+    const unit = serials.find((candidate) => candidate.serial_number === serial);
+    const holding = unit && holdings.find((row) => row.item_code === unit.item_code);
+    if (!unit || !holding) {
+      setNotice({ ok: false, text: `${serial} is not held by ${holderName}` });
+      lookupSerial(serial)
+        .then((row) =>
+          setNotice({
+            ok: false,
+            text: row
+              ? `${serial} (${row.item_name}) is not held by ${holderName}: ${
+                  row.status === "WITH_SUPERVISOR" || row.status === "WITH_TECHNICIAN"
+                    ? `it is with ${row.technician_name ?? "someone else"}`
+                    : row.status === "CONSUMED"
+                      ? `installed on SR ${row.sr_number ?? row.crm_ticket_id ?? "—"}`
+                      : "it is already in the store"
+                }`
+              : `${serial} was never issued from the store`,
+          }),
+        )
+        .catch(() => undefined);
+      return;
+    }
+    if (linesRef.current.some((line) => line.serials.includes(serial))) {
+      setNotice({ ok: true, text: `${serial} is already on the return` });
+      return;
+    }
+    const existing = linesRef.current.find((line) => line.holding.item_id === holding.item_id);
+    linesRef.current = existing
+      ? linesRef.current.map((line) => (line === existing ? { ...line, serials: [...line.serials, serial] } : line))
+      : [...linesRef.current, { key: lineKey(), holding, quantity: "", serials: [serial], condition: "GOOD" }];
+    setLines(linesRef.current);
+    slipKey.current = newSlipKey("ret");
+    setNotice({ ok: true, text: `Added ${holding.item_name} · ${serial}` });
   }
 
   async function submit(event: React.FormEvent) {
@@ -554,6 +699,21 @@ export function ReturnStockDialog({
                   <p className="text-sm text-muted-foreground">They hold no issued stock.</p>
                 ) : null}
 
+                {!loading && hasSerialized && (
+                  <div className="space-y-2 rounded-lg border border-dashed p-3">
+                    <Label htmlFor="return-scan">Scan returned ONTs / serial items</Label>
+                    <ScanField
+                      id="return-scan"
+                      autoFocus
+                      captureKeys
+                      disabled={busy}
+                      onScan={scanReturn}
+                      onCamera={() => setCamera(true)}
+                    />
+                    <NoticeLine notice={notice} />
+                  </div>
+                )}
+
                 {lines.map((line, index) => {
                   const error = showErrors ? errors[index] : "";
                   const available = serials.filter(
@@ -612,7 +772,7 @@ export function ReturnStockDialog({
                                     })
                                   }
                                 />
-                                {unit.serial_number}
+                                <SerialText serial={unit.serial_number} />
                               </label>
                             );
                           })}
@@ -684,6 +844,13 @@ export function ReturnStockDialog({
           </DialogFooter>
         </form>
       </DialogContent>
+      <BarcodeScanDialog
+        open={camera}
+        title={`Scan returns from ${holderName}`}
+        status={<NoticeLine notice={notice} />}
+        onClose={() => setCamera(false)}
+        onScanned={scanReturn}
+      />
     </Dialog>
   );
 }

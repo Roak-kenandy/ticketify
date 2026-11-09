@@ -103,7 +103,7 @@ export const NAV_GROUPS: NavGroup[] = [
         exact: true,
       },
       {
-        label: "Technician stock",
+        label: "Stock & hand-outs",
         href: "/inventory/stock",
         icon: PackageCheck,
         access: "inventory",

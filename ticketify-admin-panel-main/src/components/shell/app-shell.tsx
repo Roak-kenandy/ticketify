@@ -39,8 +39,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useStockAlerts } from "@/lib/stock-alerts";
 import { BrandLockup, BrandMark } from "./brand";
 import { NAV_GROUPS, isNavItemActive } from "./nav-config";
+
+/** Sidebar counts keyed by nav href. */
+type NavBadges = Record<string, number>;
 
 type AppShellProps = {
   access?: AccessKey;
@@ -108,6 +112,9 @@ export function AppShell({ access = "any", fullBleed, children }: AppShellProps)
     setMobileOpen(false);
   }, [pathname]);
 
+  const stockAlerts = useStockAlerts(allowed && (AdminAuth.canManageStore() || AdminAuth.isSupervisor()), pathname);
+  const badges: NavBadges = { "/inventory/stock": stockAlerts };
+
   function toggleCollapsed() {
     update({ sidebarCollapsed: !collapsed });
   }
@@ -135,6 +142,7 @@ export function AppShell({ access = "any", fullBleed, children }: AppShellProps)
           pathname={pathname}
           user={user}
           collapsed={collapsed}
+          badges={badges}
           onToggleCollapsed={toggleCollapsed}
         />
       </aside>
@@ -154,7 +162,7 @@ export function AppShell({ access = "any", fullBleed, children }: AppShellProps)
                 <X className="h-4 w-4" />
               </Button>
             </DialogPrimitive.Close>
-            <SidebarContent pathname={pathname} user={user} collapsed={false} />
+            <SidebarContent pathname={pathname} user={user} collapsed={false} badges={badges} />
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>
@@ -165,9 +173,13 @@ export function AppShell({ access = "any", fullBleed, children }: AppShellProps)
             variant="ghost"
             size="icon"
             onClick={() => setMobileOpen(true)}
-            aria-label="Open navigation"
+            aria-label={stockAlerts ? `Open navigation (${stockAlerts} stock alerts)` : "Open navigation"}
+            className="relative"
           >
             <Menu className="h-5 w-5" />
+            {stockAlerts > 0 && (
+              <span aria-hidden className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-destructive" />
+            )}
           </Button>
           <BrandLockup />
           <ThemeQuickToggle className="ml-auto" />
@@ -197,11 +209,13 @@ function SidebarContent({
   pathname,
   user,
   collapsed,
+  badges = {},
   onToggleCollapsed,
 }: {
   pathname: string;
   user: SessionUser | null;
   collapsed: boolean;
+  badges?: NavBadges;
   onToggleCollapsed?: () => void;
 }) {
   const groups = NAV_GROUPS.map((group) => ({
@@ -242,6 +256,7 @@ function SidebarContent({
             <ul className="space-y-0.5">
               {group.items.map((item) => {
                 const active = isNavItemActive(item, pathname);
+                const count = badges[item.href] ?? 0;
                 return (
                   <li key={item.href}>
                     <Link
@@ -273,6 +288,17 @@ function SidebarContent({
                       ) : (
                         <span className="truncate">{item.label}</span>
                       )}
+                      {count > 0 &&
+                        (collapsed ? (
+                          <span aria-label={`${count} new`} className="absolute right-2 top-1.5 h-2 w-2 rounded-full bg-destructive" />
+                        ) : (
+                          <span
+                            aria-label={`${count} new`}
+                            className="ml-auto rounded-full bg-destructive px-1.5 text-[11px] font-semibold leading-5 text-destructive-foreground"
+                          >
+                            {count > 99 ? "99+" : count}
+                          </span>
+                        ))}
                     </Link>
                   </li>
                 );

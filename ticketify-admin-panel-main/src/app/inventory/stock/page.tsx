@@ -2,9 +2,8 @@
 
 import * as React from "react";
 import moment from "moment";
-import Link from "next/link";
 import { toast } from "sonner";
-import { PackageMinus, PackagePlus, ScanLine, Search, X } from "lucide-react";
+import { ClipboardList, Download, PackageMinus, PackagePlus, ScanLine, Search, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -18,10 +17,14 @@ import { FilterBar, FilterField, TableSkeletonRows } from "@/components/app/filt
 import { Pagination, paginate } from "@/components/app/pagination";
 import axiosInterceptorInstance, { apiErrorMessage } from "@/lib/axios-interceptor";
 import { AdminAuth } from "@/lib/admin-auth";
-import { buildQuery } from "@/lib/download";
+import { buildQuery, downloadFile } from "@/lib/download";
+import { DesktopAlertsButton } from "@/lib/stock-alerts";
 import {
   formatQuantity,
   SERIAL_STATUS_LABEL,
+  STOCK_LOG_KIND_LABEL,
+  type StockLogEntry,
+  type StockLogKind,
   type SerialUnitRow,
   type SerialUnitStatus,
   type StockMovementRow,
@@ -30,8 +33,10 @@ import {
   type StockTechnician,
 } from "@/lib/inventory";
 import { IssueStockDialog, ReturnStockDialog } from "./stock-dialogs";
+import { HandoverDialog, RequestStockDialog, type HandoverMode } from "./supervisor-dialogs";
+import { StockLogTable } from "./stock-log-table";
 
-type View = "requests" | "holdings" | "movements" | "serials";
+type View = "requests" | "log" | "holdings" | "movements" | "serials";
 
 const REQUEST_BADGE: Record<StockRequest["status"], "warning" | "success" | "secondary"> = {
   OPEN: "warning",
@@ -67,11 +72,18 @@ export default function TechnicianStockPage() {
   const [movements, setMovements] = React.useState<StockMovementRow[]>([]);
   const [serials, setSerials] = React.useState<SerialUnitRow[]>([]);
   const [requests, setRequests] = React.useState<StockRequest[]>([]);
+  const [log, setLog] = React.useState<StockLogEntry[]>([]);
+  const [logKind, setLogKind] = React.useState<StockLogKind | "all">("all");
+  const [from, setFrom] = React.useState("");
+  const [to, setTo] = React.useState("");
+  const [downloading, setDownloading] = React.useState<"csv" | "xls" | null>(null);
   const [openRequests, setOpenRequests] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(false);
   const [dialog, setDialog] = React.useState<"issue" | "return" | null>(null);
   const [fulfilling, setFulfilling] = React.useState<StockRequest | null>(null);
+  const [handover, setHandover] = React.useState<HandoverMode | null>(null);
+  const [requesting, setRequesting] = React.useState(false);
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(25);
 
@@ -87,6 +99,14 @@ export default function TechnicianStockPage() {
   const canSeeRequests = store || supervisor;
   const kindOf = React.useMemo(() => new Map(technicians.map((holder) => [holder.id, holder.kind])), [technicians]);
 
+  const logQuery = buildQuery({
+    technician_ids: technician === "all" ? undefined : technician,
+    search: appliedSearch,
+    type: logKind,
+    from,
+    to,
+  });
+
   const load = React.useCallback(() => {
     setLoading(true);
     setError(false);
@@ -96,6 +116,10 @@ export default function TechnicianStockPage() {
         ? axiosInterceptorInstance
             .get<StockRequest[]>("/inventory/stock/requests")
             .then((response) => setRequests(response.data ?? []))
+        : view === "log"
+          ? axiosInterceptorInstance
+              .get<StockLogEntry[]>(`/inventory/stock/log${logQuery}`)
+              .then((response) => setLog(response.data ?? []))
         : view === "holdings"
           ? axiosInterceptorInstance
               .get<StockSummary>(`/inventory/stock/summary${buildQuery({ technician_ids: technicianIds })}`)
@@ -116,7 +140,7 @@ export default function TechnicianStockPage() {
                 )
                 .then((response) => setSerials(response.data ?? []));
     request.catch(() => setError(true)).finally(() => setLoading(false));
-  }, [view, technician, appliedSearch, serialStatus]);
+  }, [view, technician, appliedSearch, serialStatus, logQuery]);
 
   React.useEffect(() => {
     load();
@@ -134,12 +158,28 @@ export default function TechnicianStockPage() {
     loadOpenCount();
   }, [loadOpenCount]);
 
-  React.useEffect(() => setPage(1), [view, technician, appliedSearch, serialStatus]);
+  React.useEffect(() => setPage(1), [view, technician, appliedSearch, serialStatus, logQuery]);
 
   const refresh = () => {
     load();
     loadOpenCount();
   };
+
+  async function downloadLog(format: "csv" | "xls") {
+    setDownloading(format);
+    try {
+      await downloadFile(
+        `/inventory/stock/log/export${logQuery}${logQuery ? "&" : "?"}format=${format}`,
+        `stock-issue-log-${moment().format("YYYY-MM-DD")}.${format}`,
+        format === "csv" ? "text/csv" : "application/vnd.ms-excel",
+      );
+      toast.success("Issue log downloaded");
+    } catch {
+      toast.error("Couldn't download the issue log.");
+    } finally {
+      setDownloading(null);
+    }
+  }
 
   async function cancelRequest(request: StockRequest) {
     try {
@@ -163,9 +203,21 @@ export default function TechnicianStockPage() {
       (!needle || request.lines.some((line) => line.item_name.toLowerCase().includes(needle))),
   );
   const rows: unknown[] =
-    view === "requests" ? shownRequests : view === "holdings" ? holdings : view === "movements" ? movements : serials;
+    view === "requests"
+      ? shownRequests
+      : view === "log"
+        ? log
+        : view === "holdings"
+          ? holdings
+          : view === "movements"
+            ? movements
+            : serials;
   const { pageCount, current, pageRows, rangeStart, rangeEnd } = paginate(rows, page, pageSize);
-  const filtered = technician !== "all" || Boolean(appliedSearch) || serialStatus !== "all";
+  const filtered =
+    technician !== "all" ||
+    Boolean(appliedSearch) ||
+    serialStatus !== "all" ||
+    (view === "log" && (logKind !== "all" || Boolean(from) || Boolean(to)));
   const defaultTechnician = technician === "all" ? undefined : technician;
 
   return (
@@ -175,7 +227,8 @@ export default function TechnicianStockPage() {
         description="The store issues stock to supervisors, and supervisors hand it to their technicians. Technicians can only record what they were handed; every ONT is tracked by serial number from the store to the customer."
         actions={
           store ? (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              <DesktopAlertsButton />
               <Button variant="outline" onClick={() => setDialog("return")}>
                 <PackageMinus className="h-4 w-4" />
                 Record return
@@ -186,12 +239,21 @@ export default function TechnicianStockPage() {
               </Button>
             </div>
           ) : supervisor ? (
-            <Button asChild>
-              <Link href="/field/stock">
+            <div className="flex flex-wrap gap-2">
+              <DesktopAlertsButton />
+              <Button variant="outline" onClick={() => setRequesting(true)}>
+                <ClipboardList className="h-4 w-4" />
+                Request stock
+              </Button>
+              <Button variant="outline" onClick={() => setHandover("takeback")}>
+                <PackageMinus className="h-4 w-4" />
+                Take back
+              </Button>
+              <Button onClick={() => setHandover("handout")}>
                 <ScanLine className="h-4 w-4" />
-                Hand out to technicians
-              </Link>
-            </Button>
+                Hand out to technician
+              </Button>
+            </div>
           ) : null
         }
       />
@@ -232,11 +294,50 @@ export default function TechnicianStockPage() {
               id="stock-search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder={view === "serials" ? "e.g. HWTC1A2B3C4D" : "Search"}
+              placeholder={view === "serials" ? "e.g. 48575443686AEC86" : "Search"}
               className="pl-9"
             />
           </div>
         </FilterField>
+        {view === "log" && (
+          <>
+            <FilterField label="Action">
+              <Select value={logKind} onValueChange={(value) => setLogKind(value as StockLogKind | "all")}>
+                <SelectTrigger className="w-52" aria-label="Action">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All actions</SelectItem>
+                  {(Object.keys(STOCK_LOG_KIND_LABEL) as StockLogKind[]).map((kind) => (
+                    <SelectItem key={kind} value={kind}>
+                      {STOCK_LOG_KIND_LABEL[kind]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FilterField>
+            <FilterField label="From" htmlFor="log-from">
+              <Input
+                id="log-from"
+                type="date"
+                value={from}
+                max={to || undefined}
+                onChange={(e) => setFrom(e.target.value)}
+                className="w-40"
+              />
+            </FilterField>
+            <FilterField label="To" htmlFor="log-to">
+              <Input
+                id="log-to"
+                type="date"
+                value={to}
+                min={from || undefined}
+                onChange={(e) => setTo(e.target.value)}
+                className="w-40"
+              />
+            </FilterField>
+          </>
+        )}
         {view === "serials" && (
           <FilterField label="Status">
             <Select value={serialStatus} onValueChange={setSerialStatus}>
@@ -268,11 +369,35 @@ export default function TechnicianStockPage() {
                 setSearch("");
                 setAppliedSearch("");
                 setSerialStatus("all");
+                setLogKind("all");
+                setFrom("");
+                setTo("");
               }}
             >
               <X className="h-4 w-4" />
               Clear
             </Button>
+          )}
+          {view === "log" && (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={downloading !== null || log.length === 0}
+                onClick={() => downloadLog("xls")}
+              >
+                <Download className="h-4 w-4" />
+                {downloading === "xls" ? "Preparing…" : "Excel"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={downloading !== null || log.length === 0}
+                onClick={() => downloadLog("csv")}
+              >
+                CSV
+              </Button>
+            </>
           )}
         </div>
       </FilterBar>
@@ -288,6 +413,7 @@ export default function TechnicianStockPage() {
               ...(canSeeRequests
                 ? [{ value: "requests" as const, label: openRequests ? `Requests (${openRequests})` : "Requests" }]
                 : []),
+              { value: "log", label: "Issue log" },
               { value: "holdings", label: "In hand" },
               { value: "movements", label: "Issues & returns" },
               { value: "serials", label: "Serial tracking" },
@@ -318,14 +444,16 @@ export default function TechnicianStockPage() {
               filtered
                 ? "Try another holder or search."
                 : view === "requests"
-                  ? "Supervisors request stock from the Technician app when they run low."
+                  ? "Supervisors use Request stock on this page when they run low."
                   : "Use Issue to supervisor to hand stock out of the store."
             }
           />
         ) : (
           <>
             <Table containerClassName="max-h-[calc(100dvh-380px)] min-h-[320px]">
-              {view === "requests" ? (
+              {view === "log" ? (
+                <StockLogTable rows={pageRows as StockLogEntry[]} loading={loading} />
+              ) : view === "requests" ? (
                 <>
                   <TableHeader sticky>
                     <TableRow className="hover:bg-transparent">
@@ -605,6 +733,14 @@ export default function TechnicianStockPage() {
         onClose={() => setDialog(null)}
         onDone={refresh}
       />
+      <HandoverDialog
+        open={handover !== null}
+        mode={handover ?? "handout"}
+        technicians={technicians}
+        onClose={() => setHandover(null)}
+        onDone={refresh}
+      />
+      <RequestStockDialog open={requesting} onClose={() => setRequesting(false)} onDone={refresh} />
     </>
   );
 }

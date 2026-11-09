@@ -246,6 +246,13 @@ export class InventoryController {
   }
 
   @UseGuards(JwtGuard, RolesGuard)
+  @Roles(REQUEST_ROLES)
+  @Get('stock/requests/alerts')
+  stockRequestAlerts(@Req() req: AuthedRequest) {
+    return this.stockRequests.alerts(req.user);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
   @Roles(SUPERVISOR_STOCK_ROLES)
   @Post('stock/requests')
   createStockRequest(@Req() req: AuthedRequest, @Body() body: StockRequestDto) {
@@ -299,6 +306,27 @@ export class InventoryController {
       this.stockReport.exportMeta('Stock issues and returns', query, 'by date / time of each issue or return'),
     ]);
     sendSheet(res, query.format, 'stock-issues-returns', 'Issues and returns', this.stockReport.movementColumns, rows, meta);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(INVENTORY_ROLES)
+  @Get('stock/log')
+  stockLog(@Query() query: StockReportQuery) {
+    return this.stockReport.log(query);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(INVENTORY_ROLES)
+  @Get('stock/log/export')
+  async exportStockLog(
+    @Query() query: StockReportQuery & { format?: string },
+    @Res() res: Response,
+  ) {
+    const [entries, meta] = await Promise.all([
+      this.stockReport.log(query),
+      this.stockReport.exportMeta('Stock issue log', query, 'by date / time of each slip'),
+    ]);
+    sendSheet(res, query.format, 'stock-issue-log', 'Issue log', this.stockReport.logColumns, this.stockReport.logRows(entries), meta);
   }
 
   @UseGuards(JwtGuard, RolesGuard)
