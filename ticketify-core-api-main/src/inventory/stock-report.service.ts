@@ -32,6 +32,8 @@ export type StockSummaryRow = {
   uom: string;
   serialized: boolean;
   issued: number;
+  handed_out: number;
+  taken_back: number;
   consumed: number;
   returned_good: number;
   returned_faulty: number;
@@ -48,6 +50,8 @@ export type StockMovementRow = {
   type: 'Issue' | 'Return';
   technician_user_id: string;
   technician_name: string;
+  /** Issue: who handed it over; return: who received it. "Store" when not a supervisor. */
+  counterparty_name: string;
   item_code: string;
   item_name: string;
   quantity: number;
@@ -63,11 +67,13 @@ const MAX_ROWS = 10_000;
 const MAX_SERIALS = 2_000;
 
 const SUMMARY_COLUMNS: ReportColumn<StockSummaryRow>[] = [
-  { header: 'Technician', value: (row) => row.technician_name },
+  { header: 'Holder', value: (row) => row.technician_name },
   { header: 'Item code', value: (row) => row.item_code },
   { header: 'Item', value: (row) => row.item_name },
   { header: 'UOM', value: (row) => row.uom },
-  { header: 'Issued', value: (row) => row.issued },
+  { header: 'Received', value: (row) => row.issued },
+  { header: 'Handed to technicians', value: (row) => row.handed_out },
+  { header: 'Taken back from technicians', value: (row) => row.taken_back },
   { header: 'Consumed on tickets', value: (row) => row.consumed },
   { header: 'Returned (good)', value: (row) => row.returned_good },
   { header: 'Returned (faulty)', value: (row) => row.returned_faulty },
@@ -80,7 +86,8 @@ const SUMMARY_COLUMNS: ReportColumn<StockSummaryRow>[] = [
 const MOVEMENT_COLUMNS: ReportColumn<StockMovementRow>[] = [
   { header: 'Date / time', value: (row) => displayDate(row.created_at) },
   { header: 'Type', value: (row) => row.type },
-  { header: 'Technician', value: (row) => row.technician_name },
+  { header: 'Holder', value: (row) => row.technician_name },
+  { header: 'From / to', value: (row) => row.counterparty_name },
   { header: 'Item code', value: (row) => row.item_code },
   { header: 'Item', value: (row) => row.item_name },
   { header: 'Quantity', value: (row) => row.quantity },
@@ -138,6 +145,8 @@ export class StockReportService {
           uom: item?.consumption_uom ?? '',
           serialized: Boolean(item?.serialized),
           issued: shown?.issued ?? 0,
+          handed_out: shown?.handed_out ?? 0,
+          taken_back: shown?.taken_back ?? 0,
           consumed: shown?.consumed ?? 0,
           returned_good: shown?.returned_good ?? 0,
           returned_faulty: shown?.returned_faulty ?? 0,
@@ -147,7 +156,16 @@ export class StockReportService {
           last_returned_at: shown?.last_returned_at ?? null,
         };
       })
-      .filter((row) => row.issued || row.consumed || row.returned_good || row.returned_faulty || row.in_hand)
+      .filter(
+        (row) =>
+          row.issued ||
+          row.handed_out ||
+          row.taken_back ||
+          row.consumed ||
+          row.returned_good ||
+          row.returned_faulty ||
+          row.in_hand,
+      )
       .sort(
         (a, b) =>
           a.technician_name.localeCompare(b.technician_name) || a.item_name.localeCompare(b.item_name),
@@ -157,7 +175,13 @@ export class StockReportService {
       string,
       Omit<
         StockSummaryRow,
-        'technician_user_id' | 'technician_name' | 'last_issued_at' | 'last_used_at' | 'last_returned_at'
+        | 'technician_user_id'
+        | 'technician_name'
+        | 'handed_out'
+        | 'taken_back'
+        | 'last_issued_at'
+        | 'last_used_at'
+        | 'last_returned_at'
       > & { technicians: number }
     >();
     for (const row of rows) {
@@ -174,9 +198,11 @@ export class StockReportService {
         in_hand: 0,
         technicians: 0,
       };
-      entry.issued = round2(entry.issued + row.issued);
+      // Hand-outs reappear as a technician's "issued" and take-backs as their "returned",
+      // so netting them leaves only what left / came back to the store.
+      entry.issued = round2(entry.issued + row.issued - row.handed_out);
       entry.consumed = round2(entry.consumed + row.consumed);
-      entry.returned_good = round2(entry.returned_good + row.returned_good);
+      entry.returned_good = round2(entry.returned_good + row.returned_good - row.taken_back);
       entry.returned_faulty = round2(entry.returned_faulty + row.returned_faulty);
       entry.in_hand = round2(entry.in_hand + row.in_hand);
       if (row.in_hand > 0) entry.technicians += 1;
@@ -202,7 +228,11 @@ export class StockReportService {
     const to = parseDate(query.to, true);
     if (from || to) where.push({ created_at: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } });
     const technicianIds = splitList(query.technician_ids);
-    if (technicianIds.length) where.push({ technician_user_id: { in: technicianIds } });
+    if (technicianIds.length) {
+      where.push({
+        OR: [{ technician_user_id: { in: technicianIds } }, { counterparty_user_id: { in: technicianIds } }],
+      });
+    }
     const itemIds = splitList(query.item_ids);
     if (itemIds.length) where.push({ item_id: { in: itemIds } });
     const type = query.type?.trim().toUpperCase();
@@ -224,7 +254,11 @@ export class StockReportService {
       include: { item: { select: { code: true } } },
     });
     const names = await this.userNames(
-      movements.flatMap((movement) => [movement.technician_user_id, movement.performed_by_user_id]),
+      movements.flatMap((movement) => [
+        movement.technician_user_id,
+        movement.performed_by_user_id,
+        movement.counterparty_user_id ?? '',
+      ]),
     );
     return movements.map((movement) => ({
       id: movement.id,
@@ -233,6 +267,9 @@ export class StockReportService {
       type: movement.type === 'ISSUE' ? 'Issue' : 'Return',
       technician_user_id: movement.technician_user_id,
       technician_name: names.get(movement.technician_user_id) ?? 'Unknown user',
+      counterparty_name: movement.counterparty_user_id
+        ? names.get(movement.counterparty_user_id) ?? 'Unknown user'
+        : 'Store',
       item_code: movement.item.code,
       item_name: movement.item_name,
       quantity: Number(movement.quantity),

@@ -110,7 +110,7 @@ export default function StockReportPage() {
     <>
       <PageHeader
         title="Stock report"
-        description="What the inventory team issued, what technicians used on tickets, what came back and what each technician still holds."
+        description="What the store issued to supervisors, what they handed to technicians, what was used on tickets, what came back and what everyone still holds."
         actions={
           <div className="flex flex-wrap gap-2">
             <Button

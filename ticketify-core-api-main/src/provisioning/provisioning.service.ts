@@ -393,7 +393,7 @@ export class ProvisioningService implements OnModuleInit {
       !(await this.stock.holdsSerial(actor.id, input.ont_serial))
     ) {
       throw new BadRequestException(
-        `ONT ${input.ont_serial} is not issued to you. Pick one of your issued ONTs, or ask the inventory team to issue it.`,
+        `ONT ${input.ont_serial} is not issued to you. Pick one of your issued ONTs, or ask your supervisor to hand it to you.`,
       );
     }
     if (installsOnt && input.ont_serial) {

@@ -78,6 +78,48 @@ export class StockIssueDto extends StockSlipDto {
   @ValidateNested({ each: true })
   @Type(() => StockLineDto)
   lines: StockLineDto[];
+
+  /** The supervisor's stock request this slip fulfils. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  request_id?: string;
+}
+
+/** Supervisor → technician, and technician → supervisor (unused, good items). */
+export class StockHandoverDto extends StockSlipDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => StockLineDto)
+  lines: StockLineDto[];
+}
+
+export class StockRequestLineDto {
+  @IsString()
+  @MaxLength(40)
+  item_id: string;
+
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive()
+  @Max(100000)
+  quantity: number;
+}
+
+export class StockRequestDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => StockRequestLineDto)
+  lines: StockRequestLineDto[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  notes?: string;
 }
 
 export class StockReturnDto extends StockSlipDto {

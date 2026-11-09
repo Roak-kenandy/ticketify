@@ -8,6 +8,7 @@ import { TicketInventoryService } from './ticket-inventory.service';
 import { TicketSnapshotService } from './ticket-snapshot.service';
 import { TechnicianStockService } from './technician-stock.service';
 import { StockReportService } from './stock-report.service';
+import { StockRequestService } from './stock-request.service';
 
 @Module({
   imports: [CrmApiModule, AuthModule],
@@ -19,6 +20,7 @@ import { StockReportService } from './stock-report.service';
     TicketSnapshotService,
     TechnicianStockService,
     StockReportService,
+    StockRequestService,
   ],
   exports: [TicketInventoryService, TicketSnapshotService, TechnicianStockService],
 })

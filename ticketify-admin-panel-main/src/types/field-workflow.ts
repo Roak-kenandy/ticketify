@@ -23,12 +23,18 @@ export type MyStockItem = {
   issued: number;
   consumed: number;
   returned: number;
+  /** Supervisors: handed to technicians, and taken back from them. */
+  handed_out: number;
+  taken_back: number;
   in_hand: number;
   serials: { serial_number: string; issued_at: string }[];
 };
 
-/** What the inventory team issued to the signed-in user; restricted = may only record these. */
-export type MyStock = { restricted: boolean; items: MyStockItem[] };
+/**
+ * What the signed-in user holds; restricted = may only record these.
+ * holder SUPERVISOR = receives from the store and hands out to technicians.
+ */
+export type MyStock = { holder: "SUPERVISOR" | "TECHNICIAN" | null; restricted: boolean; items: MyStockItem[] };
 
 export type InventoryLine = {
   id: string;

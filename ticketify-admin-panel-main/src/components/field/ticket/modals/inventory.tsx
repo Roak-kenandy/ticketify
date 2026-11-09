@@ -173,7 +173,7 @@ export default function InventoryModal({
           restricted &&
           !held.get(draft.item.id)?.serials.some((unit) => unit.serial_number === serial)
         ) {
-          entry.serial = "This serial is not issued to you. Ask the inventory team.";
+          entry.serial = "This serial is not issued to you. Ask your supervisor.";
         } else if (!isValidSerial(serial)) {
           entry.serial = "Not a valid serial number";
         } else if (seen.has(serial) || takenSerials.has(serial)) {
@@ -572,7 +572,7 @@ function DraftCard({
 }) {
   const { item } = draft;
   const fromProvisioning = Boolean(draft.provisioningTransactionId);
-  /** Restricted technicians may never record more than the inventory team issued to them. */
+  /** Restricted technicians may never record more than they were handed. */
   const max = inHand;
   const current = parseQuantity(draft.quantity) || 0;
   const atMax = max !== null && current >= max;
@@ -583,7 +583,7 @@ function DraftCard({
     onChange({ quantity: String(max !== null ? Math.min(next, Math.floor(max)) : next) });
   };
   const limitHint =
-    max !== null ? `Up to ${formatQuantity(max, item.consumption_uom)}: only what the inventory team issued to you.` : null;
+    max !== null ? `Up to ${formatQuantity(max, item.consumption_uom)}: only what your supervisor handed to you.` : null;
 
   return (
     <SheetCard>
@@ -789,7 +789,7 @@ function ItemPicker({
             compact
             icon={Box}
             title="No items issued to you"
-            message="Ask the inventory team to issue the materials you need for this job."
+            message="Ask your supervisor to hand you the materials you need for this job."
           />
         ) : sections.length === 0 ? (
           <EmptyState compact icon={Search} title="No matching items" message="Try a different name or code." />

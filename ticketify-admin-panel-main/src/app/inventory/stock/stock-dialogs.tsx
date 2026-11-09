@@ -24,6 +24,7 @@ import {
   SERIAL_PATTERN,
   type InventoryItem,
   type SerialUnitRow,
+  type StockRequest,
   type StockSummaryRow,
   type StockTechnician,
 } from "@/lib/inventory";
@@ -35,7 +36,15 @@ const textareaClass =
 
 type Condition = "GOOD" | "FAULTY";
 
-type IssueLine = { key: string; item: InventoryItem; quantity: string; unit: "CONSUMPTION" | "STOCK"; serials: string };
+type IssueLine = {
+  key: string;
+  item: InventoryItem;
+  quantity: string;
+  unit: "CONSUMPTION" | "STOCK";
+  serials: string;
+  /** Quantity the supervisor asked for, when fulfilling a request. */
+  requested?: number;
+};
 type ReturnLine = {
   key: string;
   holding: StockSummaryRow;
@@ -59,33 +68,40 @@ function serialProblems(serials: string[], others: Set<string>) {
   return problems;
 }
 
-function TechnicianSelect({
-  technicians,
+function HolderSelect({
+  label,
+  holders,
   value,
   onChange,
   disabled,
 }: {
-  technicians: StockTechnician[];
+  label: string;
+  holders: StockTechnician[];
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
 }) {
   return (
     <div className="space-y-1.5">
-      <Label htmlFor="stock-tech">Technician</Label>
+      <Label htmlFor="stock-holder">{label}</Label>
       <Select value={value} onValueChange={onChange} disabled={disabled}>
-        <SelectTrigger id="stock-tech" aria-label="Technician">
-          <SelectValue placeholder="Choose a technician" />
+        <SelectTrigger id="stock-holder" aria-label={label}>
+          <SelectValue placeholder={`Choose a ${label.toLowerCase()}`} />
         </SelectTrigger>
         <SelectContent>
-          {technicians.map((tech) => (
-            <SelectItem key={tech.id} value={tech.id}>
-              {tech.name}
-              {tech.role && tech.role.toLowerCase() !== "technician" ? ` · ${tech.role}` : ""}
+          {holders.map((holder) => (
+            <SelectItem key={holder.id} value={holder.id}>
+              {holder.name}
+              {holder.kind === "SUPERVISOR" ? " · Supervisor" : ""}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
+      {!holders.length && (
+        <p className="text-xs text-muted-foreground">
+          No active supervisor accounts yet. Create one under Users with the Supervisor role.
+        </p>
+      )}
     </div>
   );
 }
@@ -94,15 +110,19 @@ export function IssueStockDialog({
   open,
   technicians,
   defaultTechnician,
+  request,
   onClose,
   onDone,
 }: {
   open: boolean;
   technicians: StockTechnician[];
   defaultTechnician?: string;
+  /** Prefills the supervisor and items, and closes the request on success. */
+  request?: StockRequest | null;
   onClose: () => void;
   onDone: () => void;
 }) {
+  const supervisors = technicians.filter((holder) => holder.kind === "SUPERVISOR");
   const [items, setItems] = React.useState<InventoryItem[]>([]);
   const [technician, setTechnician] = React.useState("");
   const [reference, setReference] = React.useState("");
@@ -115,18 +135,41 @@ export function IssueStockDialog({
 
   React.useEffect(() => {
     if (!open) return;
-    setTechnician(defaultTechnician ?? "");
+    const fallback = supervisors.some((holder) => holder.id === defaultTechnician) ? defaultTechnician : "";
+    setTechnician(request?.requested_by_user_id ?? fallback ?? "");
     setReference("");
-    setNotes("");
+    setNotes(request?.notes ? `Request: ${request.notes}` : "");
     setLines([]);
     setPickerOpen(false);
     setShowErrors(false);
     slipKey.current = newSlipKey("iss");
     axiosInterceptorInstance
       .get<InventoryItem[]>("/inventory/items")
-      .then((response) => setItems(response.data ?? []))
+      .then((response) => {
+        const catalog = response.data ?? [];
+        setItems(catalog);
+        if (!request) return;
+        setLines(
+          request.lines.flatMap((wanted) => {
+            const item = catalog.find((candidate) => candidate.id === wanted.item_id);
+            return item
+              ? [
+                  {
+                    key: lineKey(),
+                    item,
+                    quantity: item.serialized ? "" : String(wanted.quantity),
+                    unit: "CONSUMPTION" as const,
+                    serials: "",
+                    requested: wanted.quantity,
+                  },
+                ]
+              : [];
+          }),
+        );
+      })
       .catch(() => toast.error("Couldn't load the item list."));
-  }, [open, defaultTechnician]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, defaultTechnician, request]);
 
   const errors = lines.map((line, index) => {
     if (line.item.serialized) {
@@ -176,13 +219,14 @@ export function IssueStockDialog({
         reference: reference.trim() || undefined,
         notes: notes.trim() || undefined,
         idempotency_key: slipKey.current,
+        request_id: request?.id,
         lines: lines.map((line) =>
           line.item.serialized
             ? { item_id: line.item.id, serial_numbers: parseSerials(line.serials) }
             : { item_id: line.item.id, quantity: Number(line.quantity), unit: line.unit },
         ),
       });
-      const name = technicians.find((tech) => tech.id === technician)?.name ?? "technician";
+      const name = supervisors.find((holder) => holder.id === technician)?.name ?? "supervisor";
       toast.success(`Issued ${lines.length} item${lines.length === 1 ? "" : "s"} to ${name}`);
       onClose();
       onDone();
@@ -206,16 +250,22 @@ export function IssueStockDialog({
       >
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <DialogHeader className="border-b px-6 py-4 pr-12">
-            <DialogTitle>Issue items to a technician</DialogTitle>
+            <DialogTitle>{request ? `Fulfil ${request.requested_by_name}'s request` : "Issue items to a supervisor"}</DialogTitle>
             <DialogDescription>
-              The technician can only record these items on their tickets. Devices such as ONTs need the serial number of
-              every unit.
+              Supervisors hand these items out to their technicians. Scan each ONT box with a barcode scanner (or type the
+              serial) so every unit is tracked from the store to the customer.
             </DialogDescription>
           </DialogHeader>
 
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-6 py-4">
             <div className="grid gap-4 sm:grid-cols-2">
-              <TechnicianSelect technicians={technicians} value={technician} onChange={setTechnician} disabled={busy} />
+              <HolderSelect
+                label="Supervisor"
+                holders={supervisors}
+                value={technician}
+                onChange={setTechnician}
+                disabled={busy || Boolean(request)}
+              />
               <div className="space-y-1.5">
                 <Label htmlFor="issue-ref">Slip / reference (optional)</Label>
                 <Input
@@ -254,7 +304,8 @@ export function IssueStockDialog({
                     {line.item.serialized ? (
                       <div className="space-y-1.5">
                         <Label htmlFor={`serials-${line.key}`}>
-                          Serial numbers · {serials.length} unit{serials.length === 1 ? "" : "s"}
+                          Serial numbers · {serials.length}
+                          {line.requested ? ` of ${line.requested} requested` : ` unit${serials.length === 1 ? "" : "s"}`}
                         </Label>
                         <textarea
                           id={`serials-${line.key}`}
@@ -342,7 +393,7 @@ export function IssueStockDialog({
             </Button>
             <Button type="submit" disabled={busy}>
               {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-              Issue items
+              {request ? "Issue and close request" : "Issue items"}
             </Button>
           </DialogFooter>
         </form>
@@ -392,15 +443,17 @@ export function ReturnStockDialog({
     setLoading(true);
     Promise.all([
       axiosInterceptorInstance.get<{ rows: StockSummaryRow[] }>(`/inventory/stock/summary?technician_ids=${technician}`),
-      axiosInterceptorInstance.get<SerialUnitRow[]>(
-        `/inventory/stock/serials?technician_ids=${technician}&status=WITH_TECHNICIAN`,
-      ),
+      axiosInterceptorInstance.get<SerialUnitRow[]>(`/inventory/stock/serials?technician_ids=${technician}`),
     ])
       .then(([summary, units]) => {
-        setHoldings((summary.data.rows ?? []).filter((row) => row.in_hand > 0));
-        setSerials(units.data ?? []);
+        setHoldings(
+          (summary.data.rows ?? []).filter((row) => row.technician_user_id === technician && row.in_hand > 0),
+        );
+        setSerials(
+          (units.data ?? []).filter((unit) => unit.status === "WITH_SUPERVISOR" || unit.status === "WITH_TECHNICIAN"),
+        );
       })
-      .catch(() => toast.error("Couldn't load what this technician holds."))
+      .catch(() => toast.error("Couldn't load what they hold."))
       .finally(() => setLoading(false));
   }, [open, technician]);
 
@@ -476,13 +529,19 @@ export function ReturnStockDialog({
           <DialogHeader className="border-b px-6 py-4 pr-12">
             <DialogTitle>Record a return</DialogTitle>
             <DialogDescription>
-              Items the technician hands back. Good items go back to the store; faulty ones are kept apart and can&apos;t be
-              issued again.
+              Items a supervisor or technician hands back to the store. Good items can be issued again; faulty ones are
+              kept apart.
             </DialogDescription>
           </DialogHeader>
 
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-6 py-4">
-            <TechnicianSelect technicians={technicians} value={technician} onChange={setTechnician} disabled={busy} />
+            <HolderSelect
+              label="Returned by"
+              holders={technicians}
+              value={technician}
+              onChange={setTechnician}
+              disabled={busy}
+            />
 
             {technician && (
               <div className="space-y-3">
@@ -492,7 +551,7 @@ export function ReturnStockDialog({
                     Loading what they hold…
                   </p>
                 ) : !holdings.length ? (
-                  <p className="text-sm text-muted-foreground">This technician holds no issued stock.</p>
+                  <p className="text-sm text-muted-foreground">They hold no issued stock.</p>
                 ) : null}
 
                 {lines.map((line, index) => {
@@ -587,7 +646,7 @@ export function ReturnStockDialog({
                     open={pickerOpen}
                     onOpenChange={setPickerOpen}
                     label={lines.length ? "Add another returned item" : "Add returned item"}
-                    placeholder="Search what this technician holds…"
+                    placeholder="Search what they hold…"
                     disabled={busy}
                     options={holdings.map((row) => ({
                       id: row.item_id,

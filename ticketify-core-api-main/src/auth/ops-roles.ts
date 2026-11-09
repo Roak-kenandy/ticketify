@@ -13,6 +13,12 @@ export const FIELD_ROLES = ['Technician', ...DISPATCH_MANAGE_ROLES];
 /** Office Inventory Team plus managers: consumption report, reconcile, adjust. */
 export const INVENTORY_ROLES = ['Inventory', 'Supervisor', ...ADMIN_ROLES];
 
+/** The store: issues stock to supervisors and records returns from any holder. */
+export const STORE_ROLES = ['Inventory', ...ADMIN_ROLES];
+
+/** Holds stock from the store and hands it out to technicians. */
+export const SUPERVISOR_STOCK_ROLES = ['Supervisor'];
+
 /** Item master, UOM and conversion maintenance. */
 export const ITEM_MASTER_ROLES = ADMIN_ROLES;
 

@@ -20,6 +20,8 @@ const FINANCE_REPORT_ROLES = [
   'Supervisor',
 ];
 const INVENTORY_ROLES = ['Inventory', 'Admin', 'Administrator', 'Supervisor'];
+/** Same as STORE_ROLES in the API: issues to supervisors, records returns. */
+const STORE_ROLES = ['Inventory', 'Admin', 'Administrator'];
 const ITEM_MASTER_ROLES = ['Admin', 'Administrator'];
 /** Same as FIELD_ROLES in the API: technicians plus managers who work tickets. */
 const FIELD_ROLES = ['Technician', 'Admin', 'Administrator', 'Supervisor'];
@@ -126,6 +128,16 @@ export class AdminAuth {
   /** Consumption report, reconcile and adjust (Office Inventory Team + managers). */
   static canAccessInventory(): boolean {
     return INVENTORY_ROLES.includes(storedRoleName());
+  }
+
+  /** The store: issue stock to supervisors and record returns. */
+  static canManageStore(): boolean {
+    return STORE_ROLES.includes(storedRoleName());
+  }
+
+  /** Holds stock from the store and hands it out to technicians. */
+  static isSupervisor(): boolean {
+    return storedRoleName() === 'Supervisor';
   }
 
   /** Create and edit items, UOMs and serial/decimal rules. */

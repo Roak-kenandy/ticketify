@@ -1055,7 +1055,7 @@ function FormView({
             ) : (
               <InlineBanner
                 tone="warning"
-                message="No ONTs are issued to you. Ask the inventory team to issue one before installing."
+                message="No ONTs are issued to you. Ask your supervisor to hand you one before installing."
               />
             )
           ) : (

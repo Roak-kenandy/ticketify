@@ -56,7 +56,24 @@ export type InventorySummary = {
   }[];
 };
 
-export type StockTechnician = { id: string; name: string; email: string; role: string | null };
+export type StockHolderKind = "SUPERVISOR" | "TECHNICIAN";
+
+/** Anyone who can hold stock: supervisors (from the store) and technicians (from a supervisor). */
+export type StockTechnician = { id: string; name: string; email: string; role: string | null; kind: StockHolderKind };
+
+export type StockRequestLine = { item_id: string; item_name: string; quantity: number; uom: string; in_hand: number | null };
+
+export type StockRequest = {
+  id: string;
+  status: "OPEN" | "FULFILLED" | "CANCELLED";
+  requested_by_user_id: string;
+  requested_by_name: string;
+  notes: string | null;
+  created_at: string;
+  closed_at: string | null;
+  closed_by_name: string | null;
+  lines: StockRequestLine[];
+};
 
 export type StockSummaryRow = {
   technician_user_id: string;
@@ -67,6 +84,8 @@ export type StockSummaryRow = {
   uom: string;
   serialized: boolean;
   issued: number;
+  handed_out: number;
+  taken_back: number;
   consumed: number;
   returned_good: number;
   returned_faulty: number;
@@ -76,7 +95,9 @@ export type StockSummaryRow = {
 export type StockSummary = {
   period: { from: string | null; to: string | null };
   rows: StockSummaryRow[];
-  by_item: (Omit<StockSummaryRow, "technician_user_id" | "technician_name"> & { technicians: number })[];
+  by_item: (Omit<StockSummaryRow, "technician_user_id" | "technician_name" | "handed_out" | "taken_back"> & {
+    technicians: number;
+  })[];
   totals: { technicians: number; technicians_holding: number; items: number; overdrawn: number };
 };
 
@@ -87,6 +108,8 @@ export type StockMovementRow = {
   type: "Issue" | "Return";
   technician_user_id: string;
   technician_name: string;
+  /** Issue: who handed it over; return: who received it. "Store" when not a supervisor. */
+  counterparty_name: string;
   item_code: string;
   item_name: string;
   quantity: number;
@@ -98,7 +121,7 @@ export type StockMovementRow = {
   performed_by_name: string;
 };
 
-export type SerialUnitStatus = "WITH_TECHNICIAN" | "CONSUMED" | "RETURNED" | "FAULTY";
+export type SerialUnitStatus = "WITH_SUPERVISOR" | "WITH_TECHNICIAN" | "CONSUMED" | "RETURNED" | "FAULTY";
 
 export type SerialUnitRow = {
   serial_number: string;
@@ -115,6 +138,7 @@ export type SerialUnitRow = {
 };
 
 export const SERIAL_STATUS_LABEL: Record<SerialUnitStatus, string> = {
+  WITH_SUPERVISOR: "With supervisor",
   WITH_TECHNICIAN: "With technician",
   CONSUMED: "Installed",
   RETURNED: "In store",

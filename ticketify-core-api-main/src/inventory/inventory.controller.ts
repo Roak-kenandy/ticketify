@@ -23,6 +23,8 @@ import {
   FIELD_ROLES,
   INVENTORY_ROLES,
   ITEM_MASTER_ROLES,
+  STORE_ROLES,
+  SUPERVISOR_STOCK_ROLES,
 } from 'src/auth/ops-roles';
 import {
   InventoryAdjustmentDto,
@@ -40,12 +42,19 @@ import {
   InventoryReportQuery,
   InventoryReportService,
 } from './inventory-report.service';
-import { StockIssueDto, StockReturnDto } from './dto/stock.dto';
+import {
+  StockHandoverDto,
+  StockIssueDto,
+  StockRequestDto,
+  StockReturnDto,
+} from './dto/stock.dto';
 import { displayDate, ReportColumn, ReportMeta, toCsv, toExcel } from './report-format';
 import { StockReportQuery, StockReportService } from './stock-report.service';
+import { StockRequestService } from './stock-request.service';
 import { TechnicianStockService } from './technician-stock.service';
 
 const TICKET_ROLES = [...new Set([...FIELD_ROLES, ...INVENTORY_ROLES])];
+const REQUEST_ROLES = [...STORE_ROLES, ...SUPERVISOR_STOCK_ROLES];
 
 type AuthedRequest = { user: InventoryActor };
 
@@ -57,6 +66,7 @@ export class InventoryController {
     private readonly report: InventoryReportService,
     private readonly stock: TechnicianStockService,
     private readonly stockReport: StockReportService,
+    private readonly stockRequests: StockRequestService,
   ) {}
 
   @UseGuards(JwtGuard, RolesGuard)
@@ -196,18 +206,57 @@ export class InventoryController {
     return this.stock.technicians();
   }
 
+  /** Store → supervisor. */
   @UseGuards(JwtGuard, RolesGuard)
-  @Roles(INVENTORY_ROLES)
+  @Roles(STORE_ROLES)
   @Post('stock/issue')
   issueStock(@Req() req: AuthedRequest, @Body() body: StockIssueDto) {
     return this.stock.issue(req.user, body);
   }
 
+  /** Supervisor or technician → store. */
   @UseGuards(JwtGuard, RolesGuard)
-  @Roles(INVENTORY_ROLES)
+  @Roles(STORE_ROLES)
   @Post('stock/return')
   returnStock(@Req() req: AuthedRequest, @Body() body: StockReturnDto) {
     return this.stock.returnStock(req.user, body);
+  }
+
+  /** Supervisor → technician. */
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(SUPERVISOR_STOCK_ROLES)
+  @Post('stock/handout')
+  handOutStock(@Req() req: AuthedRequest, @Body() body: StockHandoverDto) {
+    return this.stock.handOut(req.user, body);
+  }
+
+  /** Technician → supervisor (unused, good items). */
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(SUPERVISOR_STOCK_ROLES)
+  @Post('stock/take-back')
+  takeBackStock(@Req() req: AuthedRequest, @Body() body: StockHandoverDto) {
+    return this.stock.takeBack(req.user, body);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(REQUEST_ROLES)
+  @Get('stock/requests')
+  stockRequestList(@Req() req: AuthedRequest, @Query('status') status?: string) {
+    return this.stockRequests.list(req.user, status);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(SUPERVISOR_STOCK_ROLES)
+  @Post('stock/requests')
+  createStockRequest(@Req() req: AuthedRequest, @Body() body: StockRequestDto) {
+    return this.stockRequests.create(req.user, body);
+  }
+
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles(REQUEST_ROLES)
+  @Post('stock/requests/:id/cancel')
+  cancelStockRequest(@Req() req: AuthedRequest, @Param('id') id: string) {
+    return this.stockRequests.cancel(req.user, id);
   }
 
   @UseGuards(JwtGuard, RolesGuard)
