@@ -55,6 +55,7 @@ import {
   RunInput,
   StageFailure,
 } from './provisioning-runner';
+import { CrmContactSyncService } from './crm-contact-sync.service';
 
 type Actor = { id: string; crm_user_id?: string; role?: unknown };
 
@@ -105,6 +106,7 @@ export class ProvisioningService implements OnModuleInit {
     private readonly config: ConfigService,
     private readonly logger: LoggerService,
     @Inject(INCA_CLIENT) private readonly inca: IncaClient,
+    private readonly contactSync: CrmContactSyncService,
   ) {}
 
   /** Runs interrupted by a restart can never finish; release them so Retry works. */
@@ -192,13 +194,19 @@ export class ProvisioningService implements OnModuleInit {
       incaError =
         error instanceof Error ? error.message : 'INCA is unavailable';
     }
-    const transactions = await this.listForTicket(crmTicketId);
+    const [transactions, crmIdentity] = await Promise.all([
+      this.listForTicket(crmTicketId),
+      policy.actions.includes('NEW_CONNECTION')
+        ? this.contactSync.identity(snapshot.contact_id ?? null)
+        : null,
+    ]);
     const digits = (snapshot.sr_number ?? '').replace(/\D/g, '');
     return {
       crm_ticket_id: crmTicketId,
       sr_number: snapshot.sr_number,
       customer_name: snapshot.customer_name,
       client_identifier: this.clientIdentifier(snapshot),
+      crm_identity: crmIdentity,
       service_type: snapshot.service_type,
       category: snapshot.category,
       area: snapshot.area,
@@ -382,6 +390,20 @@ export class ProvisioningService implements OnModuleInit {
       );
     }
     const input = this.buildInput(snapshot, dto, await this.offeredChoices());
+    if (input.terminal_node) {
+      const crmIdentity = await this.contactSync.identity(
+        snapshot.contact_id ?? null,
+      );
+      if (
+        crmIdentity &&
+        /^[A-Za-z0-9-]{3,30}$/.test(crmIdentity) &&
+        crmIdentity.toUpperCase() !== input.terminal_node.client_identity
+      ) {
+        throw new BadRequestException(
+          `The ID card / passport number must match the CRM contact (${crmIdentity}).`,
+        );
+      }
+    }
     const installsOnt =
       dto.action === 'NEW_CONNECTION' ||
       dto.action === 'ONT_REPLACEMENT' ||
@@ -801,6 +823,7 @@ export class ProvisioningService implements OnModuleInit {
           result: outcome.result,
         },
       });
+      await this.syncContact(txn, input, outcome.result, recorder.step);
     } catch (error) {
       const failure =
         error instanceof StageFailure
@@ -846,6 +869,40 @@ export class ProvisioningService implements OnModuleInit {
         crm_sync_ok: false,
         error_message: failure.message,
       });
+    }
+  }
+
+  /** After a successful run: ID card (Medianet ONT) or PPPoE id (Ooredoo ONT) to the CRM. */
+  private async syncContact(
+    txn: ProvisioningTransaction,
+    input: RunInput,
+    result: Record<string, unknown>,
+    step: (message: string) => Promise<void>,
+  ) {
+    if (input.action === 'SIGNAL_CHECK') return;
+    try {
+      const snapshot = await this.snapshots.get(txn.crm_ticket_id);
+      const ooredoo = result.pppoe_required === true;
+      const message = await this.contactSync.afterProvisioning({
+        crm_ticket_id: txn.crm_ticket_id,
+        contact_id: snapshot.contact_id ?? null,
+        actor_user_id: txn.technician_user_id,
+        ooredoo,
+        pppoe_username:
+          typeof result.pppoe_username === 'string'
+            ? result.pppoe_username
+            : input.pppoe_username,
+        client_identity:
+          !ooredoo && input.action === 'NEW_CONNECTION'
+            ? input.terminal_node?.client_identity ?? null
+            : null,
+      });
+      if (message) await step(`CRM: ${message}`);
+    } catch (error) {
+      this.logger.warn(
+        'Provisioning',
+        `CRM contact sync for ${txn.crm_ticket_id} failed: ${error instanceof Error ? error.message : error}`,
+      );
     }
   }
 

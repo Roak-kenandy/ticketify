@@ -94,6 +94,12 @@ type Form = {
 const NEW_OPTION = "__new__";
 const IDENTITY_PATTERN = /^[A-Za-z0-9-]{3,30}$/;
 
+/** The CRM contact's ID card number, when INCA can use it as the client identity. */
+function crmIdentity(ctx: ProvisioningContext): string | null {
+  const value = ctx.crm_identity?.trim().toUpperCase();
+  return value && IDENTITY_PATTERN.test(value) ? value : null;
+}
+
 const POLL_MS = 2000;
 const PIPELINE: ProvisioningStatus[] = ["VALIDATING", "REGISTERING_ONT", "APPLYING_CONFIG", "WAITING_TODO", "VERIFYING"];
 const STAGE_LABELS: Record<string, string> = {
@@ -215,6 +221,7 @@ export default function ProvisioningModal({
       deviceType: ctx.options.device_types.length === 1 ? ctx.options.device_types[0].code : null,
       tnName: ctx.suggested.terminal_node?.name ?? ctx.customer_name ?? "",
       tnClientName: ctx.customer_name ?? "",
+      tnIdentity: crmIdentity(ctx) ?? "",
       tnPhone: ctx.suggested.terminal_node?.phone ?? "",
       ...(relocating
         ? currentLocation(sub)
@@ -1299,6 +1306,7 @@ function TerminalNodeSection({
   const onChangeRef = React.useRef(onChange);
   onChangeRef.current = onChange;
   const lookedUp = form.tnClient?.identity === identity;
+  const fromCrm = crmIdentity(ctx);
 
   React.useEffect(() => {
     if (!IDENTITY_PATTERN.test(identity) || lookedUp) {
@@ -1342,10 +1350,19 @@ function TerminalNodeSection({
   return (
     <FormSection step={step} title="Terminal node" subtitle="Created in INCA for this customer.">
       <FieldGroup title="Client">
-        <Field label="ID card / passport number" error={lookingUp ? undefined : errors.tnIdentity}>
+        <Field
+          label="ID card / passport number"
+          error={lookingUp ? undefined : errors.tnIdentity}
+          hint={
+            fromCrm
+              ? "From the CRM contact."
+              : "Not on the CRM contact yet. For a Medianet ONT it is saved to the CRM once provisioning succeeds."
+          }
+        >
           <input
-            className={cn(input("tnIdentity"), "font-mono uppercase")}
+            className={cn(input("tnIdentity"), "font-mono uppercase", fromCrm && "cursor-not-allowed bg-surface")}
             value={form.tnIdentity}
+            readOnly={!!fromCrm}
             onChange={(event) => onChange({ tnIdentity: event.target.value })}
             autoCapitalize="characters"
             autoCorrect="off"

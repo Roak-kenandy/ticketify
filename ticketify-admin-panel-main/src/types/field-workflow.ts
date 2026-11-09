@@ -202,6 +202,8 @@ export type ProvisioningContext = {
   sr_number: string | null;
   customer_name: string | null;
   client_identifier: string;
+  /** ID card number already on the CRM contact; locks the Terminal Node identity. */
+  crm_identity?: string | null;
   service_type: string | null;
   category: string | null;
   area: string | null;
