@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TicketsService } from './tickets.service';
+import { StatusBoardService } from './status-board.service';
 import { TicketsController } from './tickets.controller';
 import { LoggerModule } from 'src/infrastructure/logger/logger.module';
 import { UserModule } from 'src/user/user.module';
@@ -12,7 +13,7 @@ import { RequeueModule } from 'src/requeue/requeue.module';
 
 @Module({
   controllers: [TicketsController],
-  providers: [TicketsService],
+  providers: [TicketsService, StatusBoardService],
   imports: [
     LoggerModule,
     UserModule,

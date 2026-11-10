@@ -475,142 +475,146 @@ export default function TicketDetailsPage() {
         ) : null}
         {showChecklist && closure ? <CompletionChecklist closure={closure} onOpen={setModal} /> : null}
 
-        <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-2">
-          <Section title="Customer">
-            <InfoRow icon={User} label="Name" value={customerName} />
-            {firstLoad ? (
-              <>
-                <Skeleton height={16} />
-                <Skeleton height={16} width="70%" />
-              </>
-            ) : (
-              <>
-                <InfoRow
-                  icon={Phone}
-                  label="Phone"
-                  value={phone}
-                  href={dialablePhone ? `tel:${dialablePhone}` : undefined}
-                />
-                <InfoRow icon={Barcode} label="Customer code" value={data?.contact?.code} />
-                <InfoRow icon={MapPin} label="Address" value={address || "No address on file"} />
-              </>
-            )}
-            {services.length > 0 ? (
-              <div className="mt-1 flex flex-col gap-2">
-                <span className="caption">Services and devices</span>
-                <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
-                  {services.map((item: any, index: number) => (
-                    <div
+        <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2">
+          <div className="flex min-w-0 flex-col gap-3">
+            <Section title="Customer">
+              <InfoRow icon={User} label="Name" value={customerName} />
+              {firstLoad ? (
+                <>
+                  <Skeleton height={16} />
+                  <Skeleton height={16} width="70%" />
+                </>
+              ) : (
+                <>
+                  <InfoRow
+                    icon={Phone}
+                    label="Phone"
+                    value={phone}
+                    href={dialablePhone ? `tel:${dialablePhone}` : undefined}
+                  />
+                  <InfoRow icon={Barcode} label="Customer code" value={data?.contact?.code} />
+                  <InfoRow icon={MapPin} label="Address" value={address || "No address on file"} />
+                </>
+              )}
+              {services.length > 0 ? (
+                <div className="mt-1 flex flex-col gap-2">
+                  <span className="caption">Services and devices</span>
+                  <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
+                    {services.map((item: any, index: number) => (
+                      <div
+                        key={String(item?.id ?? index)}
+                        className="flex w-40 shrink-0 flex-col items-start gap-2 rounded-md border border-borderlight bg-surface p-3"
+                      >
+                        <p className="line-clamp-2 text-[13px] font-semibold text-ink">
+                          {item?.product?.name ?? "Service"}
+                        </p>
+                        <ToneBadge
+                          size="sm"
+                          tone={
+                            item?.state === "EFFECTIVE"
+                              ? { label: "Active", color: colors.success, bg: colors.successBg }
+                              : { label: item?.state ?? "Unknown", color: colors.warning, bg: colors.warningBg }
+                          }
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </Section>
+
+            <Section title="Activities" count={activities.length}>
+              {firstLoad ? (
+                <Skeleton height={56} />
+              ) : activities.length === 0 ? (
+                <p className="text-[13px] text-gray2">No activities</p>
+              ) : (
+                activities.map((item: any, index: number) => {
+                  const state = resolveCrmActivityState(item);
+                  const done = state === "COMPLETED";
+                  return (
+                    <button
                       key={String(item?.id ?? index)}
-                      className="flex w-40 shrink-0 flex-col items-start gap-2 rounded-md border border-borderlight bg-surface p-3"
+                      type="button"
+                      onClick={() => {
+                        setSelectedActivity(item);
+                        setModal("activity");
+                      }}
+                      className="flex items-center gap-3 rounded-md border border-borderlight p-3 text-left active:bg-surface"
                     >
-                      <p className="line-clamp-2 text-[13px] font-semibold text-ink">
-                        {item?.product?.name ?? "Service"}
-                      </p>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold text-ink">{item?.name ?? "Activity"}</span>
+                        <span className="caption block">
+                          {[item?.type?.name, crmDate(item?.date ?? item?.activity_date?.date)].filter(Boolean).join(" · ")}
+                        </span>
+                      </span>
                       <ToneBadge
                         size="sm"
                         tone={
-                          item?.state === "EFFECTIVE"
-                            ? { label: "Active", color: colors.success, bg: colors.successBg }
-                            : { label: item?.state ?? "Unknown", color: colors.warning, bg: colors.warningBg }
+                          done
+                            ? { label: lmStatusLabel("COMPLETED"), color: colors.success, bg: colors.successBg }
+                            : { label: lmStatusLabel(state), color: colors.warning, bg: colors.warningBg }
                         }
                       />
-                    </div>
+                      <ChevronRight className="h-4 w-4 shrink-0 text-gray3" />
+                    </button>
+                  );
+                })
+              )}
+            </Section>
+          </div>
+
+          <div className="flex min-w-0 flex-col gap-3">
+            <Section
+              title="Photos & attachments"
+              count={attachments.length}
+              actionLabel={canEdit ? "Add" : undefined}
+              onAction={() => setModal("attachment")}
+            >
+              {firstLoad ? (
+                <div className="flex flex-wrap gap-2">
+                  <Skeleton width={96} height={96} />
+                  <Skeleton width={96} height={96} />
+                </div>
+              ) : attachments.length === 0 ? (
+                <p className="text-[13px] text-gray2">No attachments yet</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {attachments.map((item: any, index: number) => (
+                    <AttachmentThumb
+                      key={String(item?.id ?? index)}
+                      ticketId={ticketId}
+                      fileId={item?.file?.id}
+                      onClick={() => {
+                        setSelectedImage(item);
+                        setModal("image");
+                      }}
+                    />
                   ))}
                 </div>
-              </div>
-            ) : null}
-          </Section>
+              )}
+            </Section>
 
-          <Section
-            title="Photos & attachments"
-            count={attachments.length}
-            actionLabel={canEdit ? "Add" : undefined}
-            onAction={() => setModal("attachment")}
-          >
-            {firstLoad ? (
-              <div className="flex flex-wrap gap-2">
-                <Skeleton width={96} height={96} />
-                <Skeleton width={96} height={96} />
-              </div>
-            ) : attachments.length === 0 ? (
-              <p className="text-[13px] text-gray2">No attachments yet</p>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {attachments.map((item: any, index: number) => (
-                  <AttachmentThumb
-                    key={String(item?.id ?? index)}
-                    ticketId={ticketId}
-                    fileId={item?.file?.id}
-                    onClick={() => {
-                      setSelectedImage(item);
-                      setModal("image");
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-          </Section>
-
-          <Section title="Activities" count={activities.length}>
-            {firstLoad ? (
-              <Skeleton height={56} />
-            ) : activities.length === 0 ? (
-              <p className="text-[13px] text-gray2">No activities</p>
-            ) : (
-              activities.map((item: any, index: number) => {
-                const state = resolveCrmActivityState(item);
-                const done = state === "COMPLETED";
-                return (
-                  <button
-                    key={String(item?.id ?? index)}
-                    type="button"
-                    onClick={() => {
-                      setSelectedActivity(item);
-                      setModal("activity");
-                    }}
-                    className="flex items-center gap-3 rounded-md border border-borderlight p-3 text-left active:bg-surface"
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold text-ink">{item?.name ?? "Activity"}</span>
-                      <span className="caption block">
-                        {[item?.type?.name, crmDate(item?.date ?? item?.activity_date?.date)].filter(Boolean).join(" · ")}
-                      </span>
-                    </span>
-                    <ToneBadge
-                      size="sm"
-                      tone={
-                        done
-                          ? { label: lmStatusLabel("COMPLETED"), color: colors.success, bg: colors.successBg }
-                          : { label: lmStatusLabel(state), color: colors.warning, bg: colors.warningBg }
-                      }
-                    />
-                    <ChevronRight className="h-4 w-4 shrink-0 text-gray3" />
-                  </button>
-                );
-              })
-            )}
-          </Section>
-
-          <Section
-            title="Notes"
-            count={notes.length}
-            actionLabel={canEdit ? "Add" : undefined}
-            onAction={() => setModal("note")}
-          >
-            {firstLoad ? (
-              <Skeleton height={56} />
-            ) : notes.length === 0 ? (
-              <p className="text-[13px] text-gray2">No notes yet</p>
-            ) : (
-              notes.map((item: any, index: number) => (
-                <div key={String(item?.id ?? index)} className="flex flex-col gap-1 rounded-md bg-surface p-3">
-                  <p className="whitespace-pre-line text-sm leading-5 text-ink">{item?.note}</p>
-                  <span className="caption">{crmDate(item?.created_on, "DD MMM YYYY, h:mm A")}</span>
-                </div>
-              ))
-            )}
-          </Section>
+            <Section
+              title="Notes"
+              count={notes.length}
+              actionLabel={canEdit ? "Add" : undefined}
+              onAction={() => setModal("note")}
+            >
+              {firstLoad ? (
+                <Skeleton height={56} />
+              ) : notes.length === 0 ? (
+                <p className="text-[13px] text-gray2">No notes yet</p>
+              ) : (
+                notes.map((item: any, index: number) => (
+                  <div key={String(item?.id ?? index)} className="flex flex-col gap-1 rounded-md bg-surface p-3">
+                    <p className="whitespace-pre-line text-sm leading-5 text-ink">{item?.note}</p>
+                    <span className="caption">{crmDate(item?.created_on, "DD MMM YYYY, h:mm A")}</span>
+                  </div>
+                ))
+              )}
+            </Section>
+          </div>
         </div>
 
         {!firstLoad && !data ? <EmptyState icon={AlertCircle} title="Details unavailable" /> : null}
@@ -620,10 +624,10 @@ export default function TicketDetailsPage() {
         <div
           className={cn(
             fieldContainer.wide,
-            "flex flex-col gap-3 px-4 pt-3 pb-[max(12px,env(safe-area-inset-bottom))] lg:flex-row lg:items-center",
+            "flex flex-col gap-3 px-4 pt-3 pb-[max(12px,env(safe-area-inset-bottom))] lg:flex-row lg:items-stretch",
           )}
         >
-          <div className="no-scrollbar -mx-4 flex min-w-0 gap-2 overflow-x-auto px-4 empty:hidden lg:mx-0 lg:flex-1 lg:flex-wrap lg:px-0">
+          <div className="no-scrollbar -mx-4 flex min-w-0 gap-2 overflow-x-auto px-4 empty:hidden md:mx-0 md:grid md:auto-cols-fr md:grid-flow-col md:overflow-visible md:px-0 lg:flex-1">
             {phone ? (
               <ActionChip
                 icon={Phone}
@@ -660,7 +664,7 @@ export default function TicketDetailsPage() {
               loading={submitted}
               disabled={lmBlocking || (isMine && closeStageActive && noResponseBlocking)}
               onClick={onPrimaryPress}
-              className="lg:w-72 lg:shrink-0"
+              className="lg:h-auto lg:min-h-[52px] lg:w-64 lg:shrink-0"
               style={primaryColor ? { backgroundColor: primaryColor } : undefined}
             />
           ) : null}
@@ -828,12 +832,13 @@ function ActionChip({
   active?: boolean;
 }) {
   const className = cn(
-    "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 py-2 text-[13px] font-semibold active:opacity-80 disabled:opacity-60",
+    "flex min-h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 py-2 text-[13px] font-semibold active:opacity-80 disabled:opacity-60",
+    "md:min-h-[58px] md:min-w-0 md:flex-col md:justify-center md:gap-1 md:whitespace-normal md:rounded-lg md:px-2 md:text-center md:text-xs md:leading-tight",
     active ? "border-primary bg-primary text-white" : "border-tertiary bg-white text-primary",
   );
   const content = (
     <>
-      <Icon className="h-4 w-4" />
+      <Icon className="h-4 w-4 shrink-0 md:h-5 md:w-5" />
       {busy ? "Please wait…" : label}
     </>
   );

@@ -18,6 +18,7 @@ import type { Response } from 'express';
 import { JwtGuard } from 'src/auth/guard';
 import { Roles } from 'src/infrastructure/decorators/roles.decorator';
 import { TicketsService } from './tickets.service';
+import { StatusBoardService } from './status-board.service';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CreateActivityDto } from './dto/create-activity';
 import { ScheduleVisitDto } from 'src/config/dto/schedule-visit.dto';
@@ -56,13 +57,22 @@ const INLINE_FILE_TYPES = new Set([
 const SMS_THROTTLE = { default: { limit: 10, ttl: 60000 } };
 
 type AuthedRequest = {
-  user: { id: string; crm_user_id: string; name?: string; phone?: string };
+  user: {
+    id: string;
+    crm_user_id: string;
+    name?: string;
+    phone?: string;
+    role?: string[];
+  };
 };
 
 @UseGuards(JwtGuard)
 @Controller('tickets')
 export class TicketsController {
-  constructor(private readonly ticketsService: TicketsService) {}
+  constructor(
+    private readonly ticketsService: TicketsService,
+    private readonly statusBoard: StatusBoardService,
+  ) {}
 
   @Roles(['Admin', 'Supervisor', 'Administrator'])
   @Get('all')
@@ -98,6 +108,13 @@ export class TicketsController {
   @Get('/user/:user_id')
   async fetchTicketsByUser(@Param('user_id') user_id: string) {
     return this.ticketsService.fetchUserTickets(user_id);
+  }
+
+  /** Technicians: their own tickets. Supervisors and above: every team. */
+  @Roles(FIELD_ROLES)
+  @Get('status-board')
+  async fetchStatusBoard(@Req() req: AuthedRequest) {
+    return this.statusBoard.board(req.user);
   }
 
   @Roles(FIELD_ROLES)

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import React from "react";
 import ProfileCard from "@/components/field/home/profile-card";
 import StatsCard from "@/components/field/home/stats-card";
+import StatusBoardCard from "@/components/field/home/status-board-card";
 import TicketCard from "@/components/field/ticket-card";
 import { EmptyState, ErrorState, InlineBanner, TicketCardSkeleton } from "@/components/field/ui/state-views";
 import { matchesQueue, QueueFilter, useQueueFilter } from "@/components/field/ui/queue-filter";
@@ -15,6 +16,7 @@ import { fieldCardGrid, fieldContainer } from "@/lib/field/layout";
 import { showError } from "@/lib/field/notify";
 import { useSession } from "@/lib/field/session";
 import { presenceFromUser } from "@/lib/field/ticket-meta";
+import { useStatusBoard } from "@/lib/field/status-board";
 import { teamTicketList, useTickets } from "@/lib/field/tickets";
 import { isTrackingStale, lastHeardAt, useTrackingSetup } from "@/lib/field/tracking";
 
@@ -32,6 +34,7 @@ export default function DashboardPage() {
   const { token, user, updateUser } = useSession();
   const { tickets, teamTickets, syncedAt, error: syncError, refresh } = useTickets();
   const { setup: tracking } = useTrackingSetup();
+  const { board, error: boardError, reload: reloadBoard } = useStatusBoard();
   const [query, setQuery] = React.useState("");
   const [queue, setQueue] = useQueueFilter();
   const [refreshing, setRefreshing] = React.useState(false);
@@ -56,7 +59,7 @@ export default function DashboardPage() {
   const onRefresh = async () => {
     setRefreshing(true);
     try {
-      await Promise.all([refresh({ force: true }), refreshProfile()]);
+      await Promise.all([refresh({ force: true }), refreshProfile(), reloadBoard()]);
     } catch (error: any) {
       showError(error?.message || "Refresh failed");
     } finally {
@@ -137,7 +140,10 @@ export default function DashboardPage() {
           <InlineBanner tone="error" message={syncError} actionLabel="Retry" onAction={onRefresh} />
         ) : null}
 
-        <StatsCard tickets={tickets} loading={!loaded} />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <StatsCard tickets={tickets} loading={!loaded} />
+          <StatusBoardCard board={board} error={boardError} />
+        </div>
 
         <div className="flex items-end gap-2">
           <div className="min-w-0 flex-1">
@@ -189,7 +195,7 @@ export default function DashboardPage() {
               </div>
               <div className={fieldCardGrid}>
                 {section.data.map((ticket: any, index: number) => (
-                  <TicketCard key={String(ticket?.id ?? index)} ticket={ticket} />
+                  <TicketCard key={String(ticket?.id ?? index)} ticket={ticket} showAssignee />
                 ))}
               </div>
             </section>

@@ -36,6 +36,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Operations",
     items: [
       { label: "Live map", href: "/", icon: MapPinned, access: "ops", exact: true },
+      { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, access: "status-board" },
       {
         label: "Operations board",
         href: "/dispatch",

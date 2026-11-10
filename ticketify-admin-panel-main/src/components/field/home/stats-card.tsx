@@ -23,7 +23,7 @@ export default function StatsCard({ tickets, loading }: { tickets: any[]; loadin
   }, [tickets]);
 
   return (
-    <div className="flex flex-col gap-4 rounded-lg bg-white p-4 shadow-card">
+    <div className="flex h-full flex-col justify-between gap-4 rounded-lg bg-white p-4 shadow-card">
       <div className="flex gap-2">
         {(["NEW", "IN_PROGRESS", "CLOSED"] as const).map((state) => {
           const tone = ticketStateMeta(state);

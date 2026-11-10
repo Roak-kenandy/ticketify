@@ -1,4 +1,4 @@
-import { Calendar, ChevronRight, Flag, User } from "lucide-react";
+import { Calendar, ChevronRight, Flag, Ticket, User, UserCheck, UserX } from "lucide-react";
 import moment from "moment";
 import Link from "next/link";
 import React from "react";
@@ -13,15 +13,23 @@ export function ticketHref(ticket: any) {
 function TicketCard({
   ticket,
   hideState,
+  showAssignee,
+  footer,
 }: {
   ticket: any;
   /** Hide the state pill where the list is already grouped by state. */
   hideState?: boolean;
+  /** Team lists: show who holds the ticket instead of its state. */
+  showAssignee?: boolean;
+  /** Extra line under the badges, e.g. why the ticket is in a status list. */
+  footer?: React.ReactNode;
 }) {
   const state = ticketStateMeta(ticket.state);
   const priority = priorityMeta(ticket.priority);
   const created = ticket.creation_date ? moment(ticket.creation_date * 1000) : null;
-  const StateIcon = state.icon;
+  const iconTone = showAssignee ? { color: colors.primary, bg: colors.surface, icon: Ticket } : state;
+  const StateIcon = iconTone.icon;
+  const assignee: string | undefined = ticket.assigned_to?.user?.name;
 
   return (
     <Link
@@ -30,8 +38,8 @@ function TicketCard({
       className="flex flex-col gap-2 rounded-lg border border-borderlight bg-white p-4 shadow-card transition active:scale-[0.995] active:opacity-90"
     >
       <div className="flex items-center gap-3">
-        <div className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-md" style={{ backgroundColor: state.bg }}>
-          {StateIcon ? <StateIcon className="h-5 w-5" style={{ color: state.color }} /> : null}
+        <div className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-md" style={{ backgroundColor: iconTone.bg }}>
+          {StateIcon ? <StateIcon className="h-5 w-5" style={{ color: iconTone.color }} /> : null}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between">
@@ -48,11 +56,25 @@ function TicketCard({
 
       <div className="flex flex-wrap gap-1">
         <ToneBadge tone={priority} size="sm" showIcon />
-        {!hideState ? <ToneBadge tone={state} size="sm" /> : null}
+        {showAssignee ? (
+          <ToneBadge
+            tone={
+              assignee
+                ? { label: assignee, color: colors.success, bg: colors.successBg, icon: UserCheck }
+                : { label: "Unassigned", color: colors.gray2, bg: colors.surface, icon: UserX }
+            }
+            size="sm"
+            showIcon
+          />
+        ) : !hideState ? (
+          <ToneBadge tone={state} size="sm" />
+        ) : null}
         {ticket.stage?.name ? (
           <ToneBadge tone={{ label: ticket.stage.name, color: colors.primary, bg: colors.surface, icon: Flag }} size="sm" />
         ) : null}
       </div>
+
+      {footer}
 
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-borderlight pt-2">
         <div className="flex min-w-0 flex-1 items-center gap-1">

@@ -974,6 +974,54 @@ Medianet Support Team
     };
   }
 
+  /** Open (NEW + IN_PROGRESS) tickets assigned to one CRM user. */
+  async fetchOpenTickets(crm_user_id: string) {
+    const owner = { assigned_to_user_id: crm_user_id };
+    const [newRows, inProgressRows] = await Promise.all([
+      this.fetchAllTicketsInState(owner, 'NEW'),
+      this.fetchAllTicketsInState(owner, 'IN_PROGRESS'),
+    ]);
+    return [...inProgressRows, ...newRows];
+  }
+
+  /**
+   * Open tickets of every CRM team, a few teams at a time: one unfiltered query across
+   * the whole CRM times out. Teams that fail are reported instead of failing the rest.
+   */
+  async fetchOpenTicketsAllTeams(): Promise<{
+    tickets: any[];
+    failed_teams: string[];
+  }> {
+    const teams: { id: string; name: string }[] = [];
+    for (let page = 1; page <= 5; page++) {
+      const response = await this.crmApi.listTeams(page, 50);
+      const content = response.ok ? (response.data?.content ?? []) : [];
+      if (!response.ok && page === 1) {
+        throw new ServiceUnavailableException('CRM did not return the team list.');
+      }
+      teams.push(...content);
+      if (content.length < 50) break;
+    }
+    const byId = new Map<string, any>();
+    const failed: string[] = [];
+    const queue = [...teams];
+    const worker = async () => {
+      for (let team = queue.shift(); team; team = queue.shift()) {
+        try {
+          const { new_tickets, in_progress_tickets } =
+            await this.fetchOpenTeamServiceRequests(team.id);
+          for (const ticket of [...in_progress_tickets, ...new_tickets]) {
+            if (ticket?.id && !byId.has(ticket.id)) byId.set(ticket.id, ticket);
+          }
+        } catch {
+          failed.push(team.name || team.id);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: 4 }, worker));
+    return { tickets: [...byId.values()], failed_teams: failed };
+  }
+
   /** Unassigned + assigned NEW tickets for each of the technician's CRM teams. */
   async findAllTeamTicketsSafe(crm_user_id: string) {
     const crm_user = await this.user.crmGetUser(crm_user_id);
