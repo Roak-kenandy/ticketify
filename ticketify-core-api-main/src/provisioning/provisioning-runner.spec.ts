@@ -704,29 +704,39 @@ describe('ProvisioningRunner', () => {
 });
 
 describe('provisioning policy', () => {
-  it('requires provisioning for new connections and relocations only', () => {
+  it('requires provisioning for new connections only', () => {
     expect(provisioningPolicy('new_connections', '').required_action).toBe(
       'NEW_CONNECTION',
     );
-    expect(provisioningPolicy('relocation', '').required_action).toBe(
-      'RELOCATION',
-    );
+    expect(provisioningPolicy('relocation', '').required_action).toBeNull();
     expect(provisioningPolicy('fault', '').required_action).toBeNull();
     expect(
       provisioningPolicy('new_connections', 'new_connections').signal_required,
     ).toBe(true);
   });
 
-  it('offers only ONT replacement on fault tickets', () => {
+  it('offers every action, all optional, on fault tickets', () => {
     const fault = provisioningPolicy('fault', 'fault');
-    expect(fault.actions).toEqual(['ONT_REPLACEMENT']);
+    expect(fault.actions).toEqual([
+      'ONT_REPLACEMENT',
+      'NEW_CONNECTION',
+      'RELOCATION',
+      'SIGNAL_CHECK',
+    ]);
     expect(fault.recommended).toEqual(['ONT_REPLACEMENT']);
+    expect(fault.required_action).toBeNull();
     expect(fault.signal_required).toBe(false);
   });
 
-  it('offers only relocation on relocation tickets', () => {
+  it('offers every action, all optional, on relocation tickets', () => {
     const relocation = provisioningPolicy('relocation', 'relocation');
-    expect(relocation.actions).toEqual(['RELOCATION']);
+    expect(relocation.actions).toEqual([
+      'RELOCATION',
+      'NEW_CONNECTION',
+      'ONT_REPLACEMENT',
+      'SIGNAL_CHECK',
+    ]);
+    expect(relocation.required_action).toBeNull();
     expect(relocation.signal_required).toBe(false);
   });
 
