@@ -1355,7 +1355,7 @@ Medianet Support Team
     }
 
     return this.config.get('NODE_ENV') === 'production'
-      ? 'https://ticketify.medianet.mv'
+      ? 'https://mpro.medianet.mv'
       : 'http://127.0.0.1:3000';
   }
 
