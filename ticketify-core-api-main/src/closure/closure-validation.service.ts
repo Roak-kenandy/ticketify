@@ -12,6 +12,9 @@ import {
 } from 'src/provisioning/provisioning.service';
 import { ACTION_LABELS } from 'src/provisioning/provisioning-policy';
 
+/** Out-of-range signal blocks closure even while the other Phase 2 rules are off. */
+const SIGNAL_LEVEL = 'signal_level';
+
 export type ClosureCheck = {
   key: string;
   label: string;
@@ -128,6 +131,22 @@ export class ClosureValidationService {
       });
     }
 
+    if (prov.last_reading) {
+      const { rx_dbm, within_range, range, action } = prov.last_reading;
+      const low = Math.min(range.min_dbm, range.max_dbm);
+      const high = Math.max(range.min_dbm, range.max_dbm);
+      checks.push({
+        key: SIGNAL_LEVEL,
+        label: `Signal level ${high} to ${low} dBm`,
+        ok: within_range,
+        severity: 'block',
+        message: within_range
+          ? null
+          : `Signal is ${rx_dbm} dBm after the ${ACTION_LABELS[action].toLowerCase()}; it must be between ${high} and ${low} dBm. Fix the fibre or connectors, then run a signal check again.`,
+        action: 'provisioning',
+      });
+    }
+
     const declared = stock.declaration;
     checks.push({
       key: 'inventory_declaration',
@@ -169,19 +188,18 @@ export class ClosureValidationService {
     }
 
     const phase2 = this.enforced();
+    const always = new Set([SIGNAL_LEVEL]);
+    if (this.ontInventoryEnforced()) always.add('ont_inventory');
     const scoped = phase2
       ? checks
       : checks.map((check) =>
-          check.key === 'ont_inventory' || check.severity !== 'block'
+          always.has(check.key) || check.severity !== 'block'
             ? check
             : { ...check, severity: 'warn' as const },
         );
     return {
       crm_ticket_id: crmTicketId,
-      enforced:
-        phase2 ||
-        (this.ontInventoryEnforced() &&
-          scoped.some((check) => check.key === 'ont_inventory')),
+      enforced: phase2 || scoped.some((check) => always.has(check.key)),
       ready: scoped.every((check) => check.ok || check.severity === 'warn'),
       checks: scoped,
     };
@@ -190,9 +208,6 @@ export class ClosureValidationService {
   async assertReadyToClose(
     crmTicketId: string,
   ): Promise<ClosureEvaluation | null> {
-    if (!this.enforced() && !this.ontInventoryEnforced()) {
-      return null;
-    }
     const evaluation = await this.evaluate(crmTicketId);
     if (!evaluation.enforced) {
       return null;

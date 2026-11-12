@@ -89,6 +89,13 @@ export type ProvisioningClosureState = {
     error: string | null;
   } | null;
   signal: { required: boolean; captured: boolean; result: string | null };
+  /** Newest Rx reading from any successful run on the ticket, checked against today's range. */
+  last_reading: {
+    action: ProvisioningAction;
+    rx_dbm: number;
+    within_range: boolean;
+    range: OpticalRange;
+  } | null;
   in_flight: ProvisioningAction[];
   failed_optional: ProvisioningAction[];
   installed_serials: string[];
@@ -134,7 +141,7 @@ export class ProvisioningService implements OnModuleInit {
   range(): OpticalRange {
     return {
       min_dbm: Number(this.config.get('INCA_RX_MIN_DBM') ?? -27),
-      max_dbm: Number(this.config.get('INCA_RX_MAX_DBM') ?? -8),
+      max_dbm: Number(this.config.get('INCA_RX_MAX_DBM') ?? -17),
     };
   }
 
@@ -703,6 +710,20 @@ export class ProvisioningService implements OnModuleInit {
               ?.signal_result ?? '',
           )
         : null;
+    const range = this.range();
+    let lastReading: ProvisioningClosureState['last_reading'] = null;
+    for (const txn of txns) {
+      if (txn.status !== 'SUCCEEDED') continue;
+      const rx = readingOf(txn);
+      if (rx === null) continue;
+      lastReading = {
+        action: txn.action,
+        rx_dbm: rx,
+        within_range: rx >= range.min_dbm && rx <= range.max_dbm,
+        range,
+      };
+      break;
+    }
     const installed = new Set<string>();
     for (const txn of latest.values()) {
       const serial = normalizeSerial(txn.ont_serial);
@@ -723,6 +744,7 @@ export class ProvisioningService implements OnModuleInit {
         captured: Boolean(signalResult),
         result: signalResult || null,
       },
+      last_reading: lastReading,
       in_flight: [...latest.values()]
         .filter((txn) => IN_FLIGHT.includes(txn.status))
         .map((txn) => txn.action),
@@ -1018,6 +1040,55 @@ export class ProvisioningService implements OnModuleInit {
       serial,
       found: Boolean(subscriber),
       subscriber: subscriber ? subscriberView(subscriber) : null,
+    };
+  }
+
+  /** Live optical reading for any ONT serial, outside a ticket; no customer details. */
+  async signalStatus(actor: Actor, rawSerial: string) {
+    const serial = normalizeSerial(rawSerial);
+    if (!serial || !SERIAL_PATTERN.test(serial)) {
+      throw new BadRequestException(
+        `"${rawSerial}" is not a valid ONT serial number.`,
+      );
+    }
+    const runner = new ProvisioningRunner(
+      this.inca,
+      this.noopRecorder(),
+      this.runnerConfig(),
+    );
+    const [reading, device, types] = await Promise.all([
+      this.incaRead(() => runner.readSignal(serial)),
+      this.incaRead(() => this.inca.findDevice(serial)).catch(() => null),
+      this.inca.deviceTypes().catch(() => [] as IncaOption[]),
+    ]);
+    const deviceType = device?.device_type
+      ? types.find((type) => type.code === device.device_type)?.label ??
+        device.device_type
+      : null;
+    await this.audit.log({
+      entity_type: 'provisioning',
+      entity_id: serial,
+      action: 'INCA_SIGNAL_STATUS',
+      actor_user_id: actor.id,
+      new_state: {
+        serial,
+        rx_dbm: reading?.rx_dbm ?? null,
+        result: reading?.result ?? 'NO_READING',
+      },
+    });
+    return {
+      serial,
+      range: this.range(),
+      found: Boolean(reading || device),
+      device: device
+        ? {
+            registered: device.registered,
+            device_type: deviceType,
+            olt: device.olt_name ?? device.olt_id,
+            pon: device.pon,
+          }
+        : null,
+      reading,
     };
   }
 
@@ -1380,6 +1451,22 @@ function describeRunState(
   return detection.online
     ? ' The OLT reports it online.'
     : ' The OLT reports it offline.';
+}
+
+/** Rx dBm a run ended with: a signal check's after reading wins over its before reading. */
+function readingOf(txn: ProvisioningTransaction): number | null {
+  type Reading = { rx_dbm?: number | null } | null | undefined;
+  const result = (txn.result ?? {}) as {
+    optical?: Reading;
+    before?: Reading;
+    after?: Reading;
+  };
+  const reading =
+    txn.action === 'SIGNAL_CHECK'
+      ? result.after ?? result.before
+      : result.optical;
+  const rx = reading?.rx_dbm;
+  return typeof rx === 'number' && Number.isFinite(rx) ? rx : null;
 }
 
 function parseDate(value?: string, endOfDay = false): Date | null {

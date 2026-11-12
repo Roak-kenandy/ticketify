@@ -22,7 +22,11 @@ import {
 } from './dto/provisioning.dto';
 import { ProvisioningService } from './provisioning.service';
 import { Access } from 'src/auth/access/access';
-import { FIELD, PROVISIONING_LOG, PROVISIONING_TICKET_VIEW } from 'src/auth/access/requirements';
+import {
+  FIELD,
+  PROVISIONING_LOG,
+  PROVISIONING_TICKET_VIEW,
+} from 'src/auth/access/requirements';
 
 type AuthedRequest = {
   user: { id: string; crm_user_id?: string; role?: unknown };
@@ -101,6 +105,15 @@ export class ProvisioningController {
     @Query('serial') serial = '',
   ) {
     return this.provisioning.subscriberBySerial(crmTicketId, req.user, serial);
+  }
+
+  // Live INCA read by serial with no ticket scope; capped like the other serial lookups.
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @UseGuards(JwtGuard)
+  @Access(FIELD)
+  @Get('signal')
+  signalStatus(@Req() req: AuthedRequest, @Query('serial') serial = '') {
+    return this.provisioning.signalStatus(req.user, serial);
   }
 
   @UseGuards(JwtGuard)

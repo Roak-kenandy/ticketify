@@ -10,6 +10,7 @@ import {
   MonitorPlay,
   Package,
   Phone,
+  SignalHigh,
   Star,
   UserCircle,
   type LucideIcon,
@@ -29,6 +30,7 @@ import { initials } from "@/lib/field/ticket-meta";
 const NAV_ITEMS: Array<{ href: string; label: string; icon: LucideIcon }> = [
   { href: "/field", label: "Dashboard", icon: LayoutGrid },
   { href: "/field/tickets", label: "My tickets", icon: Layers },
+  { href: "/field/signal", label: "Signal check", icon: SignalHigh },
   { href: "/field/stock", label: "My stock", icon: Package },
   { href: "/field/reviews", label: "Reviews", icon: Star },
   { href: "/field/account", label: "Account", icon: UserCircle },

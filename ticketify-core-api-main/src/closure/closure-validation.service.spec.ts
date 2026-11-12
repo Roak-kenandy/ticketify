@@ -19,6 +19,7 @@ function build(options: {
   inFlight?: string[];
   failedOptional?: string[];
   signal?: { required: boolean; captured: boolean };
+  reading?: { action: string; rx_dbm: number; within_range: boolean } | null;
   enforced?: string;
   ontEnforced?: string;
 }) {
@@ -47,6 +48,9 @@ function build(options: {
         captured: options.signal?.captured ?? false,
         result: null,
       },
+      last_reading: options.reading
+        ? { ...options.reading, range: { min_dbm: -27, max_dbm: -17 } }
+        : null,
       in_flight: options.inFlight ?? [],
       failed_optional: options.failedOptional ?? [],
       installed_serials: options.installed ?? [],
@@ -208,5 +212,40 @@ describe('ClosureValidationService', () => {
       installed: ['HWTC0001'],
     });
     await expect(off.service.assertReadyToClose('sr-1')).resolves.toBeNull();
+  });
+
+  it('blocks closure on an out-of-range signal even while other rules are off', async () => {
+    const weak = build({
+      category: 'fault',
+      enforced: 'false',
+      stock: { declaration: 'NONE_USED' },
+      reading: { action: 'SIGNAL_CHECK', rx_dbm: -15.2, within_range: false },
+    });
+    const result = await weak.service.evaluate('sr-1');
+    expect(result).toMatchObject({ enforced: true, ready: false });
+    expect(result.checks.find((c) => c.key === 'signal_level')).toMatchObject({
+      label: 'Signal level -17 to -27 dBm',
+      severity: 'block',
+    });
+    await expect(weak.service.assertReadyToClose('sr-1')).rejects.toThrow(
+      /Signal is -15.2 dBm after the signal check; it must be between -17 and -27 dBm/,
+    );
+
+    const good = build({
+      category: 'fault',
+      enforced: 'false',
+      stock: { declaration: 'NONE_USED' },
+      reading: { action: 'ONT_REPLACEMENT', rx_dbm: -21.4, within_range: true },
+    });
+    await expect(
+      good.service.assertReadyToClose('sr-1'),
+    ).resolves.toMatchObject({ ready: true });
+
+    const none = build({
+      category: 'fault',
+      enforced: 'false',
+      stock: { declaration: 'NONE_USED' },
+    });
+    await expect(none.service.assertReadyToClose('sr-1')).resolves.toBeNull();
   });
 });
