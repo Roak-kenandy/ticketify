@@ -154,6 +154,7 @@ function setup(gatewayTxn: BmlTransactionView, paymentOverrides: Row = {}) {
     {} as any,
     {} as any,
     { paymentReceived: jest.fn().mockResolvedValue(true) } as any,
+    { next: jest.fn().mockResolvedValue({ year: 2026, seq: 7 }) } as any,
   );
   const fetchMock = jest
     .spyOn(global, 'fetch')

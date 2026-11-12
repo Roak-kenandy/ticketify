@@ -20,6 +20,7 @@ import { CrmApiClient } from 'src/infrastructure/crm/crm-api.client';
 import { TicketInvoiceService } from 'src/finance/ticket-invoice.service';
 import { TicketReceiptService } from 'src/finance/ticket-receipt.service';
 import { TicketBillingService } from 'src/finance/ticket-billing.service';
+import { FinanceSequenceService } from 'src/finance/finance-sequence.service';
 import {
   BmlPaymentService,
   BmlTransactionView,
@@ -94,12 +95,14 @@ export class TicketPaymentService {
     private sms: SMSService,
     private templates: NotificationTemplateService,
     private push: PushNotifierService,
+    private sequences: FinanceSequenceService,
   ) {}
 
-  /** Unguessable: the reference is the only key protecting the public pay pages. */
-  private buildReference(): string {
+  /** The random tail keeps it unguessable: the reference is the only key protecting the public pay pages. */
+  private async buildReference(): Promise<string> {
+    const { year, seq } = await this.sequences.next('PAY');
     const random = crypto.randomBytes(9).toString('base64url');
-    return `TKT-PAY-${Date.now().toString(36).toUpperCase()}-${random}`;
+    return `TKT-PAY-${year}-${String(seq).padStart(6, '0')}-${random}`;
   }
 
   private meta(payment: { metadata: unknown }): PaymentMetadata {
@@ -925,7 +928,7 @@ export class TicketPaymentService {
       throw new BadRequestException('Invoice total must be greater than zero');
     }
     const lineItems = invoice.line_items;
-    const reference = this.buildReference();
+    const reference = await this.buildReference();
     const customerRef =
       dto.customer_reference ??
       `Invoice ${invoice.invoice_number} — SR ${srData?.number ?? crmTicketId}`;
