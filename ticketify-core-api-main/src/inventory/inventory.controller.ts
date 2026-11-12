@@ -13,19 +13,10 @@ import {
 } from '@nestjs/common';
 import { Response } from 'express';
 import { JwtGuard } from 'src/auth/guard';
-import { RolesGuard } from 'src/auth/guard/roles.guard';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
 import {
   TicketAccessGuard,
   TicketScope,
 } from 'src/infrastructure/security/ticket-access.guard';
-import {
-  FIELD_ROLES,
-  INVENTORY_ROLES,
-  ITEM_MASTER_ROLES,
-  STORE_ROLES,
-  SUPERVISOR_STOCK_ROLES,
-} from 'src/auth/ops-roles';
 import {
   InventoryAdjustmentDto,
   InventoryDeclarationDto,
@@ -52,9 +43,8 @@ import { displayDate, ReportColumn, ReportMeta, toCsv, toExcel } from './report-
 import { StockReportQuery, StockReportService } from './stock-report.service';
 import { StockRequestService } from './stock-request.service';
 import { TechnicianStockService } from './technician-stock.service';
-
-const TICKET_ROLES = [...new Set([...FIELD_ROLES, ...INVENTORY_ROLES])];
-const REQUEST_ROLES = [...STORE_ROLES, ...SUPERVISOR_STOCK_ROLES];
+import { Access } from 'src/auth/access/access';
+import { CONSUMPTION_EDIT, CONSUMPTION_VIEW, HOLDER_EDIT, ITEMS_EDIT, ITEMS_VIEW, STOCK_MINE, STOCK_REQUESTS_EDIT, STOCK_REQUESTS_VIEW, STOCK_VIEW, STORE_EDIT, TICKET_INVENTORY_EDIT, TICKET_INVENTORY_VIEW } from 'src/auth/access/requirements';
 
 type AuthedRequest = { user: InventoryActor };
 
@@ -69,8 +59,8 @@ export class InventoryController {
     private readonly stockRequests: StockRequestService,
   ) {}
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(TICKET_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(ITEMS_VIEW)
   @Get('items')
   listItems(
     @Query('include_inactive', new ParseBoolPipe({ optional: true }))
@@ -79,22 +69,22 @@ export class InventoryController {
     return this.items.list(Boolean(includeInactive));
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(TICKET_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(ITEMS_VIEW)
   @Get('items/:id')
   getItem(@Param('id') id: string) {
     return this.items.get(id);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(ITEM_MASTER_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(ITEMS_EDIT)
   @Post('items')
   createItem(@Req() req: AuthedRequest, @Body() body: InventoryItemDto) {
     return this.items.create(body, req.user.id);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(ITEM_MASTER_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(ITEMS_EDIT)
   @Patch('items/:id')
   updateItem(
     @Req() req: AuthedRequest,
@@ -104,9 +94,9 @@ export class InventoryController {
     return this.items.update(id, body, req.user.id);
   }
 
-  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @UseGuards(JwtGuard, TicketAccessGuard)
   @TicketScope('crmTicketId')
-  @Roles(TICKET_ROLES)
+  @Access(TICKET_INVENTORY_VIEW)
   @Get('tickets/:crmTicketId')
   ticketInventory(
     @Req() req: AuthedRequest,
@@ -115,9 +105,9 @@ export class InventoryController {
     return this.tickets.view(crmTicketId, req.user);
   }
 
-  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @UseGuards(JwtGuard, TicketAccessGuard)
   @TicketScope('crmTicketId')
-  @Roles(TICKET_ROLES)
+  @Access(TICKET_INVENTORY_EDIT)
   @Post('tickets/:crmTicketId/declaration')
   declare(
     @Req() req: AuthedRequest,
@@ -128,8 +118,8 @@ export class InventoryController {
   }
 
   /** Ticket access is checked in the service once the line's ticket is known. */
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(TICKET_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(TICKET_INVENTORY_EDIT)
   @Post('consumptions/:id/reverse')
   reverse(
     @Req() req: AuthedRequest,
@@ -139,8 +129,8 @@ export class InventoryController {
     return this.tickets.reverse(id, req.user, body.reason);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(INVENTORY_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(CONSUMPTION_EDIT)
   @Post('consumptions/:id/adjust')
   adjust(
     @Req() req: AuthedRequest,
@@ -150,23 +140,23 @@ export class InventoryController {
     return this.tickets.adjust(id, req.user, body.quantity, body.reason);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(INVENTORY_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(CONSUMPTION_VIEW)
   @Get('report/filters')
   reportFilters() {
     return this.report.filterOptions();
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(INVENTORY_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(CONSUMPTION_VIEW)
   @Get('report')
   async reportRows(@Query() query: InventoryReportQuery) {
     const rows = await this.report.list(query);
     return { rows, summary: this.report.summarize(rows) };
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(INVENTORY_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(CONSUMPTION_VIEW)
   @Get('report/export')
   async exportReport(
     @Query() query: InventoryReportQuery & { format?: string },
@@ -192,89 +182,89 @@ export class InventoryController {
   }
 
   /** The caller's own issued stock; the field app only offers these items. */
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(TICKET_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(STOCK_MINE)
   @Get('stock/mine')
   myStock(@Req() req: AuthedRequest) {
     return this.stock.mine(req.user);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(INVENTORY_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(STOCK_VIEW)
   @Get('stock/technicians')
   stockTechnicians() {
     return this.stock.technicians();
   }
 
   /** Store → supervisor. */
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(STORE_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(STORE_EDIT)
   @Post('stock/issue')
   issueStock(@Req() req: AuthedRequest, @Body() body: StockIssueDto) {
     return this.stock.issue(req.user, body);
   }
 
   /** Supervisor or technician → store. */
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(STORE_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(STORE_EDIT)
   @Post('stock/return')
   returnStock(@Req() req: AuthedRequest, @Body() body: StockReturnDto) {
     return this.stock.returnStock(req.user, body);
   }
 
   /** Supervisor → technician. */
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(SUPERVISOR_STOCK_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(HOLDER_EDIT)
   @Post('stock/handout')
   handOutStock(@Req() req: AuthedRequest, @Body() body: StockHandoverDto) {
     return this.stock.handOut(req.user, body);
   }
 
   /** Technician → supervisor (unused, good items). */
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(SUPERVISOR_STOCK_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(HOLDER_EDIT)
   @Post('stock/take-back')
   takeBackStock(@Req() req: AuthedRequest, @Body() body: StockHandoverDto) {
     return this.stock.takeBack(req.user, body);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(REQUEST_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(STOCK_REQUESTS_VIEW)
   @Get('stock/requests')
   stockRequestList(@Req() req: AuthedRequest, @Query('status') status?: string) {
     return this.stockRequests.list(req.user, status);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(REQUEST_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(STOCK_REQUESTS_VIEW)
   @Get('stock/requests/alerts')
   stockRequestAlerts(@Req() req: AuthedRequest) {
     return this.stockRequests.alerts(req.user);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(SUPERVISOR_STOCK_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(HOLDER_EDIT)
   @Post('stock/requests')
   createStockRequest(@Req() req: AuthedRequest, @Body() body: StockRequestDto) {
     return this.stockRequests.create(req.user, body);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(REQUEST_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(STOCK_REQUESTS_EDIT)
   @Post('stock/requests/:id/cancel')
   cancelStockRequest(@Req() req: AuthedRequest, @Param('id') id: string) {
     return this.stockRequests.cancel(req.user, id);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(INVENTORY_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(STOCK_VIEW)
   @Get('stock/summary')
   stockSummary(@Query() query: StockReportQuery) {
     return this.stockReport.summary(query);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(INVENTORY_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(STOCK_VIEW)
   @Get('stock/summary/export')
   async exportStockSummary(
     @Query() query: StockReportQuery & { format?: string },
@@ -287,15 +277,15 @@ export class InventoryController {
     sendSheet(res, query.format, 'technician-stock', 'Technician stock', this.stockReport.summaryColumns, rows, meta);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(INVENTORY_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(STOCK_VIEW)
   @Get('stock/movements')
   stockMovements(@Query() query: StockReportQuery) {
     return this.stockReport.movements(query);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(INVENTORY_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(STOCK_VIEW)
   @Get('stock/movements/export')
   async exportStockMovements(
     @Query() query: StockReportQuery & { format?: string },
@@ -308,15 +298,15 @@ export class InventoryController {
     sendSheet(res, query.format, 'stock-issues-returns', 'Issues and returns', this.stockReport.movementColumns, rows, meta);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(INVENTORY_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(STOCK_VIEW)
   @Get('stock/log')
   stockLog(@Query() query: StockReportQuery) {
     return this.stockReport.log(query);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(INVENTORY_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(STOCK_VIEW)
   @Get('stock/log/export')
   async exportStockLog(
     @Query() query: StockReportQuery & { format?: string },
@@ -329,8 +319,8 @@ export class InventoryController {
     sendSheet(res, query.format, 'stock-issue-log', 'Issue log', this.stockReport.logColumns, this.stockReport.logRows(entries), meta);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(INVENTORY_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(STOCK_VIEW)
   @Get('stock/serials')
   stockSerials(@Query() query: StockReportQuery) {
     return this.stockReport.serials(query);

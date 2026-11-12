@@ -12,22 +12,17 @@ import {
 import { JwtGuard } from 'src/auth/guard';
 import { CreateLocationTrackDto } from './dto/create-location-track';
 import { UserService } from './user.service';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
 import { UpdatePresenceDto } from 'src/config/dto/update-presence.dto';
 import { UpdatePreferencesDto } from './dto/update-preferences.dto';
-import {
-  ADMIN_ROLES,
-  DISPATCH_MANAGE_ROLES,
-  FIELD_ROLES,
-  OPS_VIEW_ROLES,
-} from 'src/auth/ops-roles';
+import { Access, UserAccess } from 'src/auth/access/access';
+import { FIELD, OPS_VIEW, TEAM_STATS, USERS_VIEW } from 'src/auth/access/requirements';
 
 @UseGuards(JwtGuard)
 @Controller('users')
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
-  @Roles(OPS_VIEW_ROLES)
+  @Access(OPS_VIEW)
   @Get('technicians')
   getTechnicians() {
     return this.userService.getTechnicians();
@@ -38,13 +33,19 @@ export class UserController {
     return this.userService.getMe(req.user);
   }
 
-  @Roles(FIELD_ROLES)
+  /** Current screens and capabilities; the console refreshes its menus from this. */
+  @Get('me/access')
+  myAccess(@Req() req: { user: { access: UserAccess } }) {
+    return req.user.access;
+  }
+
+  @Access(FIELD)
   @Get('me/tracking')
   myTracking(@Req() req: { user: { id: string } }) {
     return this.userService.getTrackingSetup(req.user.id);
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @Post('me/tracking/reset')
   resetMyTracking(@Req() req: { user: { id: string } }) {
     return this.userService.resetTrackingDevice(req.user.id);
@@ -63,7 +64,7 @@ export class UserController {
     return this.userService.updatePreferences(req.user.id, body);
   }
 
-  @Roles([...ADMIN_ROLES, 'Supervisor'])
+  @Access(USERS_VIEW)
   @Get()
   getAllUsers(
     @Query('search') search?: string,
@@ -85,19 +86,19 @@ export class UserController {
     });
   }
 
-  @Roles(DISPATCH_MANAGE_ROLES)
+  @Access(TEAM_STATS)
   @Get('stats')
   getUserStats() {
     return this.userService.getUserStats();
   }
 
-  @Roles([...ADMIN_ROLES, 'Supervisor'])
+  @Access(USERS_VIEW)
   @Get(':id')
   getUserById(@Param('id') id: string) {
     return this.userService.getUserById(id);
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @Patch('status')
   updateStatus(
     @Query('status')
@@ -107,13 +108,13 @@ export class UserController {
     return this.userService.updateStatus({ status }, req.user);
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @Patch('presence')
   updatePresence(@Body() body: UpdatePresenceDto, @Req() req: { user: any }) {
     return this.userService.updatePresence(body, req.user);
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @Post('location')
   addLocationTracking(
     @Body() location: CreateLocationTrackDto,
@@ -122,7 +123,7 @@ export class UserController {
     return this.userService.addLocationTracking(location, req.user);
   }
 
-  @Roles(OPS_VIEW_ROLES)
+  @Access(OPS_VIEW)
   @Get('technician/:id/details')
   getTechnicianDetails(@Param('id') id: string) {
     return this.userService.getTechnicianDetails(id);

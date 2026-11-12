@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { PushNotifierService } from 'src/shared/one-signal/notification/push-notifier.service';
-import { DISPATCH_MANAGE_ROLES } from 'src/auth/ops-roles';
+import { can, resolveAccess } from 'src/auth/access/access';
+import { ROLE_ACCESS_SELECT } from 'src/auth/strategy/jwt.strategy';
 import {
   CATEGORY_LABELS,
   type WaitingTicket,
@@ -39,12 +40,35 @@ export class AssignmentNotifierService {
 
   async supervisorsNoTechnician(tickets: WaitingTicket[]) {
     if (!tickets.length) return;
-    const supervisors = await this.prisma.user.findMany({
+    const candidates = await this.prisma.user.findMany({
       where: {
-        role: { name: { in: DISPATCH_MANAGE_ROLES } },
         is_active: true,
+        role: {
+          OR: [
+            { full_access: true },
+            {
+              permissions: {
+                some: {
+                  screen: { in: ['operations_board', 'auto_assign'] },
+                  level: { in: ['EDIT', 'DELETE'] },
+                },
+              },
+            },
+          ],
+        },
       },
-      select: { id: true },
+      select: {
+        id: true,
+        role: { select: ROLE_ACCESS_SELECT },
+        permissions: { select: { screen: true, level: true } },
+      },
+    });
+    const supervisors = candidates.filter((user) => {
+      const access = resolveAccess(user.role, user.permissions);
+      return (
+        can(access, 'operations_board', 'EDIT') ||
+        can(access, 'auto_assign', 'EDIT')
+      );
     });
     if (!supervisors.length) return;
 

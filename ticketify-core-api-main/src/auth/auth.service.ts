@@ -15,6 +15,9 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import * as argon from 'argon2';
 import { ActivitiesService } from 'src/activities/activities.service';
 import { CrmApiClient } from 'src/infrastructure/crm/crm-api.client';
+import { canSignIn, resolveAccess, UserAccess } from './access/access';
+import { normalizeOverrides } from './access/permissions';
+import { ROLE_ACCESS_SELECT } from './strategy/jwt.strategy';
 
 /** Per email + client IP, so one person cannot lock someone else out. */
 const MAX_FAILED_LOGINS = 5;
@@ -40,14 +43,25 @@ export class AuthService {
     private crmApi: CrmApiClient,
   ) {}
 
-  async signUp(dto: SignUpDto) {
+  async signUp(dto: SignUpDto, actor?: { access?: UserAccess }) {
     const role = await this.prisma.role.findUnique({
       where: { id: dto.role_id },
-      select: { id: true, deleted_at: true },
+      select: {
+        id: true,
+        deleted_at: true,
+        full_access: true,
+        permissions: { select: { screen: true, level: true } },
+      },
     });
     if (!role || role.deleted_at) {
       throw new BadRequestException('Unknown role');
     }
+    if (role.full_access && !actor?.access?.full) {
+      throw new ForbiddenException(
+        'Only full-access administrators can create full-access users',
+      );
+    }
+    const overrides = normalizeOverrides(role, dto.permissions);
 
     const skipCrmValidation =
       this.config.get('SKIP_CRM_VALIDATION') === 'true' &&
@@ -71,6 +85,7 @@ export class AuthService {
           phone: dto.phone.trim(),
           password: await argon.hash(dto.password),
           role_id: role.id,
+          permissions: { create: overrides },
         },
       });
       delete user.password;
@@ -87,12 +102,18 @@ export class AuthService {
     }
   }
 
-  async resetPassword(dto: ResetPasswordDto) {
+  async resetPassword(dto: ResetPasswordDto, actor?: { access?: UserAccess }) {
     const user = await this.prisma.user.findUnique({
       where: { id: dto.user_id },
+      include: { role: { select: { full_access: true } } },
     });
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+    if (user.role.full_access && !actor?.access?.full) {
+      throw new ForbiddenException(
+        'Only full-access administrators can reset this password',
+      );
     }
     await this.prisma.user.update({
       where: { id: user.id },
@@ -116,7 +137,10 @@ export class AuthService {
 
     const user = await this.prisma.user.findFirst({
       where: { email: { equals: email, mode: 'insensitive' } },
-      include: { role: { select: { id: true, name: true } } },
+      include: {
+        role: { select: { id: true, ...ROLE_ACCESS_SELECT } },
+        permissions: { select: { screen: true, level: true } },
+      },
     });
 
     // Verify against a dummy hash for unknown emails so response time does not
@@ -136,11 +160,17 @@ export class AuthService {
         'This account has been deactivated. Contact your administrator.',
       );
     }
+    const access = resolveAccess(user.role, user.permissions);
+    if (!canSignIn(access)) {
+      throw new ForbiddenException(
+        'This account has no screens assigned. Contact your administrator.',
+      );
+    }
     this.clearFailedLogins(email);
 
     delete user.password;
 
-    if (user.role.name === 'Technician') {
+    if (access.field_technician) {
       await this.prisma.user.update({
         where: { id: user.id },
         data: {
@@ -156,7 +186,12 @@ export class AuthService {
 
     await this.activity.createUserLog('User logged in', user);
 
-    const { token_version, ...publicUser } = user;
+    const { token_version, role, ...rest } = user;
+    const publicUser = {
+      ...rest,
+      permissions: undefined,
+      role: { id: role.id, name: role.name },
+    };
     return {
       statusCode: 200,
       message: 'User logged in',
@@ -168,6 +203,7 @@ export class AuthService {
         token_version,
       ),
       user: publicUser,
+      access,
     };
   }
 

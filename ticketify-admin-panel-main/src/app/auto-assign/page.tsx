@@ -47,6 +47,7 @@ import {
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PageHeader } from "@/components/app/page-header";
 import { EmptyState } from "@/components/app/empty-state";
+import { can } from "@/lib/permissions";
 
 type Category = "fault" | "new_connections" | "relocation";
 type Mode = "AUTO" | "MANUAL";
@@ -203,6 +204,8 @@ export default function AutoAssignPage() {
   const [overview, setOverview] = React.useState<Overview | null>(null);
   const [activity, setActivity] = React.useState<Activity[] | null>(null);
   const [saving, setSaving] = React.useState(false);
+  const [readOnly, setReadOnly] = React.useState(true);
+  React.useEffect(() => setReadOnly(!can("auto_assign", "EDIT")), []);
   const [confirmOn, setConfirmOn] = React.useState(false);
   const [running, setRunning] = React.useState(false);
   const [preview, setPreview] = React.useState<RunResult[] | null>(null);
@@ -353,7 +356,7 @@ export default function AutoAssignPage() {
               {previewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
               Preview
             </Button>
-            <Button onClick={runNow} disabled={!canRun || running}>
+            <Button onClick={runNow} disabled={readOnly || !canRun || running}>
               {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
               Run now
             </Button>
@@ -401,7 +404,7 @@ export default function AutoAssignPage() {
             </div>
             <Switch
               checked={settings.enabled}
-              disabled={saving}
+              disabled={saving || readOnly}
               aria-labelledby="engine-title"
               onCheckedChange={(next) => {
                 if (next) setConfirmOn(true);
@@ -496,7 +499,7 @@ export default function AutoAssignPage() {
                   <ModeToggle
                     labelledBy={`cat-${category.key}`}
                     value={mode}
-                    disabled={saving}
+                    disabled={saving || readOnly}
                     onChange={(next) =>
                       save(
                         { categories: { [category.key]: next } },
@@ -528,7 +531,7 @@ export default function AutoAssignPage() {
                   </span>
                   <Switch
                     checked={region.enabled}
-                    disabled={saving}
+                    disabled={saving || readOnly}
                     aria-labelledby={`region-${region.team_id}`}
                     onCheckedChange={(enabled) =>
                       save(
@@ -564,7 +567,7 @@ export default function AutoAssignPage() {
                 </p>
                 <Select
                   value={settings.strategy}
-                  disabled={saving}
+                  disabled={saving || readOnly}
                   onValueChange={(value) =>
                     save({ strategy: value as Strategy }, (s) => ({ ...s, strategy: value as Strategy }), "Rule updated")
                   }
@@ -594,7 +597,7 @@ export default function AutoAssignPage() {
                 </div>
                 <Select
                   value={String(settings.max_open_jobs)}
-                  disabled={saving}
+                  disabled={saving || readOnly}
                   onValueChange={(value) =>
                     save(
                       { max_open_jobs: Number(value) },
@@ -626,7 +629,7 @@ export default function AutoAssignPage() {
                 </div>
                 <Switch
                   checked={settings.include_busy}
-                  disabled={saving}
+                  disabled={saving || readOnly}
                   aria-labelledby="busy-label"
                   onCheckedChange={(include_busy) =>
                     save({ include_busy }, (s) => ({ ...s, include_busy }), "Rule updated")

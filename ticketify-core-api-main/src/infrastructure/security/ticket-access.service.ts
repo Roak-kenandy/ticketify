@@ -2,11 +2,11 @@ import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { CrmApiClient } from '../crm/crm-api.client';
 import { PrismaService } from '../config/prisma/prisma.service';
 import { LoggerService } from '../logger/logger.service';
-import { hasAnyRole, OPS_VIEW_ROLES } from 'src/auth/ops-roles';
+import { hasConsoleAccess, UserAccess } from 'src/auth/access/access';
 
 export type TicketScopeKind = 'ticket' | 'payment' | 'invoice' | 'receipt';
 
-type AccessUser = { id: string; crm_user_id?: string; role?: unknown };
+type AccessUser = { id: string; crm_user_id?: string; access?: UserAccess };
 
 const TICKET_TTL_MS = 30_000;
 const TEAMS_TTL_MS = 5 * 60_000;
@@ -14,8 +14,8 @@ const MAX_CACHE = 5000;
 
 /**
  * Decides whether a user may read or act on a CRM service request.
- * Operations roles see everything; field staff only see tickets assigned to
- * them or sitting in one of their CRM teams.
+ * Anyone with a console screen sees everything; technician-app-only users see
+ * tickets assigned to them or sitting in one of their CRM teams.
  */
 @Injectable()
 export class TicketAccessService {
@@ -31,11 +31,8 @@ export class TicketAccessService {
     private readonly logger: LoggerService,
   ) {}
 
-  /** Roles that may see every ticket (also used for finance documents). */
-  static readonly ALL_TICKET_ROLES = [...OPS_VIEW_ROLES, 'Finance', 'Inventory'];
-
   async canAccess(user: AccessUser, kind: TicketScopeKind, value: string) {
-    if (hasAnyRole(TicketAccessService.ALL_TICKET_ROLES, user.role)) {
+    if (hasConsoleAccess(user.access)) {
       return true;
     }
     const ticketId = await this.resolveTicketId(kind, value);

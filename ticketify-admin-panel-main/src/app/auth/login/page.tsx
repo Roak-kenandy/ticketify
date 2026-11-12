@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BrandLockup } from "@/components/shell/brand";
 import { AdminAuth } from "@/lib/admin-auth";
+import { storeAccess, type UserAccess } from "@/lib/permissions";
 import axiosInterceptorInstance from "@/lib/axios-interceptor";
 import { primePreferences } from "@/lib/preferences";
 import { cn } from "@/lib/utils";
@@ -73,8 +74,8 @@ export default function Login() {
         password,
       });
 
-      const roleName = response.data?.user?.role?.name ?? "";
-      if (!AdminAuth.canSignIn(roleName)) {
+      const access = response.data?.access as UserAccess | undefined;
+      if (!AdminAuth.canSignIn(access)) {
         AdminAuth.clearSession();
         setError(
           "Your account doesn't have access to Ticketify. Contact your administrator.",
@@ -83,6 +84,7 @@ export default function Login() {
       }
 
       AdminAuth.setToken(response.data.access_token);
+      storeAccess(access!);
       if (response.data.refresh_token) {
         localStorage.setItem("refresh_token", response.data.refresh_token);
       }
@@ -92,7 +94,10 @@ export default function Login() {
     } catch (err: any) {
       AdminAuth.clearSession();
       const status = err.response?.status;
-      if (status === 401 || status === 403) {
+      const message = err.response?.data?.message;
+      if (status === 403 && typeof message === "string" && message !== "Invalid credentials") {
+        setError(message);
+      } else if (status === 401 || status === 403) {
         setError("That email and password combination is incorrect.");
       } else if (!err.response) {
         setError("Can't reach the server. Check your connection and try again.");

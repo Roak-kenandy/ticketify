@@ -13,19 +13,11 @@ import { Throttle } from '@nestjs/throttler';
 import { Response } from 'express';
 import { TicketPaymentService } from 'src/payments/ticket-payment.service';
 import { JwtGuard } from 'src/auth/guard';
-import { RolesGuard } from 'src/auth/guard/roles.guard';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
-import { DISPATCH_MANAGE_ROLES } from 'src/auth/ops-roles';
 import { ReportsService } from './reports.service';
 import { FinanceReportService } from './finance-report.service';
 import { MasterReportService } from './master-report.service';
-
-const FINANCE_REPORT_ROLES = [
-  'Finance',
-  'Admin',
-  'Supervisor',
-  'Administrator',
-];
+import { Access } from 'src/auth/access/access';
+import { FINANCE_PENDING, FINANCE_REMIND, FINANCE_SUMMARY, MASTER_REPORT, PAYMENTS_REPORT, REPORT_FILTERS, TICKET_AGING } from 'src/auth/access/requirements';
 
 @Controller('reports')
 export class ReportsController {
@@ -36,22 +28,22 @@ export class ReportsController {
     private readonly payments: TicketPaymentService,
   ) {}
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(FINANCE_REPORT_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(FINANCE_SUMMARY)
   @Get('finance/summary')
   financeSummary() {
     return this.financeReport.summary();
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(FINANCE_REPORT_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(FINANCE_PENDING)
   @Get('finance/pending')
   financePending() {
     return this.financeReport.pending();
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(FINANCE_REPORT_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(FINANCE_REMIND)
   @Throttle({ default: { limit: 20, ttl: 60000 } })
   @Post('finance/pending/:reference/remind')
   remindPendingPayment(
@@ -61,8 +53,8 @@ export class ReportsController {
     return this.payments.sendPaymentReminder(reference, req.user.id);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(FINANCE_REPORT_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(PAYMENTS_REPORT)
   @Get('finance/payments')
   financePayments(
     @Query('service_request_id') serviceRequestId?: string,
@@ -72,8 +64,8 @@ export class ReportsController {
     return this.financeReport.list({ serviceRequestId, from, to });
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(FINANCE_REPORT_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(PAYMENTS_REPORT)
   @Get('finance/payments/export')
   async exportFinancePayments(
     @Query('service_request_id') serviceRequestId: string,
@@ -97,8 +89,8 @@ export class ReportsController {
     res.send(this.financeReport.toExcel(rows));
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(DISPATCH_MANAGE_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(MASTER_REPORT)
   @Get('master/tickets/export')
   async exportMasterTickets(
     @Query('startDate') startDate: string,
@@ -123,8 +115,8 @@ export class ReportsController {
     res.send(this.masterReport.toExcel(rows));
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(DISPATCH_MANAGE_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(MASTER_REPORT)
   @Get('master/tickets')
   masterTickets(
     @Query('startDate') startDate?: string,
@@ -142,29 +134,29 @@ export class ReportsController {
     });
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(DISPATCH_MANAGE_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(TICKET_AGING)
   @Get('tickets')
   async getTickets() {
     return this.reportsService.findTotalTickets();
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(DISPATCH_MANAGE_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(REPORT_FILTERS)
   @Get('queues')
   async getTicketQueues() {
     return this.reportsService.getTicketQueues();
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(DISPATCH_MANAGE_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(REPORT_FILTERS)
   @Get('teams')
   async getTeams() {
     return this.reportsService.getTeams();
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(DISPATCH_MANAGE_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(TICKET_AGING)
   @Get('tickets/aging')
   async findTicketAging(
     @Query('queue') queue: string,
@@ -173,8 +165,8 @@ export class ReportsController {
     return this.reportsService.findTicketAging(queue, team);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(DISPATCH_MANAGE_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(TICKET_AGING)
   @Get('tickets/aging/export')
   @Header('Content-Type', 'text/csv; charset=utf-8')
   async exportTicketAging(
@@ -194,15 +186,15 @@ export class ReportsController {
     res.send(csv);
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(DISPATCH_MANAGE_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(TICKET_AGING)
   @Get('tickets/team')
   async findTicketsByTeam() {
     return this.reportsService.findTicketByTeam();
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(DISPATCH_MANAGE_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(TICKET_AGING)
   @Get('tickets/team/export')
   @Header('Content-Type', 'text/csv; charset=utf-8')
   async exportTicketsByTeam(@Res() res: Response) {

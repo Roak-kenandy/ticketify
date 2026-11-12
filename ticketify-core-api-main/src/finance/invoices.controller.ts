@@ -8,8 +8,6 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtGuard } from 'src/auth/guard';
-import { RolesGuard } from 'src/auth/guard/roles.guard';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
 import {
   TicketAccessGuard,
   TicketScope,
@@ -17,8 +15,8 @@ import {
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { TicketInvoiceService } from './ticket-invoice.service';
 import { TicketReceiptService } from './ticket-receipt.service';
-
-const FINANCE_ROLES = ['Technician', 'Admin', 'Supervisor', 'Administrator'];
+import { Access } from 'src/auth/access/access';
+import { FIELD } from 'src/auth/access/requirements';
 
 @Controller('invoices')
 export class InvoicesController {
@@ -27,17 +25,17 @@ export class InvoicesController {
     private receipts: TicketReceiptService,
   ) {}
 
-  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @UseGuards(JwtGuard, TicketAccessGuard)
   @TicketScope('crmTicketId')
-  @Roles(FINANCE_ROLES)
+  @Access(FIELD)
   @Get('tickets/:crmTicketId')
   listForTicket(@Param('crmTicketId') crmTicketId: string) {
     return this.invoices.listForTicket(crmTicketId);
   }
 
-  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @UseGuards(JwtGuard, TicketAccessGuard)
   @TicketScope('crmTicketId')
-  @Roles(FINANCE_ROLES)
+  @Access(FIELD)
   @Post('tickets/:crmTicketId')
   create(
     @Req() req: { user: { id: string } },
@@ -52,17 +50,17 @@ export class InvoicesController {
     );
   }
 
-  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @UseGuards(JwtGuard, TicketAccessGuard)
   @TicketScope('id', 'invoice')
-  @Roles(FINANCE_ROLES)
+  @Access(FIELD)
   @Get(':id')
   getInvoice(@Param('id') id: string) {
     return this.invoices.getById(id);
   }
 
-  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @UseGuards(JwtGuard, TicketAccessGuard)
   @TicketScope('id', 'invoice')
-  @Roles(FINANCE_ROLES)
+  @Access(FIELD)
   @Get(':id/receipt')
   async getReceiptForInvoice(@Param('id') id: string) {
     const invoice = await this.invoices.getById(id);
@@ -76,9 +74,9 @@ export class InvoicesController {
 export class ReceiptsController {
   constructor(private receipts: TicketReceiptService) {}
 
-  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @UseGuards(JwtGuard, TicketAccessGuard)
   @TicketScope('reference', 'payment')
-  @Roles(FINANCE_ROLES)
+  @Access(FIELD)
   @Get('payments/:reference')
   async byPayment(@Param('reference') reference: string) {
     const receipt = await this.receipts.getByPaymentReference(reference);
@@ -88,9 +86,9 @@ export class ReceiptsController {
     return receipt;
   }
 
-  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @UseGuards(JwtGuard, TicketAccessGuard)
   @TicketScope('receiptNumber', 'receipt')
-  @Roles(FINANCE_ROLES)
+  @Access(FIELD)
   @Get(':receiptNumber')
   byNumber(@Param('receiptNumber') receiptNumber: string) {
     return this.receipts.getByReceiptNumber(receiptNumber);

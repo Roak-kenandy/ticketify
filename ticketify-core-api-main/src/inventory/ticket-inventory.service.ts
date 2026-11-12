@@ -15,7 +15,7 @@ import {
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { IntegrationAuditService } from 'src/infrastructure/audit/integration-audit.service';
 import { TicketAccessService } from 'src/infrastructure/security/ticket-access.service';
-import { hasAnyRole, INVENTORY_ROLES } from 'src/auth/ops-roles';
+import { can, UserAccess } from 'src/auth/access/access';
 import { InventoryDeclarationDto, InventoryLineDto } from './dto/inventory.dto';
 import { InventoryItemsService } from './inventory-items.service';
 import { TicketSnapshotService } from './ticket-snapshot.service';
@@ -28,7 +28,7 @@ export type InventoryActor = {
   id: string;
   name?: string | null;
   crm_user_id?: string;
-  role?: unknown;
+  access?: UserAccess;
 };
 
 type LineWithRelations = TicketInventoryConsumption & {
@@ -461,7 +461,7 @@ export class TicketInventoryService {
   }
 
   private isInventoryTeam(actor: InventoryActor) {
-    return hasAnyRole(INVENTORY_ROLES, actor.role);
+    return can(actor.access, 'inventory_consumption', 'EDIT');
   }
 
   private async prepareLines(crmTicketId: string, lines: InventoryLineDto[]) {

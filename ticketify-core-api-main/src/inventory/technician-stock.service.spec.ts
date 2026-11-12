@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { TechnicianStockService } from './technician-stock.service';
+import { ACCESS } from 'src/auth/access/access.fixtures';
 
 const cable = {
   id: 'cable',
@@ -95,7 +96,7 @@ function build({
       findUnique: jest.fn(async ({ where }: { where: { id: string } }) => {
         const user = USERS[where.id];
         return user
-          ? { id: where.id, name: user.name, email: `${where.id}@example.com`, is_active: true, role: { name: user.role } }
+          ? { id: where.id, name: user.name, email: `${where.id}@example.com`, is_active: true, role: { name: user.role, field_technician: user.role === 'Technician', stock_holder: user.role === 'Supervisor' } }
           : null;
       }),
     },
@@ -109,8 +110,8 @@ function build({
   return { service, movements, tx, audit };
 }
 
-const staff = { id: 'inv-1', role: ['Inventory'] };
-const supervisor = { id: 'sup-1', role: ['Supervisor'] };
+const staff = { id: 'inv-1', access: ACCESS.inventory };
+const supervisor = { id: 'sup-1', access: ACCESS.supervisor };
 const slip = (holder: string, lines: unknown[], extra: Record<string, unknown> = {}) => ({
   technician_user_id: holder,
   idempotency_key: 'slip123456',

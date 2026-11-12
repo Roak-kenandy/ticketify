@@ -1,3 +1,5 @@
+import type { Level, Screen } from "@/lib/permissions";
+
 export interface User {
   id: string;
   name: string;
@@ -35,19 +37,50 @@ export interface UserProfile {
   last_login?: string;
   role_id: string;
   role: {
+    id: string;
     name: string;
+    full_access: boolean;
+    permissions: PermissionEntry[];
   };
+  /** Overrides on top of the role. */
+  permissions: PermissionEntry[];
   user_log: UserLog[];
   user_tickets: any[];
   user_location_tracking: any[];
   feedbacks: any[];
 }
 
+export type AccessLevel = "NONE" | Level;
+
+export interface PermissionEntry {
+  screen: Screen;
+  level: AccessLevel;
+}
+
 export interface Role {
   id: string;
   name: string;
-  permissions: string[];
-  description?: string;
+  description?: string | null;
+  is_system: boolean;
+  full_access: boolean;
+  field_technician: boolean;
+  stock_holder: boolean;
+  store: boolean;
+  permissions: PermissionEntry[];
+  user_count: number;
+}
+
+export type RoleInput = Pick<
+  Role,
+  "name" | "full_access" | "field_technician" | "stock_holder" | "store"
+> & { description?: string; permissions: PermissionEntry[] };
+
+export interface ScreenDef {
+  key: Screen;
+  label: string;
+  group: string;
+  max: Level;
+  levels: Partial<Record<Level, string>>;
 }
 
 export interface UserStats {
@@ -66,19 +99,16 @@ export interface CreateUserData {
   phone: string;
   password: string;
   role_id: string;
+  /** Per-screen changes from the role's levels. */
+  permissions?: PermissionEntry[];
 }
 
 export interface UpdateUserData {
   name?: string;
-  email?: string;
   phone?: string;
   role_id?: string;
-  availability?: boolean;
-  department?: string;
-  address?: string;
-  emergency_contact?: string;
-  skills?: string[];
-  certifications?: string[];
+  /** Replaces the user's overrides as a set. */
+  permissions?: PermissionEntry[];
 }
 
 export interface UserFilter {

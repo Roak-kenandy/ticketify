@@ -17,18 +17,18 @@ import {
   SignUpDto,
 } from './dto';
 import { JwtGuard } from './guard';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
-import { ADMIN_ROLES } from './ops-roles';
+import { Access, UserAccess } from 'src/auth/access/access';
+import { USERS_EDIT, USERS_VIEW } from 'src/auth/access/requirements';
 
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @UseGuards(JwtGuard)
-  @Roles(ADMIN_ROLES)
+  @Access(USERS_EDIT)
   @Post('sign-up')
-  signUp(@Body() dto: SignUpDto) {
-    return this.authService.signUp(dto);
+  signUp(@Body() dto: SignUpDto, @Req() req: { user: { access?: UserAccess } }) {
+    return this.authService.signUp(dto, req.user);
   }
 
   @Throttle({ default: { limit: 10, ttl: 60000 } })
@@ -55,14 +55,17 @@ export class AuthController {
   }
 
   @UseGuards(JwtGuard)
-  @Roles(ADMIN_ROLES)
+  @Access(USERS_EDIT)
   @Post('reset-password')
-  resetPassword(@Body() dto: ResetPasswordDto) {
-    return this.authService.resetPassword(dto);
+  resetPassword(
+    @Body() dto: ResetPasswordDto,
+    @Req() req: { user: { access?: UserAccess } },
+  ) {
+    return this.authService.resetPassword(dto, req.user);
   }
 
   @UseGuards(JwtGuard)
-  @Roles(ADMIN_ROLES)
+  @Access(USERS_VIEW)
   @Get('roles')
   getRoles() {
     return this.authService.getRoles();

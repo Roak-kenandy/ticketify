@@ -1,4 +1,5 @@
 import { StockRequestService } from './stock-request.service';
+import { ACCESS } from 'src/auth/access/access.fixtures';
 
 describe('StockRequestService.alerts', () => {
   const request = (overrides: Record<string, unknown> = {}) => ({
@@ -25,7 +26,7 @@ describe('StockRequestService.alerts', () => {
   it('tells the store about every open request with who asked and what', async () => {
     const { service, prisma } = build([request()]);
 
-    const result = await service.alerts({ id: 'store-1', role: 'Inventory' });
+    const result = await service.alerts({ id: 'store-1', access: ACCESS.inventory });
 
     expect(prisma.stockRequest.findMany.mock.calls[0][0].where).toEqual({ status: 'OPEN' });
     expect(result.audience).toBe('STORE');
@@ -45,7 +46,7 @@ describe('StockRequestService.alerts', () => {
       request({ id: 'req-2', status: 'CANCELLED', closed_by_user_id: 'store-1', closed_at: closedAt }),
     ]);
 
-    const result = await service.alerts({ id: 'sup-1', role: 'Supervisor' });
+    const result = await service.alerts({ id: 'sup-1', access: ACCESS.supervisor });
 
     const where = prisma.stockRequest.findMany.mock.calls[0][0].where;
     expect(where).toMatchObject({

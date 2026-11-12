@@ -10,18 +10,14 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtGuard } from 'src/auth/guard';
-import { RolesGuard } from 'src/auth/guard/roles.guard';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { AssignmentEngineService } from './assignment-engine.service';
 import { AssignmentSettingsService } from './assignment-settings.service';
 import { AssignmentSchedulerService } from './assignment-scheduler.service';
 import { RunAutoAssignDto } from './dto/run-auto-assign.dto';
 import { UpdateAutoAssignSettingsDto } from './dto/update-auto-assign-settings.dto';
-
-import { DISPATCH_MANAGE_ROLES } from 'src/auth/ops-roles';
-
-const DISPATCH_ROLES = DISPATCH_MANAGE_ROLES;
+import { Access } from 'src/auth/access/access';
+import { AUTO_ASSIGN_EDIT, AUTO_ASSIGN_VIEW } from 'src/auth/access/requirements';
 
 @Controller('assignments')
 export class AssignmentController {
@@ -32,16 +28,16 @@ export class AssignmentController {
     private prisma: PrismaService,
   ) {}
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(DISPATCH_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(AUTO_ASSIGN_VIEW)
   @Get('settings')
   async getSettings() {
     const settings = await this.settings.getSettings();
     return { ...settings, regions: await this.settings.regions(settings) };
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(DISPATCH_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(AUTO_ASSIGN_EDIT)
   @Patch('settings')
   async updateSettings(
     @Req() req: { user: { id: string } },
@@ -55,15 +51,15 @@ export class AssignmentController {
   }
 
   /** What the next run would do with the current settings. Read-only; nothing is assigned. */
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(DISPATCH_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(AUTO_ASSIGN_VIEW)
   @Get('preview')
   async preview() {
     return this.engine.runAutoAssign({ dry_run: true });
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(DISPATCH_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(AUTO_ASSIGN_VIEW)
   @Get('activity')
   async activity() {
     const rows = await this.prisma.integrationAuditLog.findMany({
@@ -83,8 +79,8 @@ export class AssignmentController {
     }));
   }
 
-  @UseGuards(JwtGuard, RolesGuard)
-  @Roles(DISPATCH_ROLES)
+  @UseGuards(JwtGuard)
+  @Access(AUTO_ASSIGN_EDIT)
   @Post('auto-run')
   async runAutoAssign(
     @Req() req: { user: { id: string } },

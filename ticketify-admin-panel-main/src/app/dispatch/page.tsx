@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import axiosInterceptorInstance, { apiErrorMessage } from "@/lib/axios-interceptor";
 import { cn } from "@/lib/utils";
-import { hasAccess } from "@/lib/access";
+import { can } from "@/lib/permissions";
 import { PageHeader } from "@/components/app/page-header";
 import { StatCard } from "@/components/app/stat-card";
 import { EmptyState } from "@/components/app/empty-state";
@@ -433,7 +433,7 @@ function TeamCard({
 
 function AutoAssignCard({ loading, enabled }: { loading: boolean; enabled?: boolean }) {
   const [canManage, setCanManage] = React.useState(false);
-  React.useEffect(() => setCanManage(hasAccess("dispatch-manage")), []);
+  React.useEffect(() => setCanManage(can("operations_board", "EDIT")), []);
 
   const body = (
     <Card className={cn("p-5", canManage && "transition-colors hover:bg-accent/50")}>

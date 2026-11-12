@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import React from "react";
 import { AdminAuth } from "@/lib/admin-auth";
+import { readAccess, refreshAccess } from "@/lib/permissions";
 import { AppShell } from "@/components/field/shell/app-shell";
 import { ActivityBar } from "@/components/field/shell/activity-bar";
 import { LOGIN_PATH, SessionProvider, useSession } from "@/lib/field/session";
@@ -20,7 +21,28 @@ function Splash() {
 function Gate({ children }: { children: React.ReactNode }) {
   const { ready, token } = useSession();
   const router = useRouter();
-  const allowed = ready && Boolean(token) && AdminAuth.canUseFieldApp();
+  const [accessReady, setAccessReady] = React.useState(false);
+  const allowed = ready && accessReady && Boolean(token) && AdminAuth.canUseFieldApp();
+
+  React.useEffect(() => {
+    if (!ready || !token) {
+      return;
+    }
+    let cancelled = false;
+    if (readAccess()) setAccessReady(true);
+    refreshAccess().then((result) => {
+      if (cancelled) return;
+      if (result.status === "signed-out" || (result.status === "offline" && !readAccess())) {
+        AdminAuth.clearSession();
+        router.replace(LOGIN_PATH);
+        return;
+      }
+      setAccessReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, token, router]);
 
   React.useEffect(() => {
     if (!ready) {
@@ -28,10 +50,10 @@ function Gate({ children }: { children: React.ReactNode }) {
     }
     if (!token) {
       router.replace(LOGIN_PATH);
-    } else if (!AdminAuth.canUseFieldApp()) {
+    } else if (accessReady && !AdminAuth.canUseFieldApp()) {
       router.replace(AdminAuth.homePath());
     }
-  }, [ready, token, router]);
+  }, [ready, token, accessReady, router]);
 
   if (!allowed) {
     return <Splash />;

@@ -6,6 +6,7 @@ import {
   TicketInventoryService,
 } from './ticket-inventory.service';
 import { InventoryDeclarationDto } from './dto/inventory.dto';
+import { ACCESS } from 'src/auth/access/access.fixtures';
 
 const cable = {
   id: 'cable',
@@ -106,7 +107,7 @@ function build(
   return { service, created, audit, stock };
 }
 
-const actor = { id: 'tech-1', crm_user_id: 'crm-1', role: ['Technician'] };
+const actor = { id: 'tech-1', crm_user_id: 'crm-1', access: ACCESS.technician };
 const dto = (
   lines: InventoryDeclarationDto['lines'],
   declaration: 'USED' | 'NONE_USED' = 'USED',
@@ -176,7 +177,7 @@ describe('TicketInventoryService', () => {
     const { service, created, stock } = build();
     await service.declare(
       'sr-1',
-      { id: 'inv-1', role: ['Inventory'] },
+      { id: 'inv-1', access: ACCESS.inventory },
       dto([{ item_id: 'cable', quantity: 3 }]),
     );
     expect(stock.assertCanDraw).not.toHaveBeenCalled();
@@ -188,7 +189,7 @@ describe('TicketInventoryService', () => {
     stock.holderOf.mockResolvedValueOnce('tech-7');
     await service.declare(
       'sr-1',
-      { id: 'inv-1', role: ['Inventory'] },
+      { id: 'inv-1', access: ACCESS.inventory },
       dto([
         { item_id: 'ont', quantity: 1, serial_number: 'HWTC0001ABCD' },
         { item_id: 'cable', quantity: 3 },

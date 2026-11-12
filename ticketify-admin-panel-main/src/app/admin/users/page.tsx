@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { AdminAPI } from "@/lib/admin-api";
+import { can } from "@/lib/permissions";
 import { initials } from "@/lib/access";
 import { Role, User, UserFilter } from "@/types/admin";
 import { Badge } from "@/components/ui/badge";
@@ -64,6 +65,13 @@ export default function UsersPage() {
     limit: 100,
   });
   const [pendingDelete, setPendingDelete] = React.useState<User | null>(null);
+  const [canCreate, setCanCreate] = React.useState(false);
+  const [canRemove, setCanRemove] = React.useState(false);
+
+  React.useEffect(() => {
+    setCanCreate(can("users", "EDIT"));
+    setCanRemove(can("users", "DELETE"));
+  }, []);
 
   React.useEffect(() => {
     AdminAPI.getAllRoles()
@@ -155,12 +163,14 @@ export default function UsersPage() {
             >
               <RefreshCw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
             </Button>
-            <Button asChild>
-              <Link href="/admin/users/create">
-                <Plus className="h-4 w-4" />
-                Add user
-              </Link>
-            </Button>
+            {canCreate && (
+              <Button asChild>
+                <Link href="/admin/users/create">
+                  <Plus className="h-4 w-4" />
+                  Add user
+                </Link>
+              </Button>
+            )}
           </>
         }
       />
@@ -267,12 +277,14 @@ export default function UsersPage() {
               title="No users yet"
               description="Create the first account to start assigning tickets."
               action={
-                <Button asChild>
-                  <Link href="/admin/users/create">
-                    <Plus className="h-4 w-4" />
-                    Add user
-                  </Link>
-                </Button>
+                canCreate ? (
+                  <Button asChild>
+                    <Link href="/admin/users/create">
+                      <Plus className="h-4 w-4" />
+                      Add user
+                    </Link>
+                  </Button>
+                ) : undefined
               }
             />
           )
@@ -351,6 +363,7 @@ export default function UsersPage() {
                               View profile
                             </Link>
                           </DropdownMenuItem>
+                          {canRemove && (
                           <DropdownMenuItem onClick={() => toggleStatus(user)}>
                             {user.is_active ? (
                               <>
@@ -364,7 +377,9 @@ export default function UsersPage() {
                               </>
                             )}
                           </DropdownMenuItem>
-                          <DropdownMenuSeparator />
+                          )}
+                          {canRemove && <DropdownMenuSeparator />}
+                          {canRemove && (
                           <DropdownMenuItem
                             onClick={() => setPendingDelete(user)}
                             className="text-destructive focus:text-destructive"
@@ -372,6 +387,7 @@ export default function UsersPage() {
                             <Trash2 className="mr-2 h-4 w-4" />
                             Delete
                           </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>

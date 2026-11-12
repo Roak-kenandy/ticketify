@@ -89,7 +89,7 @@ export default function TechnicianStockPage() {
 
   React.useEffect(() => {
     setStore(AdminAuth.canManageStore());
-    setSupervisor(AdminAuth.isSupervisor());
+    setSupervisor(AdminAuth.isStockHolder());
     axiosInterceptorInstance
       .get<StockTechnician[]>("/inventory/stock/technicians")
       .then((response) => setTechnicians(response.data ?? []))

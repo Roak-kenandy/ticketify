@@ -16,7 +16,6 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { JwtGuard } from 'src/auth/guard';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
 import { TicketsService } from './tickets.service';
 import { StatusBoardService } from './status-board.service';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -30,9 +29,9 @@ import {
   ProgressTicketDto,
   StartTicketDto,
 } from './dto/ticket-actions.dto';
-import { FIELD_ROLES, OPS_VIEW_ROLES } from 'src/auth/ops-roles';
 import { TicketAccessGuard } from 'src/infrastructure/security/ticket-access.guard';
-import { TicketAccessService } from 'src/infrastructure/security/ticket-access.service';
+import { Access } from 'src/auth/access/access';
+import { CONSOLE_ANY, FIELD, OPS_VIEW, STATUS_BOARD } from 'src/auth/access/requirements';
 
 const ALLOWED_UPLOAD_TYPES = new Set([
   'image/jpeg',
@@ -74,14 +73,14 @@ export class TicketsController {
     private readonly statusBoard: StatusBoardService,
   ) {}
 
-  @Roles(['Admin', 'Supervisor', 'Administrator'])
+  @Access(OPS_VIEW)
   @Get('all')
   async fetchAllTickets() {
     return this.ticketsService.findAllTickets();
   }
 
   /** Always scoped to the caller's own CRM user. */
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @Get()
   async findAll(
     @Req() req: AuthedRequest,
@@ -98,38 +97,38 @@ export class TicketsController {
     return this.ticketsService.fetchMyTickets(req.user.crm_user_id);
   }
 
-  @Roles(OPS_VIEW_ROLES)
+  @Access(OPS_VIEW)
   @Get('/team/:team_id')
   async fetchTicketsByTeam(@Param('team_id') team_id: string) {
     return this.ticketsService.fetchTeamServiceRequests(team_id);
   }
 
-  @Roles(OPS_VIEW_ROLES)
+  @Access(OPS_VIEW)
   @Get('/user/:user_id')
   async fetchTicketsByUser(@Param('user_id') user_id: string) {
     return this.ticketsService.fetchUserTickets(user_id);
   }
 
   /** Technicians: their own tickets. Supervisors and above: every team. */
-  @Roles(FIELD_ROLES)
+  @Access(STATUS_BOARD)
   @Get('status-board')
   async fetchStatusBoard(@Req() req: AuthedRequest) {
     return this.statusBoard.board(req.user);
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @Get('teams')
   async fetchTeams(@Req() req: AuthedRequest) {
     return this.ticketsService.findAllTeamTicketsSafe(req.user.crm_user_id);
   }
 
-  @Roles(TicketAccessService.ALL_TICKET_ROLES)
+  @Access(CONSOLE_ANY)
   @Get('files/:file_id')
   async fetchFile(@Param('file_id') file_id: string, @Res() res: Response) {
     this.sendFile(res, await this.ticketsService.fetchFile(file_id));
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Get(':id/files/:file_id')
   async fetchTicketFile(
@@ -143,7 +142,7 @@ export class TicketsController {
     );
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Get(':id/activities/:activityId')
   getTicketActivity(
@@ -177,7 +176,7 @@ export class TicketsController {
     res.send(file.buffer);
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Throttle(SMS_THROTTLE)
   @Put(':id/assign')
@@ -188,7 +187,7 @@ export class TicketsController {
     );
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Throttle(SMS_THROTTLE)
   @Put(':id/schedule')
@@ -200,14 +199,14 @@ export class TicketsController {
     return this.ticketsService.scheduleVisit(ticket_id, req.user, body);
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Put(':id/start')
   async start(@Param('id') ticket_id: string, @Body() body: StartTicketDto) {
     return this.ticketsService.startTicket(ticket_id, body?.stage_id);
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Throttle(SMS_THROTTLE)
   @Put(':id/progress')
@@ -225,7 +224,7 @@ export class TicketsController {
     );
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Throttle(SMS_THROTTLE)
   @Put(':id/complete')
@@ -242,7 +241,7 @@ export class TicketsController {
     );
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Post(':id/notes')
   async addNoteToTicket(
@@ -258,7 +257,7 @@ export class TicketsController {
     );
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @UseInterceptors(
     FileInterceptor('file', {
@@ -301,7 +300,7 @@ export class TicketsController {
     );
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Throttle(SMS_THROTTLE)
   @Put(':id/no-response')
@@ -309,28 +308,28 @@ export class TicketsController {
     return this.ticketsService.toggleNoResponse(ticket_id);
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Get(':id/context')
   async findTicketActivitiesContext(@Param('id') ticket_id: string) {
     return this.ticketsService.findTicketActivitiesContext(ticket_id);
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Get(':id/lm/context')
   async lmHandoffContext(@Param('id') ticket_id: string) {
     return this.ticketsService.getLmHandoffContext(ticket_id);
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Get(':id/lm')
   async listLmActivities(@Param('id') ticket_id: string) {
     return this.ticketsService.listLastMileActivities(ticket_id);
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Throttle(SMS_THROTTLE)
   @Post(':id/lm/handoff')
@@ -342,7 +341,7 @@ export class TicketsController {
     return this.ticketsService.handoffToLastMile(ticket_id, body, req.user);
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Put(':id/lm/activities/:activityId/complete')
   async completeLmActivity(
@@ -360,7 +359,7 @@ export class TicketsController {
     return this.ticketsService.completeLastMileActivity(activityId, req.user);
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Post(':id/activities')
   async createActivity(
@@ -370,7 +369,7 @@ export class TicketsController {
     return this.ticketsService.createActivity(ticket_id, body);
   }
 
-  @Roles(FIELD_ROLES)
+  @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Get(':id')
   findOne(@Param('id') crm_id: string) {

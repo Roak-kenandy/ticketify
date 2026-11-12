@@ -7,7 +7,6 @@ import {
 import { StockRequestStatus } from '@prisma/client';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { IntegrationAuditService } from 'src/infrastructure/audit/integration-audit.service';
-import { hasAnyRole, STORE_ROLES } from 'src/auth/ops-roles';
 import { InventoryItemsService } from './inventory-items.service';
 import { round2 } from './report-format';
 import { StockRequestDto } from './dto/stock.dto';
@@ -25,7 +24,7 @@ export class StockRequestService {
   ) {}
 
   async create(actor: StockActor, dto: StockRequestDto) {
-    if (holderKind(actor.role) !== 'SUPERVISOR') {
+    if (holderKind(actor.access) !== 'SUPERVISOR') {
       throw new ForbiddenException('Only supervisors request stock from the store.');
     }
     const lines: RequestLine[] = [];
@@ -164,6 +163,6 @@ export class StockRequestService {
   }
 
   private isStore(actor: StockActor) {
-    return hasAnyRole(STORE_ROLES, actor.role);
+    return Boolean(actor.access?.store);
   }
 }

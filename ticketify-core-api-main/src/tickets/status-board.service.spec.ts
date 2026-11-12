@@ -1,4 +1,5 @@
 import { StatusBoardService } from './status-board.service';
+import { ACCESS } from 'src/auth/access/access.fixtures';
 
 function build(opts: { activitiesOk?: boolean } = {}) {
   const open = [
@@ -80,14 +81,14 @@ describe('StatusBoardService', () => {
     const { service, tickets } = build();
     const mine = await service.board({
       crm_user_id: 'crm-tech',
-      role: ['Technician'],
+      access: ACCESS.technician,
     });
     expect(mine.scope).toBe('mine');
     expect(tickets.fetchOpenTickets).toHaveBeenCalledWith('crm-tech');
 
     const all = await service.board({
       crm_user_id: 'crm-admin',
-      role: ['Supervisor'],
+      access: ACCESS.supervisor,
     });
     expect(all.scope).toBe('all');
     expect(tickets.fetchOpenTicketsAllTeams).toHaveBeenCalled();
@@ -96,7 +97,7 @@ describe('StatusBoardService', () => {
 
   it('sorts open tickets into the four status buckets', async () => {
     const { service, crm } = build();
-    const board = await service.board({ crm_user_id: 'c', role: ['Admin'] });
+    const board = await service.board({ crm_user_id: 'c', access: ACCESS.admin });
     expect(crm.listActivitiesPage).toHaveBeenCalledWith(
       expect.objectContaining({ type_id: 'nr-type', state: 'PENDING' }),
     );
@@ -123,7 +124,7 @@ describe('StatusBoardService', () => {
 
   it('still answers when the CRM cannot list No response activities', async () => {
     const { service } = build({ activitiesOk: false });
-    const board = await service.board({ crm_user_id: 'c', role: ['Admin'] });
+    const board = await service.board({ crm_user_id: 'c', access: ACCESS.admin });
     expect(board.no_response_available).toBe(false);
     expect(board.counts.no_response).toBe(0);
     expect(board.counts.pending).toBe(3);

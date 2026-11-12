@@ -5,13 +5,12 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
-import { hasAnyRole } from '../ops-roles';
+import { Access, meetsAny } from '../access/access';
 
 /**
- * Authenticates the bearer token and also enforces any `@Roles(...)` on the
- * route, so a role restriction can never be silently skipped by forgetting
- * to add RolesGuard.
+ * Authenticates the bearer token and also enforces any `@Access(...)` on the
+ * route, so a permission check can never be silently skipped by forgetting a
+ * second guard. Routes without `@Access` are open to any signed-in user.
  */
 @Injectable()
 export class JwtGuard extends AuthGuard('jwt') {
@@ -24,13 +23,13 @@ export class JwtGuard extends AuthGuard('jwt') {
     if (!authenticated) {
       return false;
     }
-    const roles = this.reflector.getAllAndOverride(Roles, [
+    const requirements = this.reflector.getAllAndOverride(Access, [
       context.getHandler(),
       context.getClass(),
     ]);
-    if (roles?.length) {
+    if (requirements?.length) {
       const user = context.switchToHttp().getRequest().user;
-      if (!hasAnyRole(roles, user?.role)) {
+      if (!meetsAny(user?.access, requirements)) {
         throw new ForbiddenException('You do not have access to this action');
       }
     }

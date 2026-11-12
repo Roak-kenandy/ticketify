@@ -5,7 +5,14 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Eye, EyeOff, Info, Loader2, UserPlus } from "lucide-react";
 import { AdminAPI } from "@/lib/admin-api";
-import { CreateUserData, Role } from "@/types/admin";
+import { AccessLevel, CreateUserData, Role, ScreenDef } from "@/types/admin";
+import { isFullAccess, type Screen } from "@/lib/permissions";
+import {
+  ScreenAccessEditor,
+  toLevelMap,
+  toOverrides,
+  type LevelMap,
+} from "@/components/admin/screen-access";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,7 +28,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { cn } from "@/lib/utils";
 import { passwordPolicyError } from "@/lib/password-policy";
 
-type Errors = Partial<Record<keyof CreateUserData, string>>;
+type Errors = Partial<Record<Exclude<keyof CreateUserData, "permissions">, string>>;
 
 const EMPTY: CreateUserData = {
   crm_user_id: "",
@@ -67,18 +74,31 @@ export default function CreateUserPage() {
   const [errors, setErrors] = React.useState<Errors>({});
   const [saving, setSaving] = React.useState(false);
   const [showPassword, setShowPassword] = React.useState(false);
+  const [screens, setScreens] = React.useState<ScreenDef[]>([]);
+  const [levels, setLevels] = React.useState<LevelMap>({});
 
   React.useEffect(() => {
-    AdminAPI.getAllRoles()
-      .then(setRoles)
+    Promise.all([AdminAPI.getAllRoles(), AdminAPI.getScreens()])
+      .then(([list, catalogue]) => {
+        // Only full-access admins can hand out full access.
+        setRoles(isFullAccess() ? list : list.filter((role) => !role.full_access));
+        setScreens(catalogue.screens);
+      })
       .catch(() => toast.error("Couldn't load roles. Refresh to try again."));
   }, []);
 
-  function update(field: keyof CreateUserData, value: string) {
+  function update(field: keyof Errors, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
+    if (field === "role_id") {
+      setLevels(toLevelMap(roles.find((role) => role.id === value)?.permissions));
+    }
     if (errors[field]) {
       setErrors((prev) => ({ ...prev, [field]: undefined }));
     }
+  }
+
+  function setLevel(screen: Screen, level: AccessLevel) {
+    setLevels((prev) => ({ ...prev, [screen]: level }));
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -99,6 +119,7 @@ export default function CreateUserPage() {
         email: form.email.trim(),
         phone: form.phone.trim(),
         crm_user_id: form.crm_user_id.trim(),
+        permissions: toOverrides(levels, toLevelMap(selectedRole?.permissions)),
       });
       if (!result?.user) {
         toast.error("The user wasn't created. Check the details and try again.");
@@ -197,7 +218,7 @@ export default function CreateUserPage() {
                 id="role_id"
                 label="Role"
                 error={errors.role_id}
-                hint={selectedRole?.description}
+                hint={selectedRole?.description ?? undefined}
               >
                 <Select
                   value={form.role_id}
@@ -248,6 +269,29 @@ export default function CreateUserPage() {
             </CardContent>
           </Card>
 
+          {selectedRole && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Screen access</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  {selectedRole.full_access
+                    ? `${selectedRole.name} has full access to every screen.`
+                    : `Starts from the ${selectedRole.name} role. Raise or lower a screen for this person only.`}
+                </p>
+              </CardHeader>
+              {!selectedRole.full_access && (
+                <CardContent>
+                  <ScreenAccessEditor
+                    screens={screens}
+                    levels={levels}
+                    baseline={toLevelMap(selectedRole.permissions)}
+                    onChange={setLevel}
+                  />
+                </CardContent>
+              )}
+            </Card>
+          )}
+
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <Button
               type="button"
@@ -278,7 +322,7 @@ export default function CreateUserPage() {
               <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
                 <li>The CRM user ID must match exactly, or assigned tickets won&apos;t appear in the app.</li>
                 <li>Each email can only be used once.</li>
-                <li>Everyone signs in at the same address. Technicians land in the technician app (/field); other roles land in this console.</li>
+                <li>Everyone signs in at the same address. People with only the Technician app land in /field; everyone else lands on their first console screen.</li>
               </ul>
             </CardContent>
           </Card>

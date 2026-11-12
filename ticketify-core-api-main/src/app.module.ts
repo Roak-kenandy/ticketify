@@ -27,6 +27,7 @@ import { IncaModule } from './infrastructure/inca/inca.module';
 import { ProvisioningModule } from './provisioning/provisioning.module';
 import { ClosureModule } from './closure/closure.module';
 import { TrackingModule } from './tracking/tracking.module';
+import { RolesModule } from './roles/roles.module';
 
 @Module({
   imports: [
@@ -60,6 +61,7 @@ import { TrackingModule } from './tracking/tracking.module';
     ProvisioningModule,
     ClosureModule,
     TrackingModule,
+    RolesModule,
   ],
   controllers: [],
   providers: [

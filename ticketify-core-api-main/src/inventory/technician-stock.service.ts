@@ -14,7 +14,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { IntegrationAuditService } from 'src/infrastructure/audit/integration-audit.service';
-import { hasAnyRole, INVENTORY_ROLES, SUPERVISOR_STOCK_ROLES } from 'src/auth/ops-roles';
+import { can, UserAccess } from 'src/auth/access/access';
 import { InventoryItemsService } from './inventory-items.service';
 import { normalizeSerial, SERIAL_PATTERN } from './serial';
 import { round2 } from './report-format';
@@ -28,7 +28,7 @@ import {
 
 type Db = PrismaService | Prisma.TransactionClient;
 
-export type StockActor = { id: string; role?: unknown };
+export type StockActor = { id: string; access?: UserAccess };
 
 export type HolderKind = 'SUPERVISOR' | 'TECHNICIAN';
 
@@ -83,11 +83,6 @@ type MovementBase = {
   performed_by_user_id: string;
 };
 
-const HOLDER_ROLES: Record<HolderKind, string[]> = {
-  SUPERVISOR: SUPERVISOR_STOCK_ROLES,
-  TECHNICIAN: ['Technician'],
-};
-
 const HELD_STATUS: Record<HolderKind, SerialUnitStatus> = {
   SUPERVISOR: 'WITH_SUPERVISOR',
   TECHNICIAN: 'WITH_TECHNICIAN',
@@ -115,11 +110,16 @@ const SERIAL_STATUS_TEXT: Record<SerialUnitStatus, string> = {
   FAULTY: 'was returned as faulty',
 };
 
-export function holderKind(role: unknown): HolderKind | null {
-  if (hasAnyRole(HOLDER_ROLES.SUPERVISOR, role)) return 'SUPERVISOR';
-  if (hasAnyRole(HOLDER_ROLES.TECHNICIAN, role)) return 'TECHNICIAN';
+type HolderFlags = { stock_holder?: boolean; field_technician?: boolean };
+
+/** Holders come from role capabilities: stock holders (supervisors) first, then field technicians. */
+export function holderKind(flags: HolderFlags | null | undefined): HolderKind | null {
+  if (flags?.stock_holder) return 'SUPERVISOR';
+  if (flags?.field_technician) return 'TECHNICIAN';
   return null;
 }
+
+const HOLDER_ROLE_SELECT = { select: { name: true, stock_holder: true, field_technician: true } } as const;
 
 @Injectable()
 export class TechnicianStockService {
@@ -133,11 +133,11 @@ export class TechnicianStockService {
   async technicians() {
     const users = await this.prisma.user.findMany({
       where: { is_active: true },
-      select: { id: true, name: true, email: true, role: { select: { name: true } } },
+      select: { id: true, name: true, email: true, role: HOLDER_ROLE_SELECT },
       orderBy: { name: 'asc' },
     });
     return users.flatMap((user) => {
-      const kind = holderKind(user.role?.name);
+      const kind = holderKind(user.role);
       return kind
         ? [{ id: user.id, name: user.name?.trim() || user.email, email: user.email, role: user.role?.name ?? null, kind }]
         : [];
@@ -267,7 +267,7 @@ export class TechnicianStockService {
     });
     return {
       /** SUPERVISOR = hands stock out to technicians. */
-      holder: holderKind(actor.role),
+      holder: holderKind(actor.access),
       /** Inventory team and managers record from the full catalog. */
       restricted: !this.isInventoryTeam(actor),
       items: items.map((item) => {
@@ -506,19 +506,20 @@ export class TechnicianStockService {
     });
     if (!unit) return;
     const holder = unit.technician_user_id
-      ? await tx.user.findUnique({ where: { id: unit.technician_user_id }, select: { role: { select: { name: true } } } })
+      ? await tx.user.findUnique({ where: { id: unit.technician_user_id }, select: { role: HOLDER_ROLE_SELECT } })
       : null;
     await tx.serialUnit.updateMany({
       where: { consumption_id: consumptionId, status: 'CONSUMED' },
       data: {
-        status: holderKind(holder?.role?.name) === 'SUPERVISOR' ? HELD_STATUS.SUPERVISOR : HELD_STATUS.TECHNICIAN,
+        status: holderKind(holder?.role) === 'SUPERVISOR' ? HELD_STATUS.SUPERVISOR : HELD_STATUS.TECHNICIAN,
         consumption_id: null,
       },
     });
   }
 
+  /** Can correct consumption and see everyone's stock, not just their own. */
   isInventoryTeam(actor: StockActor) {
-    return hasAnyRole(INVENTORY_ROLES, actor.role);
+    return can(actor.access, 'inventory_consumption', 'EDIT');
   }
 
   async batch(batchId: string) {
@@ -692,9 +693,9 @@ export class TechnicianStockService {
   private async findHolder(id: string, kind?: HolderKind): Promise<Holder> {
     const user = await this.prisma.user.findUnique({
       where: { id },
-      select: { id: true, name: true, email: true, is_active: true, role: { select: { name: true } } },
+      select: { id: true, name: true, email: true, is_active: true, role: HOLDER_ROLE_SELECT },
     });
-    const found = user?.is_active ? holderKind(user.role?.name) : null;
+    const found = user?.is_active ? holderKind(user.role) : null;
     if (!user || !found || (kind && found !== kind)) {
       throw new NotFoundException(
         kind === 'SUPERVISOR'
@@ -708,7 +709,7 @@ export class TechnicianStockService {
   }
 
   private async actingSupervisor(actor: StockActor): Promise<Holder> {
-    if (holderKind(actor.role) !== 'SUPERVISOR') {
+    if (holderKind(actor.access) !== 'SUPERVISOR') {
       throw new ForbiddenException('Only supervisors hand stock to technicians.');
     }
     return this.findHolder(actor.id, 'SUPERVISOR');

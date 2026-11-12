@@ -6,7 +6,6 @@ import {
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { ActivitiesService } from 'src/activities/activities.service';
@@ -28,7 +27,12 @@ import {
 } from './dto/update-preferences.dto';
 
 import { randomBytes } from 'crypto';
+import { UserAccess } from 'src/auth/access/access';
+import { normalizeOverrides } from 'src/auth/access/permissions';
 import { evaluateFix, normalizeAccuracy, PendingMove } from './location-filter';
+
+/** The signed-in admin acting on another account. */
+export type ManagingUser = { id: string; access?: UserAccess };
 
 @Injectable()
 export class UserService {
@@ -106,11 +110,12 @@ export class UserService {
 
     return {
       ...get_user,
+      access: user.access,
     };
   }
 
   async getUserById(id: string) {
-    let get_user = await this.findOne(id);
+    const get_user = await this.findOne(id);
 
     if (!get_user) {
       throw new ForbiddenException('User not found');
@@ -122,6 +127,89 @@ export class UserService {
     return {
       ...get_user,
     };
+  }
+
+  /** Name, phone, role and per-screen overrides; overrides are replaced as a set. */
+  async updateUser(id: string, dto: UpdateUserDto, actor: ManagingUser) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: {
+        role: { select: { id: true, full_access: true } },
+        permissions: { select: { screen: true, level: true } },
+      },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    this.assertCanManage(actor, user.role);
+
+    const roleId = dto.role_id ?? user.role_id;
+    const role = await this.prisma.role.findFirst({
+      where: { id: roleId, deleted_at: null },
+      select: {
+        id: true,
+        full_access: true,
+        permissions: { select: { screen: true, level: true } },
+      },
+    });
+    if (!role) {
+      throw new BadRequestException('Unknown role');
+    }
+    this.assertCanManage(actor, role);
+    if (id === actor.id && roleId !== user.role_id) {
+      throw new BadRequestException('You cannot change your own role');
+    }
+    if (user.role.full_access && !role.full_access && user.is_active) {
+      await this.assertNotLastFullAccess('remove full access from');
+    }
+
+    const overrides =
+      dto.permissions !== undefined
+        ? normalizeOverrides(role, dto.permissions)
+        : roleId !== user.role_id
+          ? normalizeOverrides(role, user.permissions)
+          : null;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id },
+        data: {
+          name: dto.name?.trim(),
+          phone: dto.phone?.trim(),
+          role_id: roleId,
+        },
+      });
+      if (overrides) {
+        await tx.userPermission.deleteMany({ where: { user_id: id } });
+        if (overrides.length) {
+          await tx.userPermission.createMany({
+            data: overrides.map((o) => ({ ...o, user_id: id })),
+          });
+        }
+      }
+    });
+    await this.activity.createUserLog('Admin updated the account', user);
+    return this.getUserById(id);
+  }
+
+  /** Only full-access admins may manage full-access accounts or hand out full access. */
+  private assertCanManage(actor: ManagingUser, role: { full_access: boolean }) {
+    if (role.full_access && !actor.access?.full) {
+      throw new ForbiddenException(
+        'Only full-access administrators can manage full-access accounts',
+      );
+    }
+  }
+
+  private async assertNotLastFullAccess(action: string) {
+    const remaining = await this.prisma.user.count({
+      where: { is_active: true, role: { full_access: true, deleted_at: null } },
+    });
+    if (remaining <= 1) {
+      throw new BadRequestException(
+        `You cannot ${action} the last full-access administrator`,
+      );
+    }
   }
 
   async updateStatus(
@@ -579,9 +667,13 @@ export class UserService {
       include: {
         role: {
           select: {
+            id: true,
             name: true,
+            full_access: true,
+            permissions: { select: { screen: true, level: true } },
           },
         },
+        permissions: { select: { screen: true, level: true } },
         user_log: {
           orderBy: {
             created_at: 'desc',
@@ -698,14 +790,16 @@ export class UserService {
               }
             : {},
           filters.role
-            ? {
-                role: {
-                  name: {
-                    equals: filters.role,
-                    mode: 'insensitive',
+            ? filters.role.toLowerCase() === 'technician'
+              ? { role: { field_technician: true } }
+              : {
+                  role: {
+                    name: {
+                      equals: filters.role,
+                      mode: 'insensitive',
+                    },
                   },
-                },
-              }
+                }
             : {},
           filters.availability
             ? {
@@ -743,6 +837,7 @@ export class UserService {
           role: {
             select: {
               name: true,
+              field_technician: true,
             },
           },
           feedbacks: {
@@ -757,7 +852,7 @@ export class UserService {
         throw new ForbiddenException('User not found');
       }
 
-      if (user.role.name.toLowerCase() !== 'technician') {
+      if (!user.role.field_technician) {
         throw new ForbiddenException('User is not a technician');
       }
 
@@ -892,26 +987,18 @@ export class UserService {
     }
   }
 
-  async deleteUser(id: string) {
+  async deleteUser(id: string, actor: ManagingUser) {
     const user = await this.prisma.user.findUnique({
       where: { id },
-      include: { role: { select: { name: true } } },
+      include: { role: { select: { name: true, full_access: true } } },
     });
 
     if (!user) {
       throw new NotFoundException('User not found');
     }
-
-    if (['Admin', 'Administrator'].includes(user.role.name)) {
-      const admins = await this.prisma.user.count({
-        where: {
-          is_active: true,
-          role: { name: { in: ['Admin', 'Administrator'] } },
-        },
-      });
-      if (admins <= 1) {
-        throw new BadRequestException('You cannot delete the last administrator');
-      }
+    this.assertCanManage(actor, user.role);
+    if (user.role.full_access && user.is_active) {
+      await this.assertNotLastFullAccess('delete');
     }
 
     await this.prisma.$transaction([
@@ -930,17 +1017,21 @@ export class UserService {
     return { message: 'User deleted successfully' };
   }
 
-  async toggleUserStatus(id: string) {
+  async toggleUserStatus(id: string, actor: ManagingUser) {
     const user = await this.prisma.user.findUnique({
       where: { id },
-      include: { role: { select: { id: true, name: true } } },
+      include: { role: { select: { id: true, name: true, full_access: true } } },
     });
 
     if (!user) {
       throw new NotFoundException('User not found');
     }
+    this.assertCanManage(actor, user.role);
 
     const activate = !user.is_active;
+    if (!activate && user.role.full_access) {
+      await this.assertNotLastFullAccess('deactivate');
+    }
     const updated = await this.prisma.user.update({
       where: { id },
       data: activate

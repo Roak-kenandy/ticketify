@@ -23,7 +23,7 @@ import moment from "moment";
 import { useParams } from "next/navigation";
 import React from "react";
 import { StackHeader } from "@/components/field/shell/headers";
-import { AdminAuth } from "@/lib/admin-auth";
+import { can } from "@/lib/permissions";
 import CompletionChecklist from "@/components/field/ticket/completion-checklist";
 import ActivityDetailModal from "@/components/field/ticket/modals/activity-details";
 import AddAttachmentModal from "@/components/field/ticket/modals/add-attachment";
@@ -204,7 +204,7 @@ export default function TicketDetailsPage() {
   const isClosed = view?.state === "CLOSED" || view?.stage?.name === "Closed";
   const canEdit = isMine && !isClosed;
   const [inventoryTeam, setInventoryTeam] = React.useState(false);
-  React.useEffect(() => setInventoryTeam(AdminAuth.canAccessInventory()), []);
+  React.useEffect(() => setInventoryTeam(can("inventory_consumption", "EDIT")), []);
   /** The inventory team corrects materials on closed requests; technicians are locked out. */
   const correctsInventory = isClosed && inventoryTeam;
   const activities: any[] = data?.activities?.content ?? [];

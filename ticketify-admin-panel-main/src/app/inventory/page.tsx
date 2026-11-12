@@ -74,6 +74,7 @@ import {
   type InventoryRowStatus,
   type InventorySummary,
 } from "@/lib/inventory";
+import { can } from "@/lib/permissions";
 
 type Filters = {
   from: string;
@@ -131,6 +132,8 @@ export default function InventoryConsumptionPage() {
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(25);
   const [correction, setCorrection] = React.useState<Correction | null>(null);
+  const [canCorrect, setCanCorrect] = React.useState(false);
+  React.useEffect(() => setCanCorrect(can("inventory_consumption", "EDIT")), []);
 
   const query = React.useMemo(
     () =>
@@ -602,7 +605,7 @@ export default function InventoryConsumptionPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        {row.status !== "Reversed" && (
+                        {canCorrect && row.status !== "Reversed" && (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button

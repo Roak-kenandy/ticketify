@@ -5,6 +5,7 @@ import {
   PackageCheck,
   PackageSearch,
   RadioTower,
+  ShieldCheck,
   FileSpreadsheet,
   LayoutDashboard,
   MapPinned,
@@ -16,14 +17,11 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import type { AccessKey } from "@/lib/access";
+import type { RouteRule } from "@/lib/access";
 
-export type NavItem = {
+export type NavItem = RouteRule & {
   label: string;
-  href: string;
   icon: LucideIcon;
-  access: AccessKey;
-  exact?: boolean;
 };
 
 export type NavGroup = {
@@ -35,25 +33,25 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Operations",
     items: [
-      { label: "Live map", href: "/", icon: MapPinned, access: "ops", exact: true },
-      { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, access: "status-board" },
+      { label: "Live map", href: "/", icon: MapPinned, screen: "live_map", exact: true },
+      { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, screen: "dashboard" },
       {
         label: "Operations board",
         href: "/dispatch",
         icon: MonitorPlay,
-        access: "dispatch",
+        screen: "operations_board",
       },
       {
         label: "Auto-assign",
         href: "/auto-assign",
         icon: Zap,
-        access: "dispatch-manage",
+        screen: "auto_assign",
       },
       {
         label: "Technician app",
         href: "/field",
         icon: Smartphone,
-        access: "field",
+        screen: "technician_app",
       },
     ],
   },
@@ -64,13 +62,13 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "Master report",
         href: "/admin/reports",
         icon: FileSpreadsheet,
-        access: "reports",
+        screen: "master_report",
       },
       {
         label: "Ticket aging",
         href: "/reports",
         icon: BarChart3,
-        access: "reports",
+        screen: "ticket_aging",
         exact: true,
       },
     ],
@@ -82,14 +80,14 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "Finance overview",
         href: "/finance",
         icon: Wallet,
-        access: "finance",
+        screen: "finance_overview",
         exact: true,
       },
       {
         label: "Payments",
         href: "/finance/reports",
         icon: Receipt,
-        access: "finance",
+        screen: "payments",
       },
     ],
   },
@@ -100,33 +98,33 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "Consumption",
         href: "/inventory",
         icon: PackageSearch,
-        access: "inventory",
+        screen: "inventory_consumption",
         exact: true,
       },
       {
         label: "Stock & hand-outs",
         href: "/inventory/stock",
         icon: PackageCheck,
-        access: "inventory",
+        screen: "stock",
         exact: true,
       },
       {
         label: "Stock report",
         href: "/inventory/stock/report",
         icon: ClipboardList,
-        access: "inventory",
+        screen: "stock_report",
       },
       {
         label: "Item master",
         href: "/inventory/items",
         icon: Boxes,
-        access: "inventory",
+        screen: "item_master",
       },
       {
         label: "Provisioning log",
         href: "/provisioning",
         icon: RadioTower,
-        access: "provisioning",
+        screen: "provisioning_log",
       },
     ],
   },
@@ -137,12 +135,24 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "Team overview",
         href: "/admin",
         icon: LayoutDashboard,
-        access: "admin",
+        screen: "team_overview",
         exact: true,
       },
-      { label: "Users", href: "/admin/users", icon: Users, access: "admin" },
+      { label: "Users", href: "/admin/users", icon: Users, screen: "users" },
+      {
+        label: "Roles & permissions",
+        href: "/admin/roles",
+        icon: ShieldCheck,
+        screen: "full",
+      },
     ],
   },
+];
+
+/** Pages that need more than their nav item, checked by the shell. */
+export const ROUTE_RULES: RouteRule[] = [
+  ...NAV_GROUPS.flatMap((group) => group.items),
+  { href: "/admin/users/create", screen: "users", level: "EDIT" },
 ];
 
 export function isNavItemActive(item: NavItem, pathname: string): boolean {

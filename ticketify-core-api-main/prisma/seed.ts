@@ -1,4 +1,4 @@
-import { PrismaClient, Role } from '@prisma/client';
+import { AccessLevel, PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 import * as argon from 'argon2';
@@ -13,48 +13,81 @@ function seedPassword(envName: string): string {
   return value;
 }
 
-let roles: Role[] = [
+type SeedRole = {
+  id: string;
+  name: string;
+  description: string;
+  is_system?: boolean;
+  full_access?: boolean;
+  field_technician?: boolean;
+  stock_holder?: boolean;
+  store?: boolean;
+  permissions?: Record<string, AccessLevel>;
+};
+
+/** Same setup as the dynamic_rbac migration gives existing databases. */
+const roles: SeedRole[] = [
   {
-    name: 'Admin',
     id: '1',
-    created_at: new Date(),
-    updated_at: new Date(),
-    deleted_at: null,
+    name: 'Admin',
+    description: 'Full access to every screen, roles and users',
+    is_system: true,
+    full_access: true,
   },
   {
-    name: 'Technician',
     id: '2',
-    created_at: new Date(),
-    updated_at: new Date(),
-    deleted_at: null,
+    name: 'Technician',
+    description: 'Works assigned tickets in the technician app',
+    field_technician: true,
+    permissions: { technician_app: 'VIEW' },
   },
   {
-    name: 'Supervisor',
     id: '3',
-    created_at: new Date(),
-    updated_at: new Date(),
-    deleted_at: null,
+    name: 'Supervisor',
+    description: 'Runs operations, holds stock and hands it out to technicians',
+    stock_holder: true,
+    permissions: {
+      live_map: 'VIEW',
+      dashboard: 'VIEW',
+      operations_board: 'DELETE',
+      auto_assign: 'EDIT',
+      technician_app: 'VIEW',
+      master_report: 'VIEW',
+      ticket_aging: 'VIEW',
+      finance_overview: 'EDIT',
+      payments: 'VIEW',
+      inventory_consumption: 'EDIT',
+      stock: 'EDIT',
+      stock_report: 'VIEW',
+      item_master: 'VIEW',
+      provisioning_log: 'VIEW',
+      team_overview: 'VIEW',
+      users: 'VIEW',
+    },
   },
   {
-    name: 'CEO',
     id: '4',
-    created_at: new Date(),
-    updated_at: new Date(),
-    deleted_at: null,
+    name: 'CEO',
+    description: 'Read-only view of live operations',
+    permissions: { live_map: 'VIEW', operations_board: 'VIEW', provisioning_log: 'VIEW' },
   },
   {
-    name: 'Finance',
     id: '5',
-    created_at: new Date(),
-    updated_at: new Date(),
-    deleted_at: null,
+    name: 'Finance',
+    description: 'Payments and finance reports',
+    permissions: { finance_overview: 'EDIT', payments: 'VIEW' },
   },
 ];
 
 async function main() {
-  for (let role of roles) {
+  for (const { permissions = {}, ...role } of roles) {
     await prisma.role.create({
-      data: role,
+      data: {
+        ...role,
+        permissions: {
+          create: Object.entries(permissions).map(([screen, level]) => ({ screen, level })),
+        },
+      },
     });
   }
 

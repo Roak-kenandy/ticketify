@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/app/empty-state";
 import { TableSkeletonRows } from "@/components/app/filter-bar";
 import axiosInterceptorInstance, { apiErrorMessage } from "@/lib/axios-interceptor";
 import { formatMvr } from "@/lib/format";
+import { can } from "@/lib/permissions";
 
 export type PendingPayment = {
   reference: string;
@@ -39,6 +40,8 @@ export function PendingPaymentsTable({
   onChanged: () => void;
 }) {
   const [sending, setSending] = React.useState<string | null>(null);
+  const [canRemind, setCanRemind] = React.useState(false);
+  React.useEffect(() => setCanRemind(can("finance_overview", "EDIT")), []);
   const [, setNow] = React.useState(Date.now());
 
   React.useEffect(() => {
@@ -116,6 +119,7 @@ export function PendingPaymentsTable({
                 </TableCell>
                 <TableCell className="hidden text-muted-foreground lg:table-cell">{row.issued_by || "—"}</TableCell>
                 <TableCell className="text-right">
+                  {canRemind && (
                   <Button
                     size="sm"
                     variant="outline"
@@ -130,6 +134,7 @@ export function PendingPaymentsTable({
                     )}
                     {coolingDown ? `Again ${moment(waitUntil).fromNow()}` : "Send reminder"}
                   </Button>
+                  )}
                   {row.reminders_sent > 0 && row.last_reminder_at && (
                     <div className="mt-1 text-xs text-muted-foreground">
                       {row.reminders_sent} sent · last {moment(row.last_reminder_at).fromNow()}

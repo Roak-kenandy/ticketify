@@ -21,7 +21,21 @@ import {
 } from "lucide-react";
 import { AdminAPI } from "@/lib/admin-api";
 import { initials } from "@/lib/access";
-import { UserProfile } from "@/types/admin";
+import { AccessLevel, Role, ScreenDef, UserProfile } from "@/types/admin";
+import { can, isFullAccess, type Screen } from "@/lib/permissions";
+import {
+  ScreenAccessEditor,
+  toLevelMap,
+  toOverrides,
+  type LevelMap,
+} from "@/components/admin/screen-access";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -59,6 +73,15 @@ export default function UserProfilePage() {
   const [loading, setLoading] = React.useState(true);
   const [resetOpen, setResetOpen] = React.useState(false);
   const [statusSaving, setStatusSaving] = React.useState(false);
+  const [canEdit, setCanEdit] = React.useState(false);
+  const [canDeactivate, setCanDeactivate] = React.useState(false);
+  const [fullViewer, setFullViewer] = React.useState(false);
+
+  React.useEffect(() => {
+    setCanEdit(can("users", "EDIT"));
+    setCanDeactivate(can("users", "DELETE"));
+    setFullViewer(isFullAccess());
+  }, []);
 
   const load = React.useCallback(async () => {
     try {
@@ -118,6 +141,9 @@ export default function UserProfilePage() {
     );
   }
 
+  // Full-access accounts can only be managed by full-access admins.
+  const manageable = fullViewer || !user.role?.full_access;
+
   const details = [
     { icon: Mail, label: "Email", value: user.email },
     { icon: Phone, label: "Phone", value: user.phone || "—" },
@@ -153,10 +179,13 @@ export default function UserProfilePage() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => setResetOpen(true)}>
-              <KeyRound className="h-4 w-4" />
-              Reset password
-            </Button>
+            {canEdit && manageable && (
+              <Button variant="outline" onClick={() => setResetOpen(true)}>
+                <KeyRound className="h-4 w-4" />
+                Reset password
+              </Button>
+            )}
+            {canDeactivate && manageable && (
             <Button
               variant={user.is_active ? "outline" : "default"}
               onClick={toggleStatus}
@@ -171,6 +200,7 @@ export default function UserProfilePage() {
               )}
               {user.is_active ? "Deactivate" : "Activate"}
             </Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -239,6 +269,8 @@ export default function UserProfilePage() {
         </Card>
       </div>
 
+      <AccessCard user={user} editable={canEdit && manageable} fullViewer={fullViewer} onSaved={load} />
+
       <ResetPasswordDialog
         open={resetOpen}
         onOpenChange={setResetOpen}
@@ -246,6 +278,140 @@ export default function UserProfilePage() {
         userName={user.name}
       />
     </>
+  );
+}
+
+function AccessCard({
+  user,
+  editable,
+  fullViewer,
+  onSaved,
+}: {
+  user: UserProfile;
+  editable: boolean;
+  fullViewer: boolean;
+  onSaved: () => Promise<void>;
+}) {
+  const [roles, setRoles] = React.useState<Role[]>([]);
+  const [screens, setScreens] = React.useState<ScreenDef[]>([]);
+  const [roleId, setRoleId] = React.useState(user.role_id);
+  const [levels, setLevels] = React.useState<LevelMap>({});
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    Promise.all([AdminAPI.getAllRoles(), AdminAPI.getScreens()])
+      .then(([list, catalogue]) => {
+        setRoles(list);
+        setScreens(catalogue.screens);
+      })
+      .catch(() => toast.error("Couldn't load roles."));
+  }, []);
+
+  const savedLevels = React.useMemo(
+    () => ({ ...toLevelMap(user.role?.permissions), ...toLevelMap(user.permissions) }),
+    [user],
+  );
+
+  React.useEffect(() => {
+    setRoleId(user.role_id);
+    setLevels(savedLevels);
+  }, [user.role_id, savedLevels]);
+
+  const role = roles.find((item) => item.id === roleId);
+  const baseline = toLevelMap(role?.permissions);
+  const choices = roles.filter((item) => fullViewer || !item.full_access || item.id === user.role_id);
+  const dirty =
+    roleId !== user.role_id || JSON.stringify(levels) !== JSON.stringify(savedLevels);
+
+  function changeRole(next: string) {
+    setRoleId(next);
+    setLevels(toLevelMap(roles.find((item) => item.id === next)?.permissions));
+  }
+
+  function setLevel(screen: Screen, level: AccessLevel) {
+    setLevels((prev) => ({ ...prev, [screen]: level }));
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      await AdminAPI.updateUser(user.id, {
+        role_id: roleId,
+        permissions: toOverrides(levels, baseline),
+      });
+      toast.success(`Access updated for ${user.name}`);
+      await onSaved();
+    } catch (err: any) {
+      const message = err.response?.data?.message;
+      toast.error(Array.isArray(message) ? message.join(", ") : message || "Couldn't update access.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card className="mt-6">
+      <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between sm:space-y-0">
+        <div className="space-y-1">
+          <CardTitle>Role &amp; screen access</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            {role?.full_access
+              ? "Full access to every screen."
+              : "Starts from the role. Changes here apply to this person only."}
+          </p>
+        </div>
+        <div className="w-full sm:w-56">
+          <Label htmlFor="user-role" className="sr-only">
+            Role
+          </Label>
+          <Select value={roleId} onValueChange={changeRole} disabled={!editable || !roles.length}>
+            <SelectTrigger id="user-role" aria-label="Role">
+              <SelectValue placeholder={user.role?.name ?? "Role"} />
+            </SelectTrigger>
+            <SelectContent>
+              {choices.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </CardHeader>
+      {!role?.full_access && (
+        <CardContent>
+          {screens.length && role ? (
+            <ScreenAccessEditor
+              screens={screens}
+              levels={levels}
+              baseline={baseline}
+              onChange={setLevel}
+              disabled={!editable}
+            />
+          ) : (
+            <Skeleton className="h-40 w-full" />
+          )}
+        </CardContent>
+      )}
+      {editable && dirty && (
+        <CardContent className="flex justify-end gap-2 border-t pt-4">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setRoleId(user.role_id);
+              setLevels(savedLevels);
+            }}
+            disabled={saving}
+          >
+            Discard
+          </Button>
+          <Button onClick={save} disabled={saving}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+            Save access
+          </Button>
+        </CardContent>
+      )}
+    </Card>
   );
 }
 

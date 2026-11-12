@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { TicketPaymentStatus } from '@prisma/client';
-import { hasAnyRole } from 'src/auth/ops-roles';
+import { can, UserAccess } from 'src/auth/access/access';
 import { WorkflowConfigService } from 'src/config/workflow-config.service';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { CrmApiClient } from 'src/infrastructure/crm/crm-api.client';
@@ -61,12 +61,13 @@ export class StatusBoardService {
     private readonly logger: LoggerService,
   ) {}
 
-  static scopeFor(role: unknown): 'mine' | 'all' {
-    return hasAnyRole(['Technician'], role) ? 'mine' : 'all';
+  /** Dashboard viewers see every ticket; technician-app users only their own. */
+  static scopeFor(access: UserAccess | undefined): 'mine' | 'all' {
+    return can(access, 'dashboard') ? 'all' : 'mine';
   }
 
-  board(user: { crm_user_id?: string | null; role?: unknown }) {
-    const scope = StatusBoardService.scopeFor(user.role);
+  board(user: { crm_user_id?: string | null; access?: UserAccess }) {
+    const scope = StatusBoardService.scopeFor(user.access);
     const key = scope === 'all' ? 'all' : `mine:${user.crm_user_id ?? ''}`;
     const hit = this.cache.get(key);
     if (hit && Date.now() - hit.at < CACHE_MS) return hit.value;

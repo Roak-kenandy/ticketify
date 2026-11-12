@@ -1,11 +1,17 @@
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsEmail,
   IsNotEmpty,
+  IsOptional,
   IsString,
   Matches,
   MaxLength,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { PermissionOverrideDto } from '../access/permission.dto';
 import { PASSWORD_MESSAGE, PASSWORD_RULE } from './change-password.dto';
 
 export class SignUpDto {
@@ -39,4 +45,12 @@ export class SignUpDto {
   @IsNotEmpty()
   @MaxLength(64)
   role_id: string;
+
+  /** Per-screen changes from the role's levels; only the role's screens count. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => PermissionOverrideDto)
+  permissions?: PermissionOverrideDto[];
 }

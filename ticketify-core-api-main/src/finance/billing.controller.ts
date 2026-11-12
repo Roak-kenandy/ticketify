@@ -9,8 +9,6 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtGuard } from 'src/auth/guard';
-import { RolesGuard } from 'src/auth/guard/roles.guard';
-import { Roles } from 'src/infrastructure/decorators/roles.decorator';
 import {
   TicketAccessGuard,
   TicketScope,
@@ -21,8 +19,8 @@ import { TicketPaymentService } from 'src/payments/ticket-payment.service';
 import { ChargeCatalogService } from 'src/charges/charge-catalog.service';
 import { CrmApiClient } from 'src/infrastructure/crm/crm-api.client';
 import { ChargePreviewDto } from 'src/payments/dto/charge-line.dto';
-
-const ROLES = ['Technician', 'Admin', 'Supervisor', 'Administrator'];
+import { Access } from 'src/auth/access/access';
+import { FIELD } from 'src/auth/access/requirements';
 
 @Controller('billing/tickets')
 export class BillingController {
@@ -33,9 +31,9 @@ export class BillingController {
     private crm: CrmApiClient,
   ) {}
 
-  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @UseGuards(JwtGuard, TicketAccessGuard)
   @TicketScope('crmTicketId')
-  @Roles(ROLES)
+  @Access(FIELD)
   @Get(':crmTicketId/context')
   async context(@Param('crmTicketId') crmTicketId: string) {
     const sr = await this.crm.getServiceRequest(
@@ -57,9 +55,9 @@ export class BillingController {
     };
   }
 
-  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @UseGuards(JwtGuard, TicketAccessGuard)
   @TicketScope('crmTicketId')
-  @Roles(ROLES)
+  @Access(FIELD)
   @Post(':crmTicketId/preview')
   preview(
     @Param('crmTicketId') crmTicketId: string,
@@ -69,17 +67,17 @@ export class BillingController {
     return this.catalog.resolveLines(body.items ?? []);
   }
 
-  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @UseGuards(JwtGuard, TicketAccessGuard)
   @TicketScope('crmTicketId')
-  @Roles(ROLES)
+  @Access(FIELD)
   @Get(':crmTicketId/workflow')
   workflow(@Param('crmTicketId') crmTicketId: string) {
     return this.billing.getWorkflowView(crmTicketId);
   }
 
-  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @UseGuards(JwtGuard, TicketAccessGuard)
   @TicketScope('crmTicketId')
-  @Roles(ROLES)
+  @Access(FIELD)
   @Patch(':crmTicketId/decision')
   decide(
     @Req() req: { user: { id: string } },
@@ -94,9 +92,9 @@ export class BillingController {
     );
   }
 
-  @UseGuards(JwtGuard, RolesGuard, TicketAccessGuard)
+  @UseGuards(JwtGuard, TicketAccessGuard)
   @TicketScope('crmTicketId')
-  @Roles(ROLES)
+  @Access(FIELD)
   @Post(':crmTicketId/check-payment')
   async checkPayment(@Param('crmTicketId') crmTicketId: string) {
     const view = await this.billing.getWorkflowView(crmTicketId);

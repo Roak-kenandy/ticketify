@@ -4,11 +4,14 @@ import {
   User,
   UserProfile,
   Role,
+  RoleInput,
+  ScreenDef,
   UserStats,
   CreateUserData,
   UpdateUserData,
   UserFilter,
 } from '@/types/admin';
+import type { Level } from './permissions';
 
 export class AdminAPI {
   private static getAuthHeaders() {
@@ -85,11 +88,50 @@ export class AdminAPI {
     return response.data;
   }
 
+  static async updateUser(userId: string, data: UpdateUserData): Promise<UserProfile> {
+    const response = await axiosInterceptorInstance.patch(
+      `/admin/users/${encodeURIComponent(userId)}`,
+      data,
+      { headers: this.getAuthHeaders() },
+    );
+    return response.data;
+  }
+
+  /** Roles with their screens and user counts. */
   static async getAllRoles(): Promise<Role[]> {
-    const response = await axiosInterceptorInstance.get('/auth/roles', {
+    const response = await axiosInterceptorInstance.get('/roles', {
       headers: this.getAuthHeaders(),
     });
     return response.data;
+  }
+
+  static async getScreens(): Promise<{ levels: Level[]; screens: ScreenDef[] }> {
+    const response = await axiosInterceptorInstance.get('/roles/screens', {
+      headers: this.getAuthHeaders(),
+    });
+    return response.data;
+  }
+
+  static async createRole(data: RoleInput): Promise<Role> {
+    const response = await axiosInterceptorInstance.post('/roles', data, {
+      headers: this.getAuthHeaders(),
+    });
+    return response.data;
+  }
+
+  static async updateRole(roleId: string, data: Partial<RoleInput>): Promise<Role> {
+    const response = await axiosInterceptorInstance.patch(
+      `/roles/${encodeURIComponent(roleId)}`,
+      data,
+      { headers: this.getAuthHeaders() },
+    );
+    return response.data;
+  }
+
+  static async deleteRole(roleId: string): Promise<void> {
+    await axiosInterceptorInstance.delete(`/roles/${encodeURIComponent(roleId)}`, {
+      headers: this.getAuthHeaders(),
+    });
   }
 
   static async getUserStats(): Promise<UserStats> {

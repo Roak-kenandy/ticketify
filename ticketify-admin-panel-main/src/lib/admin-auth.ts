@@ -1,5 +1,15 @@
 import { jwtDecode } from 'jwt-decode';
 import { getAuthToken, removeAuthToken, setAuthToken } from './auth-sync';
+import {
+  can,
+  canSignInWith,
+  clearAccess,
+  hasCapability,
+  hasConsoleAccessWith,
+  readAccess,
+  type Screen,
+  type UserAccess,
+} from './permissions';
 
 interface DecodedToken {
   sub: string;
@@ -10,35 +20,28 @@ interface DecodedToken {
   exp: number;
 }
 
-const PANEL_ROLES = ['Admin', 'Administrator', 'Supervisor', 'CEO'];
-const DISPATCH_ROLES = ['Admin', 'Administrator', 'Supervisor'];
-const REPORT_ROLES = ['Admin', 'Administrator', 'Supervisor'];
-const FINANCE_REPORT_ROLES = [
-  'Finance',
-  'Admin',
-  'Administrator',
-  'Supervisor',
+/** Where each screen lives, in the order a default landing page is picked. */
+const LANDING: [Screen, string][] = [
+  ["live_map", "/"],
+  ["dashboard", "/dashboard"],
+  ["operations_board", "/dispatch"],
+  ["finance_overview", "/finance"],
+  ["payments", "/finance/reports"],
+  ["inventory_consumption", "/inventory"],
+  ["stock", "/inventory/stock"],
+  ["stock_report", "/inventory/stock/report"],
+  ["item_master", "/inventory/items"],
+  ["master_report", "/admin/reports"],
+  ["ticket_aging", "/reports"],
+  ["auto_assign", "/auto-assign"],
+  ["provisioning_log", "/provisioning"],
+  ["team_overview", "/admin"],
+  ["users", "/admin/users"],
 ];
-const INVENTORY_ROLES = ['Inventory', 'Admin', 'Administrator', 'Supervisor'];
-/** Same as STORE_ROLES in the API: issues to supervisors, records returns. */
-const STORE_ROLES = ['Inventory', 'Admin', 'Administrator'];
-const ITEM_MASTER_ROLES = ['Admin', 'Administrator'];
-/** Same as FIELD_ROLES in the API: technicians plus managers who work tickets. */
-const FIELD_ROLES = ['Technician', 'Admin', 'Administrator', 'Supervisor'];
-/** Everyone who signs in to the operations console (not technicians). */
-export const CONSOLE_ROLES = ['Admin', 'Administrator', 'Supervisor', 'CEO', 'Finance', 'Inventory'];
-export const SIGN_IN_ROLES = CONSOLE_ROLES.concat(
-  FIELD_ROLES.filter((role) => !CONSOLE_ROLES.includes(role)),
-);
-
-function hasRole(allowed: string[], role: string): boolean {
-  const owned = role.toLowerCase();
-  return allowed.some((name) => name.toLowerCase() === owned);
-}
 
 /**
- * Role from the signed access token, never from the editable `user` entry.
- * The API still enforces roles on every request; this only drives navigation.
+ * Role name from the signed access token, for display only. What the user
+ * may open comes from their stored access (see ./permissions).
  */
 function storedRoleName(): string {
   if (typeof window === 'undefined') {
@@ -109,97 +112,45 @@ export class AdminAuth {
     return storedRoleName();
   }
 
-  static isCeo(): boolean {
-    return storedRoleName() === 'CEO';
-  }
-
-  static isFinance(): boolean {
-    return storedRoleName() === 'Finance';
-  }
-
+  /** Finance overview or the payments report. */
   static canAccessFinanceReports(): boolean {
-    return FINANCE_REPORT_ROLES.includes(storedRoleName());
+    return can("finance_overview") || can("payments");
   }
 
-  static isInventory(): boolean {
-    return storedRoleName() === 'Inventory';
-  }
-
-  /** Consumption report, reconcile and adjust (Office Inventory Team + managers). */
-  static canAccessInventory(): boolean {
-    return INVENTORY_ROLES.includes(storedRoleName());
-  }
-
-  /** The store: issue stock to supervisors and record returns. */
+  /** The store: issue stock to holders and record returns. */
   static canManageStore(): boolean {
-    return STORE_ROLES.includes(storedRoleName());
+    return hasCapability("store") && can("stock", "EDIT");
   }
 
   /** Holds stock from the store and hands it out to technicians. */
-  static isSupervisor(): boolean {
-    return storedRoleName() === 'Supervisor';
+  static isStockHolder(): boolean {
+    return hasCapability("stock_holder") && can("stock", "EDIT");
+  }
+
+  /** Request alerts go to the store and to stock holders. */
+  static canSeeStockAlerts(): boolean {
+    return (hasCapability("store") || hasCapability("stock_holder")) && can("stock");
   }
 
   /** Create and edit items, UOMs and serial/decimal rules. */
   static canManageItemMaster(): boolean {
-    return ITEM_MASTER_ROLES.includes(storedRoleName());
+    return can("item_master", "EDIT");
   }
 
-  static canViewOpsMap(): boolean {
-    return PANEL_ROLES.includes(storedRoleName());
-  }
-
-  /** Read-only dispatch / operations board (CEO + supervisors). */
-  static canViewDispatchBoard(): boolean {
-    return this.canViewOpsMap();
-  }
-
-  static hasAdminRole(token: string): boolean {
-    try {
-      const decoded = jwtDecode<DecodedToken>(token);
-      return (
-        decoded.Roles &&
-        decoded.Roles.some(
-          (role) =>
-            role.toLowerCase() === 'admin' ||
-            role === 'Administrator' ||
-            role === 'Supervisor' ||
-            role === 'CEO',
-        )
-      );
-    } catch {
-      return false;
-    }
-  }
-
-  /** Admin or Supervisor — dispatch map + auto-assign toggle (not CEO). */
-  static canManageDispatch(): boolean {
-    return DISPATCH_ROLES.includes(storedRoleName());
-  }
-
-  static canAccessReports(): boolean {
-    return REPORT_ROLES.includes(storedRoleName());
-  }
-
-  /** User management /admin routes — not CEO. */
-  static canAccessAdminPanel(): boolean {
-    return DISPATCH_ROLES.includes(storedRoleName());
-  }
-
-  static canSignIn(role: string): boolean {
-    return hasRole(SIGN_IN_ROLES, role);
+  static canSignIn(access: UserAccess | null | undefined): boolean {
+    return canSignInWith(access);
   }
 
   /** Technician workspace under /field. */
   static canUseFieldApp(): boolean {
-    return hasRole(FIELD_ROLES, storedRoleName());
+    return can("technician_app");
   }
 
   static canUseConsole(): boolean {
-    return hasRole(CONSOLE_ROLES, storedRoleName());
+    return hasConsoleAccessWith(readAccess());
   }
 
-  /** Landing page: technicians go to /field, everyone else to their console home. */
+  /** Landing page: technician-app-only users go to /field, everyone else to their console home. */
   static homePath(): string {
     if (!this.canUseConsole()) {
       return this.canUseFieldApp() ? '/field' : '/auth/login';
@@ -207,26 +158,14 @@ export class AdminAuth {
     return this.consoleHomePath();
   }
 
-  /** The user's chosen start page when they can access it, else the role default. */
+  /** The user's chosen start page when they can open it, else their first screen. */
   static consoleHomePath(): string {
     const startPage = storedStartPage();
-    if (startPage === 'operations' && this.canViewDispatchBoard()) return '/dispatch';
-    if (startPage === 'finance' && this.canAccessFinanceReports()) return '/finance';
-    if (startPage === 'inventory' && this.canAccessInventory()) return '/inventory';
-    if (startPage === 'map' && this.canViewOpsMap()) return '/';
-    if (this.isFinance()) return '/finance';
-    return this.isInventory() ? '/inventory' : '/';
-  }
-
-  static isUserAuthorized(): boolean {
-    const token = this.getToken();
-    if (!token) {
-      return false;
-    }
-    if (!this.isTokenValid(token)) {
-      return false;
-    }
-    return this.hasAdminRole(token);
+    if (startPage === 'operations' && can('operations_board')) return '/dispatch';
+    if (startPage === 'finance' && can('finance_overview')) return '/finance';
+    if (startPage === 'inventory' && can('inventory_consumption')) return '/inventory';
+    if (startPage === 'map' && can('live_map')) return '/';
+    return LANDING.find(([screen]) => can(screen))?.[1] ?? '/settings';
   }
 
   static getUserInfo(): DecodedToken | null {
@@ -248,6 +187,7 @@ export class AdminAuth {
       return;
     }
     removeAuthToken();
+    clearAccess();
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
     localStorage.removeItem(ACTIVE_PREFS_KEY);

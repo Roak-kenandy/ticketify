@@ -56,8 +56,9 @@ import {
   StageFailure,
 } from './provisioning-runner';
 import { CrmContactSyncService } from './crm-contact-sync.service';
+import { UserAccess } from 'src/auth/access/access';
 
-type Actor = { id: string; crm_user_id?: string; role?: unknown };
+type Actor = { id: string; crm_user_id?: string; access?: UserAccess };
 
 const IN_FLIGHT: ProvisioningStatus[] = [
   'VALIDATING',

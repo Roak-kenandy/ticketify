@@ -23,10 +23,13 @@ import { AdminAuth } from "@/lib/admin-auth";
 import {
   hasAccess,
   initials,
+  meetsRule,
   readSessionUser,
+  routeAllowed,
   type AccessKey,
   type SessionUser,
 } from "@/lib/access";
+import { readAccess, refreshAccess } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -41,7 +44,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useStockAlerts } from "@/lib/stock-alerts";
 import { BrandLockup, BrandMark } from "./brand";
-import { NAV_GROUPS, isNavItemActive } from "./nav-config";
+import { NAV_GROUPS, ROUTE_RULES, isNavItemActive } from "./nav-config";
 
 /** Sidebar counts keyed by nav href. */
 type NavBadges = Record<string, number>;
@@ -58,25 +61,52 @@ export function AppShell({ access = "any", fullBleed, children }: AppShellProps)
   const pathname = usePathname();
   const [user, setUser] = React.useState<SessionUser | null>(null);
   const [allowed, setAllowed] = React.useState(false);
+  const [, setAccessVersion] = React.useState(0);
+  const allowedRef = React.useRef(allowed);
+  allowedRef.current = allowed;
   const { preferences, update } = usePreferences();
   const collapsed = preferences.sidebarCollapsed;
   const [mobileOpen, setMobileOpen] = React.useState(false);
 
   React.useEffect(() => {
+    let cancelled = false;
     const token = AdminAuth.getToken();
-    if (!token || !AdminAuth.isTokenValid(token)) {
+    const signOut = () => {
       AdminAuth.clearSession();
       router.replace("/auth/login");
+    };
+    if (!token || !AdminAuth.isTokenValid(token)) {
+      signOut();
       return;
     }
-    if (!hasAccess(access)) {
-      const home = AdminAuth.homePath();
-      router.replace(home === pathname ? "/auth/login" : home);
-      return;
+    const evaluate = () => {
+      if (!hasAccess(access) || !routeAllowed(pathname, ROUTE_RULES)) {
+        setAllowed(false);
+        const home = AdminAuth.homePath();
+        router.replace(home === pathname ? "/auth/login" : home);
+        return;
+      }
+      setUser(readSessionUser());
+      setAllowed(true);
+    };
+    // Show the stored access straight away; the refresh picks up role changes.
+    if (readAccess()) {
+      evaluate();
     }
-    setUser(readSessionUser());
-    setAllowed(true);
+    refreshAccess().then((result) => {
+      if (cancelled) return;
+      if (result.status === "signed-out" || (result.status === "offline" && !readAccess())) {
+        signOut();
+      } else if (result.status === "ok" && (result.changed || !allowedRef.current)) {
+        evaluate();
+        setAccessVersion((version) => version + 1);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [access, pathname, router]);
+
 
   React.useEffect(() => {
     if (!allowed) {
@@ -112,7 +142,7 @@ export function AppShell({ access = "any", fullBleed, children }: AppShellProps)
     setMobileOpen(false);
   }, [pathname]);
 
-  const stockAlerts = useStockAlerts(allowed && (AdminAuth.canManageStore() || AdminAuth.isSupervisor()), pathname);
+  const stockAlerts = useStockAlerts(allowed && AdminAuth.canSeeStockAlerts(), pathname);
   const badges: NavBadges = { "/inventory/stock": stockAlerts };
 
   function toggleCollapsed() {
@@ -220,7 +250,7 @@ function SidebarContent({
 }) {
   const groups = NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => hasAccess(item.access)),
+    items: group.items.filter((item) => meetsRule(item)),
   })).filter((group) => group.items.length > 0);
 
   return (

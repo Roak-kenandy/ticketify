@@ -39,6 +39,8 @@ model User {
   feedbacks               UserFeedback[]
   role                   Role                   @relation(fields: [role_id], references: [id])
   role_id                String
+  /// Per-screen levels that differ from the role (raise or lower, never add screens).
+  permissions            UserPermission[]
 
   @@map("users")
 
@@ -46,14 +48,55 @@ model User {
 }
 
 model Role {
-  id         String @id @default(cuid())
-  name       String    @db.VarChar()
-  created_at DateTime  @default(now())
-  updated_at DateTime? @updatedAt()
-  deleted_at DateTime? @db.Timestamp()
-  User       User[]
-  
+  id               String           @id @default(cuid())
+  name             String           @db.VarChar()
+  description      String?
+  /// Built-in roles cannot be renamed or deleted.
+  is_system        Boolean          @default(false)
+  /// Every screen at every level, plus role and user administration.
+  full_access      Boolean          @default(false)
+  /// Works tickets in the field: auto-assign pool, own tickets only, personal stock.
+  field_technician Boolean          @default(false)
+  /// Receives stock from the store and hands it out to technicians.
+  stock_holder     Boolean          @default(false)
+  /// The store: issues stock to holders and records returns.
+  store            Boolean          @default(false)
+  created_at       DateTime         @default(now())
+  updated_at       DateTime?        @updatedAt()
+  deleted_at       DateTime?        @db.Timestamp()
+  User             User[]
+  permissions      RolePermission[]
+
   @@map("roles")
+}
+
+/// Ordered: VIEW < EDIT < DELETE. NONE only appears on user overrides.
+enum AccessLevel {
+  NONE
+  VIEW
+  EDIT
+  DELETE
+}
+
+model RolePermission {
+  role_id String
+  /// Screen key from the API catalogue (src/auth/access/screens.ts).
+  screen  String      @db.VarChar(64)
+  level   AccessLevel
+  role    Role        @relation(fields: [role_id], references: [id], onDelete: Cascade)
+
+  @@id([role_id, screen])
+  @@map("role_permissions")
+}
+
+model UserPermission {
+  user_id String
+  screen  String      @db.VarChar(64)
+  level   AccessLevel
+  user    User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@id([user_id, screen])
+  @@map("user_permissions")
 }
 
 

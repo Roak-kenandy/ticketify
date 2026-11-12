@@ -3,6 +3,17 @@ import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
+import { resolveAccess } from '../access/access';
+
+/** Role columns needed to work out a user's access. */
+export const ROLE_ACCESS_SELECT = {
+  name: true,
+  full_access: true,
+  field_technician: true,
+  stock_holder: true,
+  store: true,
+  permissions: { select: { screen: true, level: true } },
+} as const;
 
 export type JwtPayload = {
   sub: string;
@@ -46,7 +57,8 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         crm_user_id: true,
         is_active: true,
         token_version: true,
-        role: { select: { name: true } },
+        role: { select: ROLE_ACCESS_SELECT },
+        permissions: { select: { screen: true, level: true } },
       },
     });
 
@@ -61,6 +73,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       phone: user.phone,
       crm_user_id: user.crm_user_id,
       role: [user.role.name],
+      access: resolveAccess(user.role, user.permissions),
     };
   }
 }
