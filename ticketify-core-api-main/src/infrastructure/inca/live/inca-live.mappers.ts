@@ -11,7 +11,7 @@ import {
 } from '../inca.types';
 
 /**
- * Pure translation between INCA's REST payloads and Tiketify's INCA port. Only the fields
+ * Pure translation between INCA's REST payloads and mPro's INCA port. Only the fields
  * listed here ever leave this module: INCA rows also carry other customers' names and
  * addresses, device admin passwords and OLT credentials, which are dropped on read.
  */

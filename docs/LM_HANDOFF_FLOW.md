@@ -24,7 +24,7 @@ Configured in `ticketify-core-api-main/config/workflow-mapping.example.json` (co
 
 ```mermaid
 sequenceDiagram
-  participant App as Ticketify app
+  participant App as mPro app
   participant API as Core API
   participant CRM as CRM v2
 
@@ -42,7 +42,7 @@ sequenceDiagram
   API-->>App: activity_id, state PENDING
 ```
 
-### POST `/backoffice/v2/activities` body (Ticketify sends the same shape)
+### POST `/backoffice/v2/activities` body (mPro sends the same shape)
 
 ```json
 {
@@ -77,14 +77,14 @@ Supporting calls (context):
 
 ## Sequence (LM complete)
 
-Transport completes cabling in CRM (or Ticketify when wired for LM role):
+Transport completes cabling in CRM (or mPro when wired for LM role):
 
 ```http
 PUT /backoffice/v2/activities/{activity_id}
 { "state": "COMPLETED" }
 ```
 
-Ticketify API equivalent:
+mPro API equivalent:
 
 ```http
 PUT /tickets/:ticketId/lm/activities/:activityId/complete
@@ -93,7 +93,7 @@ Authorization: Bearer …
 
 After `COMPLETED`, Access tech refreshes the ticket; `pending_lm` is false and installation/troubleshooting can continue on the SR.
 
-## Ticketify API summary
+## mPro API summary
 
 | Method | Path | Purpose |
 |--------|------|---------|

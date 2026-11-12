@@ -27,7 +27,7 @@ Before hard-coding workflows, confirm the items below. The spec (v2.0, 21 Sep 20
 | # | Item | Why |
 |---|------|-----|
 | 11 | **Payment gateway** | API docs, sandbox keys, webhook URL for “paid” confirmation. |
-| 12 | **Invoice source of truth** | **Ticketify-only** — invoices/receipts in Postgres; CRM not used for payments. |
+| 12 | **Invoice source of truth** | **mPro-only** — invoices/receipts in Postgres; CRM not used for payments. |
 | 13 | **Applicable tax rate(s)** | Central config; effective dates. |
 | 14 | **Overrides / waivers / refunds** | Roles and approval trail (Finance). |
 | 15 | **Confirm charge labels** | e.g. “Patch Code” vs “Patch Cord” (spec §18). |
@@ -72,7 +72,7 @@ Before hard-coding workflows, confirm the items below. The spec (v2.0, 21 Sep 20
 - `GET /charges/catalog` + `npm run seed:phase2`.
 - Ticket start/progress/close (CRM stages); integration audit for key actions.
 - **Auto-assign v1 (spec §5.1):** Supervisor/Admin **toggle** on the dispatch map (`PATCH /api/v1/assignments/settings` `{ "enabled": true|false }`). While **enabled**, the API polls every `AUTO_ASSIGN_POLL_INTERVAL_MS` (default 60s) and assigns unassigned **NEW** team tickets; turning **off** stops all automatic assignment. Candidates are **`presence === ONLINE` only** — **BUSY** excluded. Settings persist in `system_config` key `dispatch.auto_assign`.
-- **Finance (Ticketify-only):** Invoices + receipts + BML payments — see [FINANCE_TICKETIFY.md](./FINANCE_TICKETIFY.md). Mobile **Collect payment** on ticket details.
+- **Finance (mPro-only):** Invoices + receipts + BML payments — see [FINANCE_TICKETIFY.md](./FINANCE_TICKETIFY.md). Mobile **Collect payment** on ticket details.
 - **No Response:** CRM tag + **No Response activity type** from workflow mapping.
 - **Dispatch:** `GET /api/v1/dispatch/overview`, admin `/dispatch` page; manual `POST /dispatch/assign/:ticketId`.
 - **Operations dashboard (AC-17 v1):** `GET /api/v1/dashboard/operations` (Malé/Hulhumalé unassigned counts, presence, finance counters).

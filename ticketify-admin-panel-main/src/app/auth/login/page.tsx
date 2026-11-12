@@ -78,7 +78,7 @@ export default function Login() {
       if (!AdminAuth.canSignIn(access)) {
         AdminAuth.clearSession();
         setError(
-          "Your account doesn't have access to Ticketify. Contact your administrator.",
+          "Your account doesn't have access to mPro. Contact your administrator.",
         );
         return;
       }
@@ -147,7 +147,7 @@ export default function Login() {
           </div>
 
           <p className="text-xs text-white/40">
-            © {new Date().getFullYear()} Medianet · Ticketify
+            © {new Date().getFullYear()} Medianet · mPro
           </p>
         </div>
       </aside>
@@ -161,7 +161,7 @@ export default function Login() {
           <div className="space-y-2">
             <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
             <p className="text-sm text-muted-foreground">
-              Use your Ticketify staff account to continue.
+              Use your mPro staff account to continue.
             </p>
           </div>
 

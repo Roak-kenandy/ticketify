@@ -181,7 +181,7 @@ const FLOW: { icon: LucideIcon; title: string; body: string }[] = [
   {
     icon: UserCheck,
     title: "Assign and notify",
-    body: "Team and technician are written to CRM and Ticketify, and the technician gets one in-app notification.",
+    body: "Team and technician are written to CRM and mPro, and the technician gets one in-app notification.",
   },
   {
     icon: BellRing,

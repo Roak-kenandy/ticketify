@@ -660,8 +660,8 @@ function PppoeFields({
         error={errors.pppoePassword}
         hint={
           operatorOnt
-            ? "Required. Sent to INCA only, never stored in Tiketify."
-            : "Optional. Sent to INCA only, never stored in Tiketify."
+            ? "Required. Sent to INCA only, never stored in mPro."
+            : "Optional. Sent to INCA only, never stored in mPro."
         }
       >
         <div className="flex gap-2">

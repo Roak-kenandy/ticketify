@@ -20,7 +20,7 @@ const MAX_RECIPIENTS = 2000;
 
 /**
  * Sends push notifications through the OneSignal REST API. Recipients are
- * Ticketify user ids (the app calls `OneSignal.login(user.id)`).
+ * mPro user ids (the app calls `OneSignal.login(user.id)`).
  * Never throws: a failed push must not fail the business action that caused it.
  */
 @Injectable()

@@ -1,6 +1,6 @@
 {
-  "name": "Ticketify Field",
-  "short_name": "Ticketify",
+  "name": "mPro Field",
+  "short_name": "mPro",
   "start_url": "/field",
   "scope": "/",
   "display": "standalone",

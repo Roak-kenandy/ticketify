@@ -151,7 +151,7 @@ export default function UsersPage() {
     <>
       <PageHeader
         title="Users"
-        description="Everyone with a Ticketify account — technicians, supervisors, finance and management."
+        description="Everyone with an mPro account — technicians, supervisors, finance and management."
         actions={
           <>
             <Button

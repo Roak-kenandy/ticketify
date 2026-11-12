@@ -2,11 +2,11 @@ import type { Metadata, Viewport } from "next";
 import { FieldGate } from "@/components/field/shell/field-gate";
 
 export const metadata: Metadata = {
-  title: { default: "Field", template: "%s · Ticketify Field" },
+  title: { default: "Field", template: "%s · mPro Field" },
   description: "Field tasks and tickets for Medianet technicians",
   manifest: "/field.webmanifest",
   icons: { icon: "/logo.png", apple: "/logo.png" },
-  appleWebApp: { capable: true, title: "Ticketify", statusBarStyle: "black-translucent" },
+  appleWebApp: { capable: true, title: "mPro", statusBarStyle: "black-translucent" },
 };
 
 export const viewport: Viewport = {

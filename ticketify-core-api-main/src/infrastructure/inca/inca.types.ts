@@ -140,7 +140,7 @@ export type IncaCreateSubscriber = {
   onu_serial: string;
   package: string;
   pppoe_username: string;
-  /** Never persisted or logged by Tiketify. */
+  /** Never persisted or logged by mPro. */
   pppoe_password: string | null;
   terminal_node: IncaTerminalNodeInput | null;
 };

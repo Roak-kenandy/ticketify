@@ -354,7 +354,7 @@ function notifyAssigned(fresh: any[]) {
       Notification.permission === "granted" &&
       document.visibilityState !== "visible"
     ) {
-      new Notification("Ticketify", { body: text, icon: "/logo.png" });
+      new Notification("mPro", { body: text, icon: "/logo.png" });
     }
   } catch {
     // Notifications are a convenience only.

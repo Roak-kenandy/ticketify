@@ -6,7 +6,7 @@ import { TicketsService } from 'src/tickets/tickets.service';
 import { AssignmentSettingsService } from 'src/assignment/assignment-settings.service';
 import { TtlCache } from 'src/infrastructure/common/helpers/ttl-cache';
 
-/** AC-17-style operational snapshot (Ticketify + CRM pool counts). */
+/** AC-17-style operational snapshot (mPro + CRM pool counts). */
 @Injectable()
 export class OperationsDashboardService {
   private readonly cache = new TtlCache<Awaited<ReturnType<OperationsDashboardService['build']>>>(
@@ -91,7 +91,7 @@ export class OperationsDashboardService {
       finance_ticketify: {
         confirmed_payments_today: paymentsToday,
         open_invoices: invoicesOpen,
-        note: 'Invoices and receipts are stored in Ticketify only (not CRM).',
+        note: 'Invoices and receipts are stored in mPro only (not CRM).',
       },
       sla_note:
         'Full SLA aging tiles use CRM/Mongo reports; configure queue+team in Reports.',

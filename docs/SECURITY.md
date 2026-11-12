@@ -1,4 +1,4 @@
-# Ticketify application security architecture
+# mPro application security architecture
 
 Security model: **defense in depth** + **zero trust at the API boundary** (every request authenticated/authorized unless explicitly public) + **shift-left** validation on inputs.
 

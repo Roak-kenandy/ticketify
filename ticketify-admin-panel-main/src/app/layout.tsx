@@ -15,8 +15,8 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: "Ticketify · Medianet Operations",
-    template: "%s · Ticketify",
+    default: "mPro · Medianet Operations",
+    template: "%s · mPro",
   },
   description: "Field operations, dispatch and reporting for Medianet.",
 };

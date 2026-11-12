@@ -28,7 +28,7 @@ export type BmlTransactionView = {
   raw: unknown;
 };
 
-/** The only BML fields Ticketify stores; everything else (card, token, IP) is dropped. */
+/** The only BML fields mPro stores; everything else (card, token, IP) is dropped. */
 export type StoredBmlTransaction = {
   id: string | null;
   local_id: string | null;
@@ -404,7 +404,7 @@ export class BmlPaymentService {
       this.config.get<string>('BML_WEBHOOK_URL') ??
       undefined;
     const customerRef =
-      input.customerReference ?? `Ticketify payment ${input.localId}`;
+      input.customerReference ?? `mPro payment ${input.localId}`;
 
     if (apiMode === 'v2') {
       const payload: Record<string, unknown> = {

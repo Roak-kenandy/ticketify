@@ -9,7 +9,7 @@ function ticketLabel(ticket: TicketRef, category?: string | null): string {
 }
 
 /**
- * Every push the app receives, in one place. Recipients are Ticketify user ids.
+ * Every push the app receives, in one place. Recipients are mPro user ids.
  * All methods are fire-and-forget safe (the sender never throws).
  */
 @Injectable()

@@ -194,7 +194,7 @@ export class TicketPaymentService {
     }
   }
 
-  /** Customer checkout (Ticketify UI) before redirect to BML — no coupon/referral. */
+  /** Customer checkout (mPro UI) before redirect to BML — no coupon/referral. */
   customerCheckoutPageUrl(reference: string): string {
     const review = this.config.get<string>('CUSTOMER_REVIEW_BASE_URL')?.trim();
     if (review) {
@@ -401,7 +401,7 @@ export class TicketPaymentService {
       amountMvr: Number(payment.amount_mvr),
       customerReference: invNo
         ? `Invoice ${invNo} — ${reference}`
-        : `Ticketify payment ${reference}`,
+        : `mPro payment ${reference}`,
       webhookUrl: this.webhookUrl(),
     });
     const payUrl = this.bml.pickPayUrl(bmlTxn);
@@ -476,7 +476,7 @@ export class TicketPaymentService {
     const tag = paid ? 'Paid' : 'Awaiting payment';
     const note = paid
       ? 'This invoice has been paid. Thank you.'
-      : 'Complete payment via the secure Bank of Maldives link sent to your mobile. If the link expired, ask your technician to resend it from Ticketify.';
+      : 'Complete payment via the secure Bank of Maldives link sent to your mobile. If the link expired, ask your technician to resend it from mPro.';
     return `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -703,7 +703,7 @@ export class TicketPaymentService {
     );
 
     return [
-      `Ticketify payment received — customer paid ${this.formatMvr(payment.amount_mvr)} via Bank of Maldives.`,
+      `mPro payment received — customer paid ${this.formatMvr(payment.amount_mvr)} via Bank of Maldives.`,
       `Items: ${items}.`,
       `Subtotal ${this.formatMvr(payment.subtotal_mvr)} + GST ${this.formatMvr(payment.tax_mvr)} = Total ${this.formatMvr(payment.amount_mvr)}.`,
       [
@@ -1022,7 +1022,7 @@ export class TicketPaymentService {
     });
 
     const crmNote = [
-      'Ticketify charge — awaiting payment.',
+      'mPro charge — awaiting payment.',
       `Items: ${itemsText}.`,
       `Invoice ${invoice.invoice_number}. Total MVR ${amountMvr.toFixed(2)} (incl. tax).`,
       `Payment link sent to ${this.maskPhone(paymentPhone)}. Status: AWAITING_PAYMENT.`,

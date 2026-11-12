@@ -424,7 +424,7 @@ export default function BillingWorkflowModal({
               </button>
               <div className="rounded-lg border border-borderlight bg-white p-4">
                 <div className="mb-3 flex items-center justify-between">
-                  <span className="text-base font-bold text-ink">Medianet · Ticketify</span>
+                  <span className="text-base font-bold text-ink">Medianet · mPro</span>
                   <span className="text-[11px] font-bold uppercase tracking-wide text-primary">Proforma</span>
                 </div>
                 <MetaRow label="Service request" value={srNumber ?? ticketId} />

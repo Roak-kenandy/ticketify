@@ -1,6 +1,6 @@
 # Phase 2 roadmap (Spec v2.0 — Sept 2026)
 
-This maps **Ticketify_Workflow_Functional_Requirements_Specification_v2** to what is **done**, **in progress**, and **next to build**. CRM remains source of truth for service requests; Ticketify orchestrates field workflows, assignment, comms, and reporting.
+This maps **mPro_Workflow_Functional_Requirements_Specification_v2** to what is **done**, **in progress**, and **next to build**. CRM remains source of truth for service requests; mPro orchestrates field workflows, assignment, comms, and reporting.
 
 ---
 
@@ -17,7 +17,7 @@ Architecture direction (spec + [ARCHITECTURE.md](./ARCHITECTURE.md)): **modular 
 
 ## 2. Roles & responsibilities (§3) — who does what
 
-| Role | Primary system | Ticketify responsibility | Typical actions |
+| Role | Primary system | mPro responsibility | Typical actions |
 |------|----------------|---------------------------|-----------------|
 | **Access Network technician** | Mobile app | Own SR on site; presence; schedule; LM handoff; No Response; close with charges (P1) | Assign/claim (if allowed), start/progress/close SR, schedule visit, hand over LM, mark No Response |
 | **Transport / LM technician** | CRM (+ optional mobile later) | Complete **Last Mile Cabling** activity; not own Access SR queue | Receive team-pool activity; complete activity; (future) LM-complete from app |
@@ -67,7 +67,7 @@ Architecture direction (spec + [ARCHITECTURE.md](./ARCHITECTURE.md)): **modular 
 | Create LM activity (Transport pool) | **Done** | — |
 | Block Access until LM complete | **Done** | — |
 | SR queue/stage on handoff or return | **Not done** | Medianet: activity-only vs stage change (#2) |
-| LM tech completes in Ticketify app | **Not done** | Role + `PUT` activity complete (API exists) |
+| LM tech completes in mPro app | **Not done** | Role + `PUT` activity complete (API exists) |
 | SMS on LM events | Not done | Template matrix (#16) |
 
 ### 4.3 No Response (P0)

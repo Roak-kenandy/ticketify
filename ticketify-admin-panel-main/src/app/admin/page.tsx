@@ -82,7 +82,7 @@ export default function AdminDashboard() {
     <>
       <PageHeader
         title="Team overview"
-        description="Accounts, roles and activity across the Ticketify workforce."
+        description="Accounts, roles and activity across the mPro workforce."
         actions={
           <>
             <Button variant="outline" onClick={load} disabled={loading}>

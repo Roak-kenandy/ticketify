@@ -598,7 +598,7 @@ export class TicketInventoryService {
       orderBy: { sort_order: 'asc' },
     });
     // The stock record knows which item a serial really is; INCA device types
-    // (live mode) carry no Ticketify item code.
+    // (live mode) carry no mPro item code.
     const stocked = new Map(
       (
         await this.prisma.serialUnit.findMany({

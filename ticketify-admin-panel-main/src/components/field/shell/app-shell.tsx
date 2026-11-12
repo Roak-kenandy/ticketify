@@ -71,7 +71,7 @@ function DrawerContent({
         >
           <BrandMark />
           <span className="flex min-w-0 flex-col leading-tight">
-            <span className="truncate text-[15px] font-semibold tracking-tight text-ink">Ticketify</span>
+            <span className="truncate text-[15px] font-semibold tracking-tight text-ink">mPro</span>
             <span className="truncate text-[11px] font-medium text-gray2">Field workspace</span>
           </span>
         </Link>

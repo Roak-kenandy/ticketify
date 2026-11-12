@@ -8,7 +8,7 @@ export type FinancePaymentRow = {
   invoice_no: string;
   receipt_no: string;
   bml_reference_id: string;
-  /** The `localId` Ticketify sent to BML (the payment reference). */
+  /** The `localId` mPro sent to BML (the payment reference). */
   bml_local_id: string;
   ticket_no: string;
   service_request_id: string;

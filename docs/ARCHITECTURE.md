@@ -1,6 +1,6 @@
-# Ticketify system architecture
+# mPro system architecture
 
-This document describes how Ticketify is structured today and the patterns we follow as the system grows.
+This document describes how mPro is structured today and the patterns we follow as the system grows.
 
 ## Recommended style (fit for this product)
 
@@ -12,7 +12,7 @@ This document describes how Ticketify is structured today and the patterns we fo
 | Internals | **Layered** | Controllers → services → Prisma / CRM client. |
 | Async / scale | **Not microservices yet** | Add event-driven pieces only when a concrete bottleneck appears (e.g. heavy reporting). |
 
-Microservices would add cost (distributed tracing, eventual consistency, ops) before Ticketify needs independent scaling per domain.
+Microservices would add cost (distributed tracing, eventual consistency, ops) before mPro needs independent scaling per domain.
 
 ## C4 – Context (Level 1)
 
@@ -22,7 +22,7 @@ flowchart LR
   Traccar[Traccar Client on phone]
   Admin[Operations console]
   Customer[Customer browser]
-  API[Ticketify Core API]
+  API[mPro Core API]
   CRM[CRM Backoffice API]
   SMS[SMS provider]
   PG[(PostgreSQL)]

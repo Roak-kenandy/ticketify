@@ -148,7 +148,7 @@ export class IncaTransport {
     }
   }
 
-  /** INCA user id of the Ticketify account (scopes per-user views such as service areas). */
+  /** INCA user id of the mPro account (scopes per-user views such as service areas). */
   async userId(): Promise<number> {
     return (await this.ensureSession()).userId;
   }
@@ -230,11 +230,11 @@ export class IncaTransport {
       `${method} ${url.pathname} failed (${status})${reason ? `: ${reason}` : ''}`,
     );
     if (status === 401) {
-      throw new IncaUnavailableError('INCA rejected the Ticketify session');
+      throw new IncaUnavailableError('INCA rejected the mPro session');
     }
     if (status === 403) {
       throw new IncaRejectedError(
-        'INCA does not allow this action for the Ticketify account',
+        'INCA does not allow this action for the mPro account',
       );
     }
     if (status >= 400 && status < 500) {
@@ -295,7 +295,7 @@ export class IncaTransport {
           LOG,
           `Login refused (${response.status}); check INCA_USERNAME / INCA_PASSWORD`,
         );
-        throw new IncaUnavailableError('INCA refused the Ticketify login');
+        throw new IncaUnavailableError('INCA refused the mPro login');
       }
       this.logger.error(LOG, `Login failed (${response.status})`);
       throw new IncaUnavailableError(`INCA login failed (${response.status})`);

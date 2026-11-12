@@ -41,7 +41,7 @@ export function BrandLockup({
               inverted ? "text-white" : "text-foreground",
             )}
           >
-            Ticketify
+            mPro
           </span>
           <span
             className={cn(

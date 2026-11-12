@@ -264,7 +264,7 @@ function SidebarContent({
         <Link
           href={AdminAuth.homePath()}
           className="rounded-lg focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label="Ticketify home"
+          aria-label="mPro home"
         >
           {collapsed ? <BrandMark /> : <BrandLockup />}
         </Link>

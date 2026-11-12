@@ -667,7 +667,7 @@ export class TicketsService {
 
       await this.crmAddNoteToTicket(
         id,
-        'No Response cleared — customer contact resumed (Ticketify).',
+        'No Response cleared — customer contact resumed (mPro).',
         false,
       );
 
@@ -690,7 +690,7 @@ export class TicketsService {
     const activityResult = await this.crmApi.createActivity({
       name: 'No Response',
       description:
-        'Customer could not be reached — No Response activity (Ticketify).',
+        'Customer could not be reached — No Response activity (mPro).',
       type_id: noResponseTypeId,
       date: Math.floor(Date.now() / 1000),
       linked_to: [{ type: 'SERVICE_REQUEST', id }],

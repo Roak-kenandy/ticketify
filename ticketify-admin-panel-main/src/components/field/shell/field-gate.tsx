@@ -13,7 +13,7 @@ import { TicketsProvider } from "@/lib/field/tickets";
 function Splash() {
   return (
     <div className="flex min-h-[100dvh] items-center justify-center bg-primary">
-      <Image src="/logo.png" alt="Ticketify" width={88} height={88} priority className="animate-pulse-soft" />
+      <Image src="/logo.png" alt="mPro" width={88} height={88} priority className="animate-pulse-soft" />
     </div>
   );
 }

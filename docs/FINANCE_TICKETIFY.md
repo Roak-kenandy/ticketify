@@ -1,6 +1,6 @@
-# Charging, invoices & payments (Ticketify-only)
+# Charging, invoices & payments (mPro-only)
 
-CRM holds the **service request**; **invoices, payment attempts, and receipts** live only in Ticketify PostgreSQL.
+CRM holds the **service request**; **invoices, payment attempts, and receipts** live only in mPro PostgreSQL.
 
 ## Field workflow (technician) — spec §11
 
@@ -9,7 +9,7 @@ CRM holds the **service request**; **invoices, payment attempts, and receipts** 
 3. Payment mobile defaults from **CRM**; override only with explicit confirmation (audited).
 4. **Create invoice** + BML link → **SMS to customer** with item list, total, and pay link (`PAYMENT_REQUEST` template).
 5. CRM gets a structured **note** (items, invoice no., AWAITING_PAYMENT).
-6. **Awaiting payment** until BML confirms → receipt in Ticketify → CRM note on confirm.
+6. **Awaiting payment** until BML confirms → receipt in mPro → CRM note on confirm.
 7. Technician **completes work** → **close ticket** (blocked until billing rules pass).
 8. **Resend SMS** reuses the same pending link (no new invoice).
 
@@ -44,7 +44,7 @@ When `BML_ENABLED=true` and credentials are valid:
 1. **Create invoice & SMS** calls `POST /public/transactions` on BML.
 2. The **SMS `[LINK]`** opens **`/payments/checkout?reference=TKT-PAY-…`** (invoice lines, BML only — no coupon/referral). **Pay Now** → API → **`pay.bml.com.mv`**. `BML_REDIRECT_URL` is **after** payment only (`/payments/return`), never in SMS.
 3. **Resend SMS** and **`GET /payments/public/:ref/open`** refresh or reuse the same BML session when possible.
-4. After pay, BML hits **webhook** (or technician **Check payment**) → receipt in Ticketify.
+4. After pay, BML hits **webhook** (or technician **Check payment**) → receipt in mPro.
 
 Restart the API after changing `.env`. Use **Resend SMS** on existing tickets that were created before BML was enabled.
 

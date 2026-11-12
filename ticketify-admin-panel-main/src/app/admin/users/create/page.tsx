@@ -149,7 +149,7 @@ export default function CreateUserPage() {
         backHref="/admin/users"
         backLabel="Users"
         title="Add user"
-        description="Create a Ticketify account. The person signs in with this email and the temporary password you set."
+        description="Create an mPro account. The person signs in with this email and the temporary password you set."
       />
 
       <form onSubmit={handleSubmit} noValidate className="grid gap-6 lg:grid-cols-3">
