@@ -112,8 +112,11 @@ export class TicketsController {
   /** Technicians: their own tickets. Supervisors and above: every team. */
   @Access(STATUS_BOARD)
   @Get('status-board')
-  async fetchStatusBoard(@Req() req: AuthedRequest) {
-    return this.statusBoard.board(req.user);
+  async fetchStatusBoard(
+    @Req() req: AuthedRequest,
+    @Query('team') team?: string,
+  ) {
+    return this.statusBoard.board(req.user, team);
   }
 
   @Access(FIELD)

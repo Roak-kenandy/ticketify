@@ -2,10 +2,13 @@ import { StatusBoardService } from './status-board.service';
 import { ACCESS } from 'src/auth/access/access.fixtures';
 
 function build(opts: { activitiesOk?: boolean } = {}) {
+  const male = { team: { id: 'team-male', name: 'Malé Access' } };
+  const hulhumale = { team: { id: 'team-hulh', name: 'Hulhumalé Access' } };
   const open = [
-    { id: 'sr-1', number: 'S1', state: 'IN_PROGRESS' },
-    { id: 'sr-2', number: 'S2', state: 'NEW' },
-    { id: 'sr-3', number: 'S3', state: 'NEW' },
+    { id: 'sr-1', number: 'S1', state: 'IN_PROGRESS', assigned_to: male },
+    { id: 'sr-2', number: 'S2', state: 'NEW', assigned_to: hulhumale },
+    { id: 'sr-3', number: 'S3', state: 'NEW', assigned_to: male },
+    { id: 'sr-4', number: 'S4', state: 'NEW' },
   ];
   const tickets = {
     fetchOpenTickets: jest.fn().mockResolvedValue(open),
@@ -102,7 +105,7 @@ describe('StatusBoardService', () => {
       expect.objectContaining({ type_id: 'nr-type', state: 'PENDING' }),
     );
     expect(board.counts).toEqual({
-      pending: 3,
+      pending: 4,
       no_response: 1,
       payment_pending: 1,
       rescheduled: 1,
@@ -127,6 +130,33 @@ describe('StatusBoardService', () => {
     const board = await service.board({ crm_user_id: 'c', access: ACCESS.admin });
     expect(board.no_response_available).toBe(false);
     expect(board.counts.no_response).toBe(0);
-    expect(board.counts.pending).toBe(3);
+    expect(board.counts.pending).toBe(4);
+  });
+
+  it('filters every status to one team and lists the teams', async () => {
+    const { service, tickets } = build();
+    const user = { crm_user_id: 'c', access: ACCESS.admin };
+    const all = await service.board(user);
+    expect(all.team).toBeNull();
+    expect(all.teams).toEqual([
+      { id: 'team-hulh', name: 'Hulhumalé Access', count: 1 },
+      { id: 'team-male', name: 'Malé Access', count: 2 },
+      { id: 'none', name: 'No team', count: 1 },
+    ]);
+
+    const male = await service.board(user, 'team-male');
+    expect(male.team).toBe('team-male');
+    expect(male.counts).toEqual({
+      pending: 2,
+      no_response: 0,
+      payment_pending: 1,
+      rescheduled: 1,
+    });
+    expect(male.tickets.pending.map((t) => t.id)).toEqual(['sr-1', 'sr-3']);
+    expect(male.teams).toEqual(all.teams);
+
+    const unassigned = await service.board(user, 'none');
+    expect(unassigned.tickets.pending.map((t) => t.id)).toEqual(['sr-4']);
+    expect(tickets.fetchOpenTicketsAllTeams).toHaveBeenCalledTimes(1);
   });
 });

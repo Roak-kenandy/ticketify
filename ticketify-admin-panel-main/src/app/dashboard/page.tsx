@@ -12,12 +12,26 @@ import { Pagination, paginate } from "@/components/app/pagination";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import axiosInterceptorInstance, { apiErrorMessage } from "@/lib/axios-interceptor";
 import { formatMvr } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const REFRESH_MS = 60_000;
+const ALL_TEAMS = "all";
+const TEAM_KEY = "ticketify.dashboard.team";
+
+type TeamOption = { id: string; name: string; count?: number };
+
+function savedTeam(): TeamOption | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(TEAM_KEY) ?? "null");
+    return value && typeof value.id === "string" && typeof value.name === "string" ? value : null;
+  } catch {
+    return null;
+  }
+}
 
 type Bucket = "pending" | "no_response" | "payment_pending" | "rescheduled";
 
@@ -46,6 +60,8 @@ type Board = {
   counts: Record<Bucket, number>;
   no_response_available: boolean;
   failed_teams?: string[];
+  team?: string | null;
+  teams?: TeamOption[];
   tickets: Record<Bucket, BoardTicket[]>;
 };
 
@@ -107,32 +123,60 @@ export default function StatusDashboardPage() {
   const [view, setView] = React.useState<Bucket>("pending");
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(10);
-  const inflight = React.useRef(false);
+  // undefined until the saved choice has been read, so the first request is already filtered.
+  const [team, setTeam] = React.useState<TeamOption | null | undefined>(undefined);
+  const latest = React.useRef(0);
+  const teamId = team?.id ?? null;
+
+  React.useEffect(() => setTeam(savedTeam()), []);
 
   const load = React.useCallback(async () => {
-    if (inflight.current) return;
-    inflight.current = true;
+    const request = ++latest.current;
     setRefreshing(true);
     try {
-      const response = await axiosInterceptorInstance.get<Board>("/tickets/status-board");
+      const response = await axiosInterceptorInstance.get<Board>("/tickets/status-board", {
+        params: teamId ? { team: teamId } : undefined,
+      });
+      if (request !== latest.current) return;
       setBoard(response.data);
       setError(null);
     } catch (err) {
+      if (request !== latest.current) return;
       setError(apiErrorMessage(err, "Couldn't load the ticket status."));
     } finally {
-      inflight.current = false;
-      setLoading(false);
-      setRefreshing(false);
+      if (request === latest.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, []);
+  }, [teamId]);
 
   React.useEffect(() => {
+    if (team === undefined) return;
     load();
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") load();
     }, REFRESH_MS);
     return () => clearInterval(timer);
-  }, [load]);
+  }, [load, team]);
+
+  const teamOptions = React.useMemo(() => {
+    const options: TeamOption[] = board?.teams ?? [];
+    return team && !options.some((option) => option.id === team.id) ? [...options, { ...team, count: 0 }] : options;
+  }, [board?.teams, team]);
+
+  const chooseTeam = (value: string) => {
+    const next = value === ALL_TEAMS ? null : (teamOptions.find((option) => option.id === value) ?? null);
+    setTeam(next);
+    setPage(1);
+    setLoading(true);
+    try {
+      if (next) localStorage.setItem(TEAM_KEY, JSON.stringify({ id: next.id, name: next.name }));
+      else localStorage.removeItem(TEAM_KEY);
+    } catch {
+      // Private mode: the choice just isn't remembered.
+    }
+  };
 
   const active = BUCKETS.find((bucket) => bucket.key === view) ?? BUCKETS[0];
   const rows = board?.tickets[view] ?? [];
@@ -148,9 +192,25 @@ export default function StatusDashboardPage() {
     <>
       <PageHeader
         title="Dashboard"
-        description="Open tickets across all teams by status."
+        description={team ? `Open tickets for ${team.name} by status.` : "Open tickets across all teams by status."}
         actions={
           <>
+            {board?.scope !== "mine" ? (
+              <Select value={team?.id ?? ALL_TEAMS} onValueChange={chooseTeam} disabled={team === undefined}>
+                <SelectTrigger className="h-9 w-64" aria-label="Filter by area">
+                  <SelectValue placeholder="All areas" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_TEAMS}>All areas</SelectItem>
+                  {teamOptions.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.name}
+                      {option.count !== undefined ? ` (${option.count})` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
             {board && (
               <span className="text-xs text-muted-foreground">
                 Updated {moment(board.generated_at).format("h:mm A")}
@@ -231,6 +291,7 @@ export default function StatusDashboardPage() {
               <h2 className="flex items-center gap-2 text-base font-semibold">
                 <active.icon className="h-4 w-4 text-muted-foreground" />
                 {active.label} tickets
+                {team ? <span className="font-normal text-muted-foreground">· {team.name}</span> : null}
                 {board ? <Badge variant="secondary">{total}</Badge> : null}
               </h2>
               {total > rows.length ? (
