@@ -11,7 +11,6 @@ import * as path from 'path';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { OoredooFmsClient } from 'src/infrastructure/ooredoo-fms/ooredoo-fms.client';
 import {
-  FMS_TICKET_STATUS,
   FmsTicketDetail,
   isFmsTicketId,
 } from 'src/infrastructure/ooredoo-fms/ooredoo-fms.types';
@@ -319,19 +318,31 @@ export class OoredooTicketsService {
   async complete(
     ticketId: string,
     comment: string,
+    ticketStatus: string | undefined,
     closingSubComment: string | undefined,
     actor: OoredooActor,
   ) {
     this.assertFmsId(ticketId);
+    const statusId = ticketStatus?.trim() ?? '';
+    if (!/^\d+$/.test(statusId)) {
+      throw new BadRequestException('Choose a TT status');
+    }
+    if (!closingSubComment?.trim()) {
+      throw new BadRequestException('Choose a status sub-comment');
+    }
+    if (!comment?.trim()) {
+      throw new BadRequestException('Add a closing comment');
+    }
     const detail = await this.fms.getTicket(ticketId);
     if (!this.isAssignedTo(detail, actor)) {
       throw new BadRequestException('Only the assigned technician can close');
     }
+    // Same Change_Ticket_Status post as the FMS portal — tech picks any TT status.
     await this.fms.changeStatus(
       ticketId,
-      FMS_TICKET_STATUS.FAULT_RESOLVED,
-      closingSubComment?.trim() || 'Resolved by Field Team',
-      comment?.trim() || 'Closed from mPro',
+      Number(statusId),
+      closingSubComment.trim(),
+      comment.trim(),
     );
     return this.getDetail(ticketId, actor);
   }

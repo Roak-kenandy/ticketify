@@ -41,7 +41,16 @@ export class CompleteTicketDto {
   @MaxLength(64)
   stage_id?: string;
 
-  /** FMS closing sub-category text (e.g. "External cable replaced"). */
+  /**
+   * Ooredoo FMS: TT status id from the portal Change_Ticket_Status dropdown
+   * (same list as Change TT status — tech picks any status when closing).
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  ticket_status?: string;
+
+  /** FMS ticket_sub_comment option value (required with ticket_status). */
   @IsOptional()
   @IsString()
   @MaxLength(200)

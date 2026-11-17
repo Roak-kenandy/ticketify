@@ -452,6 +452,7 @@ export class TicketsController {
       return this.ooredooTickets.complete(
         ticket_id,
         body.comment ?? '',
+        body.ticket_status,
         body.closing_sub_comment,
         req.user,
       );

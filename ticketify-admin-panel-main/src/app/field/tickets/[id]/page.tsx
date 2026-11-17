@@ -258,7 +258,7 @@ export default function TicketDetailsPage() {
     Boolean(context?.pending_no_response) ||
     hasPendingNoResponse(context?.no_response_activities) ||
     hasPendingNoResponse(activities);
-  // Ooredoo has no CRM stage chain — once assigned, the only primary action is close (FMS Fault Resolved).
+  // Ooredoo has no CRM stage chain — once assigned, primary action is close (tech picks TT status like FMS).
   const closeStageActive = isOoredoo
     ? Boolean(isMine && !isClosed)
     : Boolean(nextStage) && data?.queue_info?.stages?.length === nextStage?.order;

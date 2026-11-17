@@ -5,7 +5,6 @@ import Link from "next/link";
 import moment from "moment";
 import {
   AlertTriangle,
-  ChevronRight,
   ClipboardList,
   Inbox,
   Maximize2,
@@ -14,11 +13,9 @@ import {
   RefreshCw,
   UserCheck,
   Users,
-  Zap,
 } from "lucide-react";
 import axiosInterceptorInstance, { apiErrorMessage } from "@/lib/axios-interceptor";
 import { cn } from "@/lib/utils";
-import { can } from "@/lib/permissions";
 import { PageHeader } from "@/components/app/page-header";
 import { StatCard } from "@/components/app/stat-card";
 import { EmptyState } from "@/components/app/empty-state";
@@ -29,6 +26,26 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 const REFRESH_MS = 30_000;
 
+/** Only these work types appear on the operations board (STB / other queues hidden). */
+const WORK_TYPES = [
+  { key: "fault", label: "Fault", match: /fault/i, dot: "bg-rose-500", bar: "bg-rose-500/80" },
+  {
+    key: "new_connections",
+    label: "New Connections",
+    match: /new\s*connection/i,
+    dot: "bg-sky-500",
+    bar: "bg-sky-500/80",
+  },
+  {
+    key: "relocation",
+    label: "Relocation",
+    match: /reloc/i,
+    dot: "bg-violet-500",
+    bar: "bg-violet-500/80",
+  },
+] as const;
+
+type WorkKey = (typeof WORK_TYPES)[number]["key"];
 type Kind = { label: string; count: number };
 type Region = {
   label?: string;
@@ -55,6 +72,47 @@ const REGION_ORDER: { key: keyof NonNullable<Snapshot["regions"]>; fallback: str
   { key: "hulhumale", fallback: "Hulhumalé Access" },
   { key: "transport_lm", fallback: "Transport · Last Mile" },
 ];
+
+function workKeyOf(label: string): WorkKey | null {
+  for (const type of WORK_TYPES) {
+    if (type.match.test(label)) return type.key;
+  }
+  return null;
+}
+
+/** Collapse CRM queue names into Fault / New Connections / Relocation only. */
+function foldKinds(kinds: Kind[] | undefined): Kind[] {
+  const counts: Record<WorkKey, number> = {
+    fault: 0,
+    new_connections: 0,
+    relocation: 0,
+  };
+  for (const item of kinds ?? []) {
+    const key = workKeyOf(item.label);
+    if (key) counts[key] += item.count;
+  }
+  return WORK_TYPES.map((type) => ({
+    label: type.label,
+    count: counts[type.key],
+  })).filter((item) => item.count > 0);
+}
+
+function foldRegion(region: Region): Region {
+  const unassigned = foldKinds(region.breakdown?.unassigned);
+  const assigned = foldKinds(region.breakdown?.assigned);
+  const inProgress = foldKinds(region.breakdown?.in_progress);
+  return {
+    ...region,
+    unassigned_new: unassigned.reduce((n, item) => n + item.count, 0),
+    assigned_new: assigned.reduce((n, item) => n + item.count, 0),
+    in_progress: inProgress.reduce((n, item) => n + item.count, 0),
+    breakdown: {
+      unassigned,
+      assigned,
+      in_progress: inProgress,
+    },
+  };
+}
 
 export default function OperationsBoardPage() {
   const [data, setData] = React.useState<Snapshot | null>(null);
@@ -102,9 +160,12 @@ export default function OperationsBoardPage() {
 
   const regions = REGION_ORDER.map(({ key, fallback }) => {
     const region = data?.regions?.[key];
-    return region ? { key, title: region.label ?? fallback, region } : null;
-  }).filter((item): item is { key: typeof REGION_ORDER[number]["key"]; title: string; region: Region } =>
-    Boolean(item),
+    if (!region) return null;
+    const folded = foldRegion(region);
+    return { key, title: folded.label ?? fallback, region: folded };
+  }).filter(
+    (item): item is { key: (typeof REGION_ORDER)[number]["key"]; title: string; region: Region } =>
+      Boolean(item),
   );
 
   const totals = regions.reduce(
@@ -229,7 +290,6 @@ export default function OperationsBoardPage() {
 
             <aside className="space-y-6">
               <TeamCard loading={loading} tech={tech} total={techTotal} />
-              <AutoAssignCard loading={loading} enabled={data?.auto_assign_enabled} />
             </aside>
           </div>
         </div>
@@ -252,21 +312,16 @@ function LiveStatus({ lastUpdated, now, error }: { lastUpdated: Date | null; now
   );
 }
 
-const KIND_STYLES: { match: RegExp; dot: string; bar: string }[] = [
-  { match: /fault/i, dot: "bg-rose-500", bar: "bg-rose-500/80" },
-  { match: /new\s*connection/i, dot: "bg-sky-500", bar: "bg-sky-500/80" },
-  { match: /reloc/i, dot: "bg-violet-500", bar: "bg-violet-500/80" },
-  { match: /inquir/i, dot: "bg-amber-500", bar: "bg-amber-500/80" },
-];
-const KIND_FALLBACK = { dot: "bg-slate-400", bar: "bg-slate-400/80" };
-
 function kindStyle(label: string) {
-  return KIND_STYLES.find((style) => style.match.test(label)) ?? KIND_FALLBACK;
+  return WORK_TYPES.find((type) => type.match.test(label)) ?? {
+    dot: "bg-slate-400",
+    bar: "bg-slate-400/80",
+  };
 }
 
 function kindRank(label: string) {
-  const index = KIND_STYLES.findIndex((style) => style.match.test(label));
-  return index === -1 ? KIND_STYLES.length : index;
+  const index = WORK_TYPES.findIndex((type) => type.match.test(label));
+  return index === -1 ? WORK_TYPES.length : index;
 }
 
 function RegionCard({ title, region }: { title: string; region: Region }) {
@@ -295,7 +350,12 @@ function RegionCard({ title, region }: { title: string; region: Region }) {
         )}
       </div>
       <div className="grid divide-y md:grid-cols-3 md:divide-x md:divide-y-0">
-        <StatusColumn label="Waiting for assignment" total={unassigned} kinds={region.breakdown?.unassigned} emphasis={unassigned > 0} />
+        <StatusColumn
+          label="Waiting for assignment"
+          total={unassigned}
+          kinds={region.breakdown?.unassigned}
+          emphasis={unassigned > 0}
+        />
         <StatusColumn label="Assigned, not started" total={assigned} kinds={region.breakdown?.assigned} />
         <StatusColumn label="In progress" total={inProgress} kinds={region.breakdown?.in_progress} />
       </div>
@@ -428,45 +488,6 @@ function TeamCard({
         </>
       )}
     </Card>
-  );
-}
-
-function AutoAssignCard({ loading, enabled }: { loading: boolean; enabled?: boolean }) {
-  const [canManage, setCanManage] = React.useState(false);
-  React.useEffect(() => setCanManage(can("operations_board", "EDIT")), []);
-
-  const body = (
-    <Card className={cn("p-5", canManage && "transition-colors hover:bg-accent/50")}>
-      <div className="flex items-center gap-3">
-        <span
-          className={cn(
-            "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
-            enabled ? "bg-success/10 text-success" : "bg-muted text-muted-foreground",
-          )}
-        >
-          <Zap className="h-5 w-5" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold">Auto-assign</p>
-          {loading ? (
-            <Skeleton className="mt-1 h-3.5 w-24" />
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              {enabled ? "On for selected categories" : "Off: tickets wait for manual dispatch"}
-            </p>
-          )}
-        </div>
-        {canManage && <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
-      </div>
-    </Card>
-  );
-
-  return canManage ? (
-    <Link href="/auto-assign" className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-      {body}
-    </Link>
-  ) : (
-    body
   );
 }
 

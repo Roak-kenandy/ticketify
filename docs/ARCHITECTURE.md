@@ -24,6 +24,7 @@ flowchart LR
   Customer[Customer browser]
   API[mPro Core API]
   CRM[CRM Backoffice API]
+  FMS[Ooredoo FMS portal]
   SMS[SMS provider]
   PG[(PostgreSQL)]
 
@@ -32,9 +33,12 @@ flowchart LR
   Admin --> API
   Customer --> Admin
   API --> CRM
+  API --> FMS
   API --> SMS
   API --> PG
 ```
+
+Full operator/handoff detail (Medianet + Ooredoo FMS, deploy, user setup): [TECHNICAL_HANDBOOK.md](./TECHNICAL_HANDBOOK.md).
 
 ## C4 – Containers (Level 2)
 
@@ -43,8 +47,9 @@ flowchart LR
 | ticketify-admin-panel | Next.js | One sign-in for every role. Technicians: `/field` (tickets, inventory, INCA, closure). Office roles: dispatch, users, reports, finance, inventory, customer review UI |
 | Traccar Client | Android/iOS app | Background GPS to `POST /api/v1/tracking/traccar` (per-technician device ID) |
 | ticketify-core-api | NestJS + Prisma | Auth, RBAC, ticket orchestration, feedback, audit logs |
-| CRM Backoffice | External REST | Source of truth for service requests |
-| PostgreSQL | Prisma | Users, roles, feedback, location, app metadata |
+| CRM Backoffice | External REST | Source of truth for Medianet service requests |
+| Ooredoo FMS | External portal (session scrape/post) | Source of truth for Ooredoo tickets (shared tech2 login) |
+| PostgreSQL | Prisma | Users, roles, feedback, location, FMS assignments, app metadata |
 
 ## Module boundaries (modular monolith)
 
