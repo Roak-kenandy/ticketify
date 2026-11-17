@@ -11,6 +11,8 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { FeedbackModule } from './feedback/feedback.module';
 import { ReportsModule } from './reports/reports.module';
 import { CrmApiModule } from './infrastructure/crm/crm-api.module';
+import { OoredooFmsModule } from './infrastructure/ooredoo-fms/ooredoo-fms.module';
+import { TicketSystemNotesModule } from './infrastructure/ticket-notes/ticket-system-notes.module';
 import { IntegrationAuditModule } from './infrastructure/audit/integration-audit.module';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { ChargesModule } from './charges/charges.module';
@@ -39,6 +41,8 @@ import { RolesModule } from './roles/roles.module';
       throttlers: [{ name: 'default', ttl: 60000, limit: 200 }],
     }),
     CrmApiModule,
+    OoredooFmsModule,
+    TicketSystemNotesModule,
     SecurityModule,
     IntegrationAuditModule,
     IncaModule,

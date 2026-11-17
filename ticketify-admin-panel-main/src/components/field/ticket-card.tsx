@@ -69,6 +69,15 @@ function TicketCard({
         ) : !hideState ? (
           <ToneBadge tone={state} size="sm" />
         ) : null}
+        {(ticket.categories ?? []).map((tag: any, index: number) =>
+          tag?.name ? (
+            <ToneBadge
+              key={`cat-${tag.name}-${index}`}
+              tone={{ label: tag.name, color: colors.black, bg: colors.surface }}
+              size="sm"
+            />
+          ) : null,
+        )}
         {ticket.stage?.name ? (
           <ToneBadge tone={{ label: ticket.stage.name, color: colors.primary, bg: colors.surface, icon: Flag }} size="sm" />
         ) : null}

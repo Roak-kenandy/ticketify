@@ -5,7 +5,8 @@ import { cn } from "@/lib/field/cn";
 
 export const QUEUE_FILTERS = [
   { key: "ALL", label: "All", match: null },
-  { key: "NEW_CONNECTION", label: "New connection", match: /new\s*connection/i },
+  // CRM queue "New connection" + Ooredoo FMS category "Installation"
+  { key: "NEW_CONNECTION", label: "New connection", match: /new\s*connection|installation/i },
   { key: "RELOCATION", label: "Relocation", match: /relocation/i },
   { key: "FAULT", label: "Fault", match: /fault/i },
   { key: "CUSTOMER_INQUIRY", label: "Customer inquiry", match: /customer\s*inquiry|enquiry/i },
@@ -15,10 +16,25 @@ export type QueueFilterKey = (typeof QUEUE_FILTERS)[number]["key"];
 
 const STORAGE_KEY = "field.queueFilter";
 
+/** CRM uses queue name; Ooredoo FMS uses category (Fault / Installation / Relocation). */
+function ticketTypeText(ticket: any): string {
+  const categoryNames = Array.isArray(ticket?.categories)
+    ? ticket.categories.map((c: any) => c?.name).filter(Boolean)
+    : [];
+  return [
+    ticket?.queue?.name,
+    ticket?.category,
+    ticket?.sub_category,
+    ...categoryNames,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 export function matchesQueue(ticket: any, key: QueueFilterKey): boolean {
   const filter = QUEUE_FILTERS.find((each) => each.key === key);
   if (!filter?.match) return true;
-  return filter.match.test(String(ticket?.queue?.name ?? ""));
+  return filter.match.test(ticketTypeText(ticket));
 }
 
 /** The chosen queue filter, remembered on this device and shared by the dashboard and My tickets. */

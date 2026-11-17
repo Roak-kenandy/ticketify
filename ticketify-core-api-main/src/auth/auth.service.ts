@@ -11,6 +11,7 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { LoggerService } from 'src/infrastructure/logger/logger.service';
 import { ChangePasswordDto, ResetPasswordDto, SignUpDto } from './dto';
+import { UserSource } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import * as argon from 'argon2';
 import { ActivitiesService } from 'src/activities/activities.service';
@@ -63,23 +64,43 @@ export class AuthService {
     }
     const overrides = normalizeOverrides(role, dto.permissions);
 
-    const skipCrmValidation =
-      this.config.get('SKIP_CRM_VALIDATION') === 'true' &&
-      this.config.get('NODE_ENV') !== 'production';
-    if (!skipCrmValidation) {
-      const crmUser = await this.crmApi.request(
-        'GET',
-        `/users/${encodeURIComponent(dto.crm_user_id)}`,
-      );
-      if (!crmUser.ok) {
-        throw new NotFoundException('CRM user not found');
+    const source = dto.source ?? UserSource.MEDIANET;
+    let crmUserId: string;
+    let ooredooUserId: string | null = null;
+
+    if (source === UserSource.OOREDOO) {
+      const fmsId = dto.ooredoo_user_id?.trim();
+      if (!fmsId) {
+        throw new BadRequestException('Ooredoo user id is required');
+      }
+      ooredooUserId = fmsId;
+      crmUserId = `ooredoo-${fmsId}`;
+    } else {
+      const crmId = dto.crm_user_id?.trim();
+      if (!crmId) {
+        throw new BadRequestException('CRM user id is required');
+      }
+      crmUserId = crmId;
+      const skipCrmValidation =
+        this.config.get('SKIP_CRM_VALIDATION') === 'true' &&
+        this.config.get('NODE_ENV') !== 'production';
+      if (!skipCrmValidation) {
+        const crmUser = await this.crmApi.request(
+          'GET',
+          `/users/${encodeURIComponent(crmUserId)}`,
+        );
+        if (!crmUser.ok) {
+          throw new NotFoundException('CRM user not found');
+        }
       }
     }
 
     try {
       const user = await this.prisma.user.create({
         data: {
-          crm_user_id: dto.crm_user_id,
+          source,
+          crm_user_id: crmUserId,
+          ooredoo_user_id: ooredooUserId,
           email: dto.email.trim().toLowerCase(),
           name: dto.name.trim(),
           phone: dto.phone.trim(),

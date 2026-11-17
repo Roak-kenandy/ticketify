@@ -150,7 +150,20 @@ export default function UserProfilePage() {
     { icon: Shield, label: "Role", value: user.role?.name ?? "—" },
     { icon: Calendar, label: "Created", value: formatDateTime(user.created_at) },
     { icon: Clock, label: "Last sign-in", value: formatDateTime(user.last_login) },
-    { icon: Hash, label: "CRM user ID", value: user.crm_user_id || "—", mono: true },
+    {
+      icon: Hash,
+      label: "Ticket platform",
+      value: user.source === "OOREDOO" ? "Ooredoo (FMS)" : "Medianet (CRM)",
+    },
+    {
+      icon: Hash,
+      label: user.source === "OOREDOO" ? "Ooredoo user ID" : "CRM user ID",
+      value:
+        user.source === "OOREDOO"
+          ? user.ooredoo_user_id || "—"
+          : user.crm_user_id || "—",
+      mono: true,
+    },
   ];
 
   const timeline = [

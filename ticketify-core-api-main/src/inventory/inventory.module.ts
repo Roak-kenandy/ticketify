@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from 'src/auth/auth.module';
 import { CrmApiModule } from 'src/infrastructure/crm/crm-api.module';
+import { OoredooFmsModule } from 'src/infrastructure/ooredoo-fms/ooredoo-fms.module';
 import { InventoryController } from './inventory.controller';
 import { InventoryItemsService } from './inventory-items.service';
 import { InventoryReportService } from './inventory-report.service';
@@ -11,7 +12,7 @@ import { StockReportService } from './stock-report.service';
 import { StockRequestService } from './stock-request.service';
 
 @Module({
-  imports: [CrmApiModule, AuthModule],
+  imports: [CrmApiModule, AuthModule, OoredooFmsModule],
   controllers: [InventoryController],
   providers: [
     InventoryItemsService,

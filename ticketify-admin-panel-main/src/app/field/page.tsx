@@ -16,8 +16,8 @@ import { fieldCardGrid, fieldContainer } from "@/lib/field/layout";
 import { showError } from "@/lib/field/notify";
 import { useSession } from "@/lib/field/session";
 import { presenceFromUser } from "@/lib/field/ticket-meta";
-import { useStatusBoard } from "@/lib/field/status-board";
-import { teamTicketList, useTickets } from "@/lib/field/tickets";
+import { boardFromTickets, useStatusBoard } from "@/lib/field/status-board";
+import { useTickets } from "@/lib/field/tickets";
 import { isTrackingStale, lastHeardAt, useTrackingSetup } from "@/lib/field/tracking";
 
 function matchesQuery(ticket: any, query: string) {
@@ -32,15 +32,18 @@ function matchesQuery(ticket: any, query: string) {
 export default function DashboardPage() {
   const router = useRouter();
   const { token, user, updateUser } = useSession();
-  const { tickets, teamTickets, syncedAt, error: syncError, refresh } = useTickets();
+  const { tickets, syncedAt, error: syncError, refresh } = useTickets();
   const { setup: tracking } = useTrackingSetup();
-  const { board, error: boardError, reload: reloadBoard } = useStatusBoard();
+  const { board: remoteBoard, error: boardError, reload: reloadBoard } = useStatusBoard();
   const [query, setQuery] = React.useState("");
   const [queue, setQueue] = useQueueFilter();
   const [refreshing, setRefreshing] = React.useState(false);
 
   const onShift = presenceFromUser(user) !== "OFFLINE";
   const loaded = syncedAt != null;
+  // Ooredoo: reuse the ticket list — a second status-board call was doubling FMS load.
+  const board =
+    user?.source === "OOREDOO" ? boardFromTickets(tickets) : remoteBoard;
 
   const refreshProfile = React.useCallback(async () => {
     if (!token) {
@@ -67,27 +70,13 @@ export default function DashboardPage() {
     }
   };
 
-  const groups = React.useMemo(
-    () => (Array.isArray(teamTickets) ? teamTickets : []).filter((group: any) => group?.team?.name),
-    [teamTickets],
-  );
-  const allTeamTickets = React.useMemo(() => groups.flatMap((group: any) => teamTicketList(group)), [groups]);
-
-  const sections = React.useMemo(() => {
+  const myTicketsFiltered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
-    const filtering = Boolean(q) || queue !== "ALL";
-    return groups
-      .map((group: any) => ({
-        key: String(group.team.id ?? group.team.name),
-        title: group.team.name as string,
-        unavailable: Boolean(group.error),
-        data: teamTicketList(group).filter((ticket) => matchesQuery(ticket, q) && matchesQueue(ticket, queue)),
-      }))
-      .filter((section) => section.data.length > 0 || (!filtering && section.unavailable));
-  }, [groups, query, queue]);
+    return tickets.filter((ticket) => matchesQuery(ticket, q) && matchesQueue(ticket, queue));
+  }, [tickets, query, queue]);
 
   let empty: React.ReactNode = null;
-  if (!sections.length) {
+  if (myTicketsFiltered.length === 0) {
     if (!loaded && !syncError) {
       empty = (
         <div className={cn(fieldCardGrid, "mt-2")}>
@@ -105,12 +94,16 @@ export default function DashboardPage() {
         <EmptyState
           icon={CheckCheck}
           title="Nothing of this type"
-          message="There are no new tickets of this type in your teams. Choose All to see every ticket."
+          message="No tickets of this type assigned to you. Choose All to see every ticket."
         />
       );
     } else {
       empty = (
-        <EmptyState icon={CheckCheck} title="Queue is clear" message="There are no new tickets in your teams right now." />
+        <EmptyState
+          icon={CheckCheck}
+          title="No tickets yet"
+          message="Tickets assigned to you will show up here."
+        />
       );
     }
   }
@@ -147,9 +140,9 @@ export default function DashboardPage() {
 
         <div className="flex items-end gap-2">
           <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-bold text-ink">Team queue</h2>
+            <h2 className="text-lg font-bold text-ink">My tickets</h2>
             <p className="mt-0.5 text-[13px] text-gray2">
-              New tickets across your teams
+              Tickets assigned to you
               {syncedAt ? ` · updated ${moment(syncedAt).format("h:mm A")}` : ""}
             </p>
           </div>
@@ -182,25 +175,18 @@ export default function DashboardPage() {
           ) : null}
         </div>
 
-        <QueueFilter value={queue} onChange={setQueue} tickets={loaded ? allTeamTickets : undefined} />
+        <QueueFilter value={queue} onChange={setQueue} tickets={loaded ? tickets : undefined} />
 
         <div className="-mt-2">
-          {sections.map((section) => (
-            <section key={section.key}>
-              <div className="flex items-center justify-between pb-2 pt-4">
-                <h3 className="text-[13px] font-bold uppercase tracking-[0.6px] text-primary">{section.title}</h3>
-                <span className="text-xs font-semibold text-gray2">
-                  {section.unavailable ? "Unavailable" : section.data.length}
-                </span>
-              </div>
-              <div className={fieldCardGrid}>
-                {section.data.map((ticket: any, index: number) => (
-                  <TicketCard key={String(ticket?.id ?? index)} ticket={ticket} showAssignee />
-                ))}
-              </div>
-            </section>
-          ))}
-          {empty}
+          {myTicketsFiltered.length ? (
+            <div className={cn(fieldCardGrid, "pt-4")}>
+              {myTicketsFiltered.map((ticket: any, index: number) => (
+                <TicketCard key={String(ticket?.id ?? index)} ticket={ticket} />
+              ))}
+            </div>
+          ) : (
+            empty
+          )}
         </div>
       </main>
     </>

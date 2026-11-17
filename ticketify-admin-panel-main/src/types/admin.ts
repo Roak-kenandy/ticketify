@@ -24,9 +24,13 @@ export interface UserLog {
   created_at: string;
 }
 
+export type UserSource = "MEDIANET" | "OOREDOO";
+
 export interface UserProfile {
   id: string;
+  source?: UserSource;
   crm_user_id: string;
+  ooredoo_user_id?: string | null;
   email: string;
   name: string;
   phone: string;
@@ -93,7 +97,9 @@ export interface UserStats {
 }
 
 export interface CreateUserData {
-  crm_user_id: string;
+  source: UserSource;
+  crm_user_id?: string;
+  ooredoo_user_id?: string;
   email: string;
   name: string;
   phone: string;

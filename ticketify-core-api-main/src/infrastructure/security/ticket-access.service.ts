@@ -3,10 +3,19 @@ import { CrmApiClient } from '../crm/crm-api.client';
 import { PrismaService } from '../config/prisma/prisma.service';
 import { LoggerService } from '../logger/logger.service';
 import { hasConsoleAccess, UserAccess } from 'src/auth/access/access';
+import { isFmsTicketId } from '../ooredoo-fms/ooredoo-fms.types';
+import { OoredooFmsClient } from '../ooredoo-fms/ooredoo-fms.client';
 
 export type TicketScopeKind = 'ticket' | 'payment' | 'invoice' | 'receipt';
 
-type AccessUser = { id: string; crm_user_id?: string; access?: UserAccess };
+type AccessUser = {
+  id: string;
+  email?: string;
+  crm_user_id?: string;
+  ooredoo_user_id?: string | null;
+  source?: string;
+  access?: UserAccess;
+};
 
 const TICKET_TTL_MS = 30_000;
 const TEAMS_TTL_MS = 5 * 60_000;
@@ -29,6 +38,7 @@ export class TicketAccessService {
     private readonly crm: CrmApiClient,
     private readonly prisma: PrismaService,
     private readonly logger: LoggerService,
+    private readonly fms: OoredooFmsClient,
   ) {}
 
   async canAccess(user: AccessUser, kind: TicketScopeKind, value: string) {
@@ -36,7 +46,13 @@ export class TicketAccessService {
       return true;
     }
     const ticketId = await this.resolveTicketId(kind, value);
-    if (!ticketId || !user.crm_user_id) {
+    if (!ticketId) {
+      return false;
+    }
+    if (user.source === 'OOREDOO' || isFmsTicketId(ticketId)) {
+      return this.canAccessFms(user, ticketId);
+    }
+    if (!user.crm_user_id) {
       return false;
     }
     const ticket = await this.ticket(ticketId);
@@ -51,6 +67,37 @@ export class TicketAccessService {
       return teams.has(ticket.teamId);
     }
     return false;
+  }
+
+  private async canAccessFms(user: AccessUser, ticketId: string) {
+    if (!isFmsTicketId(ticketId)) {
+      return false;
+    }
+    // Fast path: mPro assignment row (shared tech2 FMS login tracks by ooredoo id).
+    if (user.ooredoo_user_id) {
+      const local = await this.prisma.fmsTicketAssignment.findUnique({
+        where: { fms_ticket_id: ticketId },
+        select: { ooredoo_user_id: true },
+      });
+      if (local?.ooredoo_user_id === user.ooredoo_user_id) {
+        return true;
+      }
+    }
+    if (!this.fms.enabled()) {
+      return false;
+    }
+    try {
+      const detail = await this.fms.getTicket(ticketId);
+      if (!detail.assignee_email) {
+        return true;
+      }
+      const email = user.email?.trim().toLowerCase();
+      const assignee = detail.assignee_email.trim().toLowerCase();
+      return Boolean(email && email === assignee);
+    } catch (error) {
+      this.logger.error('TicketAccess', `FMS access check failed: ${error}`);
+      return false;
+    }
   }
 
   private async resolveTicketId(kind: TicketScopeKind, value: string) {

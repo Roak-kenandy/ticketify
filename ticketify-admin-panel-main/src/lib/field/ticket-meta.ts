@@ -55,6 +55,7 @@ const PRIORITY_META: Record<string, Tone> = {
   HIGH: { label: "High", color: colors.warning, bg: colors.warningBg, icon: ArrowUp },
   MEDIUM: { label: "Medium", color: "#B45309", bg: "#FEF3C7", icon: Minus },
   NORMAL: { label: "Normal", color: colors.info, bg: colors.infoBg, icon: Minus },
+  REGULAR: { label: "Regular", color: colors.info, bg: colors.infoBg, icon: Minus },
   LOW: { label: "Low", color: colors.gray2, bg: colors.surface, icon: ArrowDown },
 };
 

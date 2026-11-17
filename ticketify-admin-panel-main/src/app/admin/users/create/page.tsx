@@ -5,7 +5,13 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Eye, EyeOff, Info, Loader2, UserPlus } from "lucide-react";
 import { AdminAPI } from "@/lib/admin-api";
-import { AccessLevel, CreateUserData, Role, ScreenDef } from "@/types/admin";
+import {
+  AccessLevel,
+  CreateUserData,
+  Role,
+  ScreenDef,
+  UserSource,
+} from "@/types/admin";
 import { isFullAccess, type Screen } from "@/lib/permissions";
 import {
   ScreenAccessEditor,
@@ -31,7 +37,9 @@ import { passwordPolicyError } from "@/lib/password-policy";
 type Errors = Partial<Record<Exclude<keyof CreateUserData, "permissions">, string>>;
 
 const EMPTY: CreateUserData = {
+  source: "MEDIANET",
   crm_user_id: "",
+  ooredoo_user_id: "",
   email: "",
   name: "",
   phone: "",
@@ -52,10 +60,20 @@ function validate(data: CreateUserData): Errors {
   } else if (!/^\+?[0-9 ]{6,20}$/.test(data.phone.trim())) {
     errors.phone = "Use digits only, e.g. +960 7722229.";
   }
-  if (!data.crm_user_id.trim()) {
-    errors.crm_user_id = "Paste the user's ID from CRM.";
-  } else if (!/^[A-Za-z0-9-]{8,64}$/.test(data.crm_user_id.trim())) {
-    errors.crm_user_id = "CRM IDs contain only letters, numbers and dashes.";
+  if (data.source === "OOREDOO") {
+    const id = data.ooredoo_user_id?.trim() ?? "";
+    if (!id) {
+      errors.ooredoo_user_id = "Choose the FMS user from the list.";
+    } else if (!/^[0-9]{1,12}$/.test(id)) {
+      errors.ooredoo_user_id = "Ooredoo ids are numbers only, e.g. 212.";
+    }
+  } else {
+    const id = data.crm_user_id?.trim() ?? "";
+    if (!id) {
+      errors.crm_user_id = "Choose the CRM user from the list.";
+    } else if (!/^[A-Za-z0-9-]{8,64}$/.test(id)) {
+      errors.crm_user_id = "CRM IDs contain only letters, numbers and dashes.";
+    }
   }
   if (!data.role_id) errors.role_id = "Choose a role.";
   if (!data.password) {
@@ -67,6 +85,8 @@ function validate(data: CreateUserData): Errors {
   return errors;
 }
 
+type DirectoryOption = { id: string; label: string; email?: string | null };
+
 export default function CreateUserPage() {
   const router = useRouter();
   const [roles, setRoles] = React.useState<Role[]>([]);
@@ -76,6 +96,13 @@ export default function CreateUserPage() {
   const [showPassword, setShowPassword] = React.useState(false);
   const [screens, setScreens] = React.useState<ScreenDef[]>([]);
   const [levels, setLevels] = React.useState<LevelMap>({});
+  const [crmTeams, setCrmTeams] = React.useState<DirectoryOption[]>([]);
+  const [crmTeamId, setCrmTeamId] = React.useState("");
+  const [crmUsers, setCrmUsers] = React.useState<DirectoryOption[]>([]);
+  const [crmUsersLoading, setCrmUsersLoading] = React.useState(false);
+  const [fmsUsers, setFmsUsers] = React.useState<DirectoryOption[]>([]);
+  const [fmsUsersLoading, setFmsUsersLoading] = React.useState(false);
+  const [directoryError, setDirectoryError] = React.useState("");
 
   React.useEffect(() => {
     Promise.all([AdminAPI.getAllRoles(), AdminAPI.getScreens()])
@@ -87,13 +114,128 @@ export default function CreateUserPage() {
       .catch(() => toast.error("Couldn't load roles. Refresh to try again."));
   }, []);
 
+  React.useEffect(() => {
+    if (form.source !== "MEDIANET") return;
+    let cancelled = false;
+    setDirectoryError("");
+    AdminAPI.getCrmTeams()
+      .then((data) => {
+        if (!cancelled) setCrmTeams(Array.isArray(data?.items) ? data.items : []);
+      })
+      .catch((err: any) => {
+        if (!cancelled) {
+          setCrmTeams([]);
+          setDirectoryError(
+            err?.response?.data?.message || "Couldn't load CRM teams.",
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.source]);
+
+  React.useEffect(() => {
+    if (form.source !== "MEDIANET" || !crmTeamId) {
+      setCrmUsers([]);
+      return;
+    }
+    let cancelled = false;
+    setCrmUsersLoading(true);
+    setDirectoryError("");
+    AdminAPI.getCrmUsers(crmTeamId)
+      .then((data) => {
+        if (!cancelled) setCrmUsers(Array.isArray(data?.items) ? data.items : []);
+      })
+      .catch((err: any) => {
+        if (!cancelled) {
+          setCrmUsers([]);
+          setDirectoryError(
+            err?.response?.data?.message || "Couldn't load CRM users for that team.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCrmUsersLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.source, crmTeamId]);
+
+  React.useEffect(() => {
+    if (form.source !== "OOREDOO") return;
+    let cancelled = false;
+    setFmsUsersLoading(true);
+    setDirectoryError("");
+    AdminAPI.getFmsUsers()
+      .then((data) => {
+        if (!cancelled) setFmsUsers(Array.isArray(data?.items) ? data.items : []);
+      })
+      .catch((err: any) => {
+        if (!cancelled) {
+          setFmsUsers([]);
+          setDirectoryError(
+            err?.response?.data?.message || "Couldn't load FMS users.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setFmsUsersLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.source]);
+
   function update(field: keyof Errors, value: string) {
-    setForm((prev) => ({ ...prev, [field]: value }));
+    setForm((prev) => {
+      if (field === "source") {
+        setCrmTeamId("");
+        setCrmUsers([]);
+        setFmsUsers([]);
+        setDirectoryError("");
+        return {
+          ...prev,
+          source: value as UserSource,
+          crm_user_id: "",
+          ooredoo_user_id: "",
+        };
+      }
+      return { ...prev, [field]: value };
+    });
     if (field === "role_id") {
       setLevels(toLevelMap(roles.find((role) => role.id === value)?.permissions));
     }
     if (errors[field]) {
       setErrors((prev) => ({ ...prev, [field]: undefined }));
+    }
+  }
+
+  function selectCrmUser(userId: string) {
+    const picked = crmUsers.find((u) => u.id === userId);
+    setForm((prev) => ({
+      ...prev,
+      crm_user_id: userId,
+      name: prev.name.trim() ? prev.name : picked?.label || prev.name,
+      email:
+        prev.email.trim() || !picked?.email ? prev.email : String(picked.email),
+    }));
+    if (errors.crm_user_id) {
+      setErrors((prev) => ({ ...prev, crm_user_id: undefined }));
+    }
+  }
+
+  function selectFmsUser(userId: string) {
+    const picked = fmsUsers.find((u) => u.id === userId);
+    setForm((prev) => ({
+      ...prev,
+      ooredoo_user_id: userId,
+      email:
+        prev.email.trim() || !picked?.email ? prev.email : String(picked.email),
+    }));
+    if (errors.ooredoo_user_id) {
+      setErrors((prev) => ({ ...prev, ooredoo_user_id: undefined }));
     }
   }
 
@@ -114,11 +256,15 @@ export default function CreateUserPage() {
     setSaving(true);
     try {
       const result = await AdminAPI.createUser({
-        ...form,
+        source: form.source,
         name: form.name.trim(),
         email: form.email.trim(),
         phone: form.phone.trim(),
-        crm_user_id: form.crm_user_id.trim(),
+        password: form.password,
+        role_id: form.role_id,
+        ...(form.source === "OOREDOO"
+          ? { ooredoo_user_id: form.ooredoo_user_id?.trim() }
+          : { crm_user_id: form.crm_user_id?.trim() }),
         permissions: toOverrides(levels, toLevelMap(selectedRole?.permissions)),
       });
       if (!result?.user) {
@@ -192,20 +338,126 @@ export default function CreateUserPage() {
                 />
               </Field>
               <Field
-                id="crm_user_id"
-                label="CRM user ID"
-                error={errors.crm_user_id}
-                hint="Must match the user's ID in CRM so tickets sync correctly."
+                id="source"
+                label="Ticket platform"
+                error={errors.source}
+                hint="Medianet techs get CRM tickets; Ooredoo techs get FMS tickets."
               >
-                <Input
-                  id="crm_user_id"
-                  value={form.crm_user_id}
-                  onChange={(e) => update("crm_user_id", e.target.value)}
-                  placeholder="743f1b25-6132-4f5d-9457-1b0fb1c763a3"
-                  className="font-mono text-xs"
-                  aria-invalid={Boolean(errors.crm_user_id)}
-                />
+                <Select
+                  value={form.source}
+                  onValueChange={(value) => update("source", value)}
+                >
+                  <SelectTrigger id="source" aria-invalid={Boolean(errors.source)}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="MEDIANET">Medianet (CRM)</SelectItem>
+                    <SelectItem value="OOREDOO">Ooredoo (FMS)</SelectItem>
+                  </SelectContent>
+                </Select>
               </Field>
+              {form.source === "OOREDOO" ? (
+                <Field
+                  id="ooredoo_user_id"
+                  label="FMS user"
+                  error={errors.ooredoo_user_id || directoryError || undefined}
+                  hint={
+                    fmsUsersLoading
+                      ? "Loading Assign-to-User list from FMS…"
+                      : "Same list as FMS → Assign to User."
+                  }
+                >
+                  <Select
+                    value={form.ooredoo_user_id || undefined}
+                    onValueChange={selectFmsUser}
+                    disabled={fmsUsersLoading || fmsUsers.length === 0}
+                  >
+                    <SelectTrigger
+                      id="ooredoo_user_id"
+                      aria-invalid={Boolean(errors.ooredoo_user_id)}
+                    >
+                      <SelectValue
+                        placeholder={
+                          fmsUsersLoading ? "Loading…" : "Choose FMS user"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {fmsUsers.map((user) => (
+                        <SelectItem key={user.id} value={user.id}>
+                          {`${user.label} (${user.id})`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              ) : (
+                <>
+                  <Field
+                    id="crm_team_id"
+                    label="CRM team"
+                    hint="Pick the team, then the person."
+                  >
+                    <Select
+                      value={crmTeamId || undefined}
+                      onValueChange={(value) => {
+                        setCrmTeamId(value);
+                        update("crm_user_id", "");
+                      }}
+                      disabled={crmTeams.length === 0}
+                    >
+                      <SelectTrigger id="crm_team_id">
+                        <SelectValue placeholder="Choose a CRM team" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {crmTeams.map((team) => (
+                          <SelectItem key={team.id} value={team.id}>
+                            {team.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field
+                    id="crm_user_id"
+                    label="CRM user"
+                    error={errors.crm_user_id || directoryError || undefined}
+                    hint={
+                      crmUsersLoading
+                        ? "Loading team members…"
+                        : "Must match CRM so tickets sync correctly."
+                    }
+                  >
+                    <Select
+                      value={form.crm_user_id || undefined}
+                      onValueChange={selectCrmUser}
+                      disabled={!crmTeamId || crmUsersLoading || crmUsers.length === 0}
+                    >
+                      <SelectTrigger
+                        id="crm_user_id"
+                        aria-invalid={Boolean(errors.crm_user_id)}
+                      >
+                        <SelectValue
+                          placeholder={
+                            !crmTeamId
+                              ? "Choose a team first"
+                              : crmUsersLoading
+                                ? "Loading…"
+                                : "Choose CRM user"
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {crmUsers.map((user) => (
+                          <SelectItem key={user.id} value={user.id}>
+                            {user.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -320,7 +572,9 @@ export default function CreateUserPage() {
                 Before you start
               </div>
               <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
-                <li>The CRM user ID must match exactly, or assigned tickets won&apos;t appear in the app.</li>
+                <li>
+                  Pick the person from CRM or FMS — don&apos;t type staff IDs by hand.
+                </li>
                 <li>Each email can only be used once.</li>
                 <li>Everyone signs in at the same address. People with only the Technician app land in /field; everyone else lands on their first console screen.</li>
               </ul>

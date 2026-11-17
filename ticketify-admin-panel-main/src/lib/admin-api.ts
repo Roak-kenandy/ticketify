@@ -149,4 +149,35 @@ export class AdminAPI {
       headers: this.getAuthHeaders(),
     });
   }
+
+  /** CRM teams for linking a Medianet tech on create. */
+  static async getCrmTeams(): Promise<{
+    items: { id: string; label: string; email?: string | null }[];
+  }> {
+    const response = await axiosInterceptorInstance.get('/admin/directory/crm/teams', {
+      headers: this.getAuthHeaders(),
+    });
+    return response.data;
+  }
+
+  /** CRM users in a team — value is crm_user_id. */
+  static async getCrmUsers(teamId: string): Promise<{
+    items: { id: string; label: string; email?: string | null }[];
+  }> {
+    const response = await axiosInterceptorInstance.get(
+      `/admin/directory/crm/users?team_id=${encodeURIComponent(teamId)}`,
+      { headers: this.getAuthHeaders() },
+    );
+    return response.data;
+  }
+
+  /** FMS Assign-to-User list — value is ooredoo_user_id. */
+  static async getFmsUsers(): Promise<{
+    items: { id: string; label: string; email?: string | null }[];
+  }> {
+    const response = await axiosInterceptorInstance.get('/admin/directory/fms/users', {
+      headers: this.getAuthHeaders(),
+    });
+    return response.data;
+  }
 }

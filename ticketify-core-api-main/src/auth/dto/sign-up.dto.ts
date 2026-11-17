@@ -3,22 +3,40 @@ import {
   ArrayMaxSize,
   IsArray,
   IsEmail,
+  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
   Matches,
   MaxLength,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
+import { UserSource } from '@prisma/client';
 import { PermissionOverrideDto } from '../access/permission.dto';
 import { PASSWORD_MESSAGE, PASSWORD_RULE } from './change-password.dto';
 
 export class SignUpDto {
+  @IsOptional()
+  @IsEnum(UserSource)
+  source?: UserSource;
+
+  @ValidateIf(
+    (dto: SignUpDto) =>
+      (dto.source ?? UserSource.MEDIANET) === UserSource.MEDIANET,
+  )
   @IsString()
   @IsNotEmpty()
   @Matches(/^[A-Za-z0-9-]{8,64}$/, { message: 'Invalid CRM user id' })
-  crm_user_id: string;
+  crm_user_id?: string;
+
+  /** Numeric FMS user id from the Assign to User dropdown (e.g. 212). */
+  @ValidateIf((dto: SignUpDto) => dto.source === UserSource.OOREDOO)
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^[0-9]{1,12}$/, { message: 'Invalid Ooredoo user id' })
+  ooredoo_user_id?: string;
 
   @IsNotEmpty()
   @IsEmail()

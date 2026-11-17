@@ -11,6 +11,8 @@ const MUTATION_GRACE_MS = 3000;
 const MAX_PENDING_MS = 5 * 60 * 1000;
 /** Background refresh interval (the mobile app used push for this). */
 const POLL_MS = 60 * 1000;
+/** Ooredoo list hits a multi‑MB FMS page — poll less often (API also prefetches). */
+const OOREDOO_POLL_MS = 120 * 1000;
 
 const STATE_RANK: Record<string, number> = { NEW: 1, IN_PROGRESS: 2, CLOSED: 3 };
 
@@ -84,7 +86,7 @@ type TicketsValue = {
 const TicketsContext = React.createContext<TicketsValue | null>(null);
 
 export function TicketsProvider({ children }: { children: React.ReactNode }) {
-  const { token } = useSession();
+  const { token, user } = useSession();
   const [tickets, setTickets] = React.useState<any[]>([]);
   const [teamTickets, setTeamTickets] = React.useState<any[]>([]);
   const [syncedAt, setSyncedAt] = React.useState<number | null>(null);
@@ -97,6 +99,8 @@ export function TicketsProvider({ children }: { children: React.ReactNode }) {
   const pendingById = React.useRef(new Map<string, Pending>());
   const lastMutationAt = React.useRef(0);
   const knownNewIds = React.useRef<Set<string> | null>(null);
+  const refreshInflight = React.useRef<Promise<void> | null>(null);
+  const isOoredoo = user?.source === "OOREDOO";
 
   const mergePending = React.useCallback((ticket: any) => {
     if (!ticket?.id) {
@@ -168,80 +172,98 @@ export function TicketsProvider({ children }: { children: React.ReactNode }) {
       if (!options?.force && Date.now() - lastMutationAt.current < MUTATION_GRACE_MS) {
         return;
       }
-      pendingById.current.forEach((pending, id) => {
-        if (Date.now() - pending._mutatedAt >= MAX_PENDING_MS) {
-          pendingById.current.delete(id);
-        }
-      });
+      // Coalesce poll + visibility + manual refresh into one in-flight request.
+      if (refreshInflight.current && !options?.force) {
+        return refreshInflight.current;
+      }
 
-      const [mine, teams] = await Promise.allSettled([
-        apiGet("/tickets", token, { silent: true, timeoutMs: 30000 }),
-        apiGet("/tickets/teams", token, { silent: true, timeoutMs: 30000 }),
-      ]);
-      const errors: Error[] = [];
-
-      if (mine.status === "fulfilled") {
-        const incoming: any[] = mine.value?.content ?? [];
-        const existing = new Map(ticketsRef.current.map((t) => [String(t.id), t]));
-        const seen = new Set<string>();
-        const merged = incoming.map((t) => {
-          seen.add(String(t.id));
-          return mergeFromServer(t, existing.get(String(t.id)));
-        });
-        existing.forEach((local, id) => {
-          if (
-            !seen.has(id) &&
-            (pendingById.current.has(id) ||
-              local.state === "IN_PROGRESS" ||
-              local.state === "CLOSED")
-          ) {
-            merged.push(mergePending(local));
+      const run = (async () => {
+        pendingById.current.forEach((pending, id) => {
+          if (Date.now() - pending._mutatedAt >= MAX_PENDING_MS) {
+            pendingById.current.delete(id);
           }
         });
 
-        const newIds = new Set(
-          merged.filter((t) => t.state === "NEW").map((t) => String(t.id)),
-        );
-        if (knownNewIds.current) {
-          const fresh = merged.filter(
-            (t) => t.state === "NEW" && !knownNewIds.current?.has(String(t.id)),
+        // Field dashboard shows only the signed-in tech's tickets (no team queue).
+        const [mine, teams] = await Promise.allSettled([
+          apiGet("/tickets", token, {
+            silent: true,
+            timeoutMs: isOoredoo ? 60_000 : 30_000,
+          }),
+          Promise.resolve([]),
+        ]);
+        const errors: Error[] = [];
+
+        if (mine.status === "fulfilled") {
+          const incoming: any[] = mine.value?.content ?? [];
+          const existing = new Map(ticketsRef.current.map((t) => [String(t.id), t]));
+          const seen = new Set<string>();
+          const merged = incoming.map((t) => {
+            seen.add(String(t.id));
+            return mergeFromServer(t, existing.get(String(t.id)));
+          });
+          existing.forEach((local, id) => {
+            if (
+              !seen.has(id) &&
+              (pendingById.current.has(id) ||
+                local.state === "IN_PROGRESS" ||
+                local.state === "CLOSED")
+            ) {
+              merged.push(mergePending(local));
+            }
+          });
+
+          const newIds = new Set(
+            merged.filter((t) => t.state === "NEW").map((t) => String(t.id)),
           );
-          if (fresh.length) {
-            notifyAssigned(fresh);
+          if (knownNewIds.current) {
+            const fresh = merged.filter(
+              (t) => t.state === "NEW" && !knownNewIds.current?.has(String(t.id)),
+            );
+            if (fresh.length) {
+              notifyAssigned(fresh);
+            }
           }
+          knownNewIds.current = newIds;
+          setTickets(merged);
+        } else {
+          errors.push(mine.reason);
         }
-        knownNewIds.current = newIds;
-        setTickets(merged);
-      } else {
-        errors.push(mine.reason);
-      }
 
-      if (teams.status === "fulfilled" && Array.isArray(teams.value)) {
-        const existing = new Map<string, any>();
-        teamRef.current.forEach((group) =>
-          teamTicketList(group).forEach((t) => existing.set(String(t.id), t)),
-        );
-        setTeamTickets(
-          teams.value.map((group: any) =>
-            withTeamTicketList(
-              group,
-              teamTicketList(group).map((t) => mergeFromServer(t, existing.get(String(t.id)))),
+        if (teams.status === "fulfilled" && Array.isArray(teams.value)) {
+          const existing = new Map<string, any>();
+          teamRef.current.forEach((group) =>
+            teamTicketList(group).forEach((t) => existing.set(String(t.id), t)),
+          );
+          setTeamTickets(
+            teams.value.map((group: any) =>
+              withTeamTicketList(
+                group,
+                teamTicketList(group).map((t) =>
+                  mergeFromServer(t, existing.get(String(t.id))),
+                ),
+              ),
             ),
-          ),
-        );
-      } else if (teams.status === "rejected") {
-        errors.push(teams.reason);
-      }
+          );
+        } else if (teams.status === "rejected") {
+          errors.push(teams.reason);
+        }
 
-      if (errors.length < 2) {
-        setSyncedAt(Date.now());
-      }
-      setError(errors.length ? errors[0]?.message || "Could not load tickets" : null);
-      if (errors.length === 2) {
-        throw errors[0];
-      }
+        if (errors.length < 2) {
+          setSyncedAt(Date.now());
+        }
+        setError(errors.length ? errors[0]?.message || "Could not load tickets" : null);
+        if (errors.length === 2) {
+          throw errors[0];
+        }
+      })();
+
+      refreshInflight.current = run.finally(() => {
+        refreshInflight.current = null;
+      });
+      return refreshInflight.current;
     },
-    [token, mergeFromServer, mergePending],
+    [token, isOoredoo, mergeFromServer, mergePending],
   );
 
   const refreshRef = React.useRef(refresh);
@@ -256,14 +278,15 @@ export function TicketsProvider({ children }: { children: React.ReactNode }) {
         const raw = await apiGet(`/tickets/${ticketId}`, token, { silent: true });
         tryRelease(ticketId, raw);
         upsertTicket({ ...raw, id: ticketId });
+        // Soft list refresh only — force:true re-downloads FMS My Tickets for every tech.
         if (!pendingById.current.has(ticketId)) {
-          await refreshRef.current({ force: true });
+          await refreshRef.current(isOoredoo ? undefined : { force: true });
         }
       } catch {
         // Keep the pending patch until TTL or a later reconcile succeeds.
       }
     },
-    [token, tryRelease, upsertTicket],
+    [token, tryRelease, upsertTicket, isOoredoo],
   );
 
   const notifyTicketMutation = React.useCallback<TicketsValue["notifyTicketMutation"]>(
@@ -284,26 +307,36 @@ export function TicketsProvider({ children }: { children: React.ReactNode }) {
       upsertTicket(optimistic);
 
       let merged = optimistic;
-      try {
-        const fresh = mergePending({
-          ...(await apiGet(`/tickets/${id}`, token, { silent: true })),
-          id,
-        });
+      // Prefer the mutation response — avoids an immediate extra FMS ticket_info hit.
+      if (serverTicket?.id && sameTicketId(serverTicket.id, id)) {
+        const fresh = mergePending({ ...serverTicket, id });
         merged = { ...fresh, ...patch, id };
         upsertTicket(merged);
         tryRelease(id, fresh);
-      } catch {
-        // The optimistic patch above already reflects the change.
+      } else {
+        try {
+          const fresh = mergePending({
+            ...(await apiGet(`/tickets/${id}`, token, { silent: true })),
+            id,
+          });
+          merged = { ...fresh, ...patch, id };
+          upsertTicket(merged);
+          tryRelease(id, fresh);
+        } catch {
+          // The optimistic patch above already reflects the change.
+        }
       }
 
-      for (const delay of [15000, 45000, 90000]) {
+      // Ooredoo: one delayed reconcile is enough (list prefetch + detail cache cover the rest).
+      const delays = isOoredoo ? [30_000] : [15_000, 45_000, 90_000];
+      for (const delay of delays) {
         window.setTimeout(() => {
           reconcile(id).catch(() => {});
         }, delay);
       }
       return merged;
     },
-    [token, upsertTicket, mergePending, tryRelease, reconcile],
+    [token, upsertTicket, mergePending, tryRelease, reconcile, isOoredoo],
   );
 
   React.useEffect(() => {
@@ -319,9 +352,10 @@ export function TicketsProvider({ children }: { children: React.ReactNode }) {
     refreshRef.current({ force: true }).catch(() => {});
     // Keeps polling in a background tab too (browsers throttle it to about once a
     // minute) so new assignments can still raise a desktop notification.
+    const pollMs = isOoredoo ? OOREDOO_POLL_MS : POLL_MS;
     const id = window.setInterval(() => {
       refreshRef.current().catch(() => {});
-    }, POLL_MS);
+    }, pollMs);
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         refreshRef.current().catch(() => {});
@@ -332,7 +366,7 @@ export function TicketsProvider({ children }: { children: React.ReactNode }) {
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [token]);
+  }, [token, isOoredoo]);
 
   const value = React.useMemo(
     () => ({ tickets, teamTickets, syncedAt, error, refresh, notifyTicketMutation }),

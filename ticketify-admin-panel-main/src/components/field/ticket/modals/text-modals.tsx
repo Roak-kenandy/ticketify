@@ -4,6 +4,7 @@ import React from "react";
 import FormModal from "@/components/field/ui/form-modal";
 import { SwitchRow } from "@/components/field/ui/switch";
 import { apiPost, apiPut } from "@/lib/field/api";
+import { ticketSystem } from "@/lib/field/app";
 import { showError, showSuccess } from "@/lib/field/notify";
 import { useSession } from "@/lib/field/session";
 import { useTickets } from "@/lib/field/tickets";
@@ -55,10 +56,11 @@ export function AddNoteModal({
   onClose: () => void;
   onSuccess?: () => void;
 }) {
-  const { token } = useSession();
+  const { token, user } = useSession();
   const [submitting, setSubmitting] = React.useState(false);
   const [note, setNote] = React.useState("");
   const [error, setError] = React.useState("");
+  const system = ticketSystem({ userSource: user?.source, ticketId });
 
   async function submit() {
     const text = note.trim();
@@ -89,7 +91,7 @@ export function AddNoteModal({
         onClose();
       }}
       title="Add note"
-      subtitle="Notes are saved to the ticket in the CRM."
+      subtitle={`Notes are saved to the ticket in ${system}.`}
       loading={submitting}
       footer={{ onSubmit: submit, submitText: "Save note" }}
     >
@@ -122,11 +124,12 @@ export function CloseTicketModal({
   onClose: () => void;
   onSuccess?: (updated: any) => void;
 }) {
-  const { token } = useSession();
+  const { token, user } = useSession();
   const { notifyTicketMutation } = useTickets();
   const [submitting, setSubmitting] = React.useState(false);
   const [note, setNote] = React.useState("");
   const [error, setError] = React.useState("");
+  const system = ticketSystem({ userSource: user?.source, ticketId });
 
   async function submit() {
     if (submitting) {
@@ -165,7 +168,11 @@ export function CloseTicketModal({
         onClose();
       }}
       title="Close ticket"
-      subtitle="This completes the job in the CRM. Make sure all work is done."
+      subtitle={
+        system === "FMS"
+          ? "This marks the ticket Fault Resolved in FMS. Make sure all work is done."
+          : "This completes the job in the CRM. Make sure all work is done."
+      }
       loading={submitting}
       footer={{ onSubmit: submit, submitText: "Close ticket" }}
     >

@@ -41,6 +41,12 @@ export class CompleteTicketDto {
   @MaxLength(64)
   stage_id?: string;
 
+  /** FMS closing sub-category text (e.g. "External cable replaced"). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  closing_sub_comment?: string;
+
   @IsOptional()
   @IsBoolean()
   pinned?: boolean;

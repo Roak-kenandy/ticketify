@@ -10,12 +10,16 @@ import { EmptyState, ErrorState, InlineBanner, TicketCardSkeleton } from "@/comp
 import { cn } from "@/lib/field/cn";
 import { fieldCardGrid, fieldContainer } from "@/lib/field/layout";
 import {
+  boardFromTickets,
   isStatusBucket,
   STATUS_BUCKETS,
   type StatusBucket,
   type StatusInfo,
   useStatusBoard,
 } from "@/lib/field/status-board";
+import { ticketSystem } from "@/lib/field/app";
+import { useSession } from "@/lib/field/session";
+import { useTickets } from "@/lib/field/tickets";
 
 function detail(bucket: StatusBucket, info: StatusInfo | undefined, ticket: any, showAssignee: boolean) {
   const parts: string[] = [];
@@ -43,18 +47,28 @@ function detail(bucket: StatusBucket, info: StatusInfo | undefined, ticket: any,
 function StatusList() {
   const router = useRouter();
   const params = useSearchParams();
-  const { board, error, reload } = useStatusBoard();
+  const { user } = useSession();
+  const { tickets, refresh } = useTickets();
+  const { board: remoteBoard, error, reload } = useStatusBoard();
   const [refreshing, setRefreshing] = React.useState(false);
+  const isOoredoo = user?.source === "OOREDOO";
+  const board = isOoredoo ? boardFromTickets(tickets) : remoteBoard;
+  const buckets = isOoredoo
+    ? STATUS_BUCKETS.filter((bucket) => bucket.key !== "payment_pending")
+    : STATUS_BUCKETS;
   const requested = params.get("bucket");
-  const active: StatusBucket = isStatusBucket(requested) ? requested : "pending";
-  const meta = STATUS_BUCKETS.find((bucket) => bucket.key === active) ?? STATUS_BUCKETS[0];
+  const active: StatusBucket =
+    isStatusBucket(requested) && !(isOoredoo && requested === "payment_pending")
+      ? requested
+      : "pending";
+  const meta = buckets.find((bucket) => bucket.key === active) ?? buckets[0];
   const list = board?.tickets[active] ?? [];
   const total = board?.counts[active] ?? 0;
 
   const onRefresh = async () => {
     setRefreshing(true);
     try {
-      await reload();
+      await (isOoredoo ? refresh({ force: true }) : reload());
     } finally {
       setRefreshing(false);
     }
@@ -69,7 +83,7 @@ function StatusList() {
       >
         <div className="flex items-center gap-2">
           <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto rounded-md bg-white p-1" role="tablist">
-            {STATUS_BUCKETS.map((bucket) => {
+            {buckets.map((bucket) => {
               const on = bucket.key === active;
               return (
                 <button
@@ -106,7 +120,10 @@ function StatusList() {
         </p>
         {board && error ? <InlineBanner tone="error" message={error} actionLabel="Retry" onAction={onRefresh} /> : null}
         {active === "no_response" && board && !board.no_response_available ? (
-          <InlineBanner tone="error" message="The CRM did not return No response activities. Try again shortly." />
+          <InlineBanner
+            tone="error"
+            message={`The ${ticketSystem({ userSource: user?.source })} did not return No response activities. Try again shortly.`}
+          />
         ) : null}
         {board?.failed_teams?.length ? (
           <InlineBanner

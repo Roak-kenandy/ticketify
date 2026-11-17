@@ -608,8 +608,12 @@ export class ProvisioningRunner {
     this.assertConfirmedLocation(detected, input, rebind);
     const where = `${detected.olt_name ?? detected.olt_id} PON ${detected.pon || '-'}`;
     if (!rebind && detected.online === false) {
+      // Action C: address-only needs the ONT online on its current PON; a physical
+      // move needs it in autofind (UNREGISTERED) on the destination OLT/PON.
       this.fail(
-        `ONT ${serial} is still configured on ${where} but offline. If it was moved to another PON, check it is powered and connected there: INCA then lists it as unregistered.`,
+        `ONT ${serial} is still configured on ${where} but offline — Relocation cannot tell address-only from a move yet. ` +
+          `For address-only: power the ONT on the same fibre/PON and retry when Detect shows online. ` +
+          `For a physical move: connect it at the new location until Detect shows unregistered on the destination OLT/PON, confirm that port, then retry.`,
       );
     }
     await this.recorder.step(

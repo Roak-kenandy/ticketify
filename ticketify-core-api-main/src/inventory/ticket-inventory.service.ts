@@ -15,6 +15,7 @@ import {
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { IntegrationAuditService } from 'src/infrastructure/audit/integration-audit.service';
 import { TicketAccessService } from 'src/infrastructure/security/ticket-access.service';
+import { TicketSystemNotesService } from 'src/infrastructure/ticket-notes/ticket-system-notes.service';
 import { can, UserAccess } from 'src/auth/access/access';
 import { InventoryDeclarationDto, InventoryLineDto } from './dto/inventory.dto';
 import { InventoryItemsService } from './inventory-items.service';
@@ -126,6 +127,7 @@ export class TicketInventoryService {
     private readonly snapshots: TicketSnapshotService,
     private readonly access: TicketAccessService,
     private readonly stock: TechnicianStockService,
+    private readonly ticketNotes: TicketSystemNotesService,
   ) {}
 
   /** `locked`: closed for technicians; the inventory team can still correct it. */
@@ -286,7 +288,37 @@ export class TicketInventoryService {
       },
       idempotency_key: key,
     });
+
+    this.ticketNotes.postLater(
+      crmTicketId,
+      this.buildInventoryNote(dto.declaration, prepared, actor),
+    );
+
     return this.view(crmTicketId, actor);
+  }
+
+  private buildInventoryNote(
+    declaration: InventoryDeclarationType | string,
+    prepared: Array<{
+      item: { name: string; code: string; consumption_uom: string };
+      quantity: number;
+      serial: string | null;
+    }>,
+    actor: InventoryActor,
+  ): string {
+    const who = actor.name?.trim() || 'technician';
+    if (declaration === 'NONE_USED') {
+      return `mPro inventory — no materials used on this visit (confirmed by ${who}).`;
+    }
+    const items =
+      prepared
+        .map((line) => {
+          const qty = `${line.quantity} ${line.item.consumption_uom}`.trim();
+          const serial = line.serial ? ` SN ${line.serial}` : '';
+          return `${line.item.name} (${line.item.code}) × ${qty}${serial}`;
+        })
+        .join('; ') || 'none';
+    return `mPro inventory — materials confirmed by ${who}. Items: ${items}.`;
   }
 
   async reverse(lineId: string, actor: InventoryActor, reason: string) {

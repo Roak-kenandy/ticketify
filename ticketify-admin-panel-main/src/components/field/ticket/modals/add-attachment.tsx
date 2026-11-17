@@ -35,11 +35,14 @@ export default function AddAttachmentModal({
   visible,
   onClose,
   onSuccess,
+  toFms,
 }: {
   ticketId: string;
   visible: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  /** Ooredoo: upload goes to FMS post_ticket_attachment, not local mPro storage. */
+  toFms?: boolean;
 }) {
   const { token } = useSession();
   const [submitting, setSubmitting] = React.useState(false);
@@ -92,7 +95,7 @@ export default function AddAttachmentModal({
       form.append("description", description.trim());
       form.append("file", blob, name);
       await apiRequest("POST", `/tickets/${ticketId}/attachments`, token, form, { timeoutMs: 90000 });
-      showSuccess("Photo attached");
+      showSuccess(toFms ? "Photo uploaded to FMS" : "Photo attached");
       setFile(null);
       setDescription("");
       onClose();
@@ -112,7 +115,11 @@ export default function AddAttachmentModal({
         onClose();
       }}
       title="Add attachment"
-      subtitle="Attach a site photo to this ticket."
+      subtitle={
+        toFms
+          ? "Uploads to Ooredoo FMS (same as the portal attachment form)."
+          : "Attach a site photo to this ticket."
+      }
       loading={submitting}
       footer={{ onSubmit: submit, submitText: "Upload" }}
     >

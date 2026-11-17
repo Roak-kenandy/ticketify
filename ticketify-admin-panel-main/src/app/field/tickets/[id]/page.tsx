@@ -32,6 +32,8 @@ import InventoryModal from "@/components/field/ticket/modals/inventory";
 import LmHandoffModal from "@/components/field/ticket/modals/lm-handoff";
 import ProvisioningModal from "@/components/field/ticket/modals/provisioning";
 import ScheduleVisitModal from "@/components/field/ticket/modals/schedule-visit";
+import FmsAddressModal from "@/components/field/ticket/modals/fms-address";
+import FmsEditModal, { type FmsEditField } from "@/components/field/ticket/modals/fms-edit";
 import { AddNoteModal, CloseTicketModal, ProgressTicketModal } from "@/components/field/ticket/modals/text-modals";
 import ViewImageModal from "@/components/field/ticket/modals/view-image";
 import ViewInfoModal from "@/components/field/ticket/modals/view-info";
@@ -40,7 +42,7 @@ import { ToneBadge } from "@/components/field/ui/badge";
 import { PrimaryButton } from "@/components/field/ui/button";
 import { EmptyState, ErrorState, InlineBanner, Skeleton } from "@/components/field/ui/state-views";
 import { apiGet, apiPut } from "@/lib/field/api";
-import { dialable } from "@/lib/field/app";
+import { dialable, ticketSystem } from "@/lib/field/app";
 import { cn } from "@/lib/field/cn";
 import colors from "@/lib/field/colors";
 import { fieldContainer } from "@/lib/field/layout";
@@ -68,7 +70,9 @@ type ModalName =
   | "lm"
   | "info"
   | "inventory"
-  | "provisioning";
+  | "provisioning"
+  | "fms-edit"
+  | "fms-address";
 
 function findNextStage(ticket: any) {
   const order = ticket?.stage?.order ?? 0;
@@ -114,7 +118,15 @@ export default function TicketDetailsPage() {
   const [selectedActivity, setSelectedActivity] = React.useState<any>();
   const [selectedImage, setSelectedImage] = React.useState<any>();
   const [modal, setModal] = React.useState<ModalName | null>(null);
-  const closeModal = React.useCallback(() => setModal(null), []);
+  const [fmsEditField, setFmsEditField] = React.useState<FmsEditField | null>(null);
+  const closeModal = React.useCallback(() => {
+    setModal(null);
+    setFmsEditField(null);
+  }, []);
+  const openFmsEdit = React.useCallback((field: FmsEditField) => {
+    setFmsEditField(field);
+    setModal("fms-edit");
+  }, []);
   const [resumeClose, setResumeClose] = React.useState(false);
 
   const applyToLocalState = React.useCallback(
@@ -167,8 +179,28 @@ export default function TicketDetailsPage() {
       if (mode === "refresh") {
         setRefreshing(true);
       }
+      // Ooredoo: ticket only — billing/closure are CRM-only and used to re-hit FMS.
+      const ooredooLoad = user?.source === "OOREDOO";
       try {
-        await Promise.all([fetchTicket(), fetchContext(), fetchBillingWorkflow(), fetchClosure()]);
+        if (ooredooLoad) {
+          await fetchTicket();
+          setBillingWorkflow(null);
+          setClosure(null);
+          setContext({
+            crm_ticket_id: ticketId,
+            pending_lm: false,
+            pending_no_response: false,
+            no_response_activities: [],
+            source: "OOREDOO",
+          });
+        } else {
+          await Promise.all([
+            fetchTicket(),
+            fetchContext(),
+            fetchBillingWorkflow(),
+            fetchClosure(),
+          ]);
+        }
         setLoadError("");
       } catch (error: any) {
         const message = error?.message || "Could not load this ticket";
@@ -181,7 +213,7 @@ export default function TicketDetailsPage() {
         setRefreshing(false);
       }
     },
-    [ticketId, token, fetchTicket, fetchContext, fetchBillingWorkflow, fetchClosure],
+    [ticketId, token, user?.source, fetchTicket, fetchContext, fetchBillingWorkflow, fetchClosure],
   );
 
   React.useEffect(() => {
@@ -200,6 +232,8 @@ export default function TicketDetailsPage() {
   }, [loadAll]);
 
   const view = data ?? seedTicket;
+  const isOoredoo =
+    user?.source === "OOREDOO" || view?.source === "OOREDOO";
   const isMine = Boolean(user?.crm_user_id) && user?.crm_user_id === view?.assigned_to?.user?.id;
   const isClosed = view?.state === "CLOSED" || view?.stage?.name === "Closed";
   const canEdit = isMine && !isClosed;
@@ -224,13 +258,18 @@ export default function TicketDetailsPage() {
     Boolean(context?.pending_no_response) ||
     hasPendingNoResponse(context?.no_response_activities) ||
     hasPendingNoResponse(activities);
-  const closeStageActive = Boolean(nextStage) && data?.queue_info?.stages?.length === nextStage?.order;
-  const billingBlocksClose = isMine && billingWorkflow?.can_close_ticket === false && closeStageActive;
+  // Ooredoo has no CRM stage chain — once assigned, the only primary action is close (FMS Fault Resolved).
+  const closeStageActive = isOoredoo
+    ? Boolean(isMine && !isClosed)
+    : Boolean(nextStage) && data?.queue_info?.stages?.length === nextStage?.order;
+  const billingBlocksClose =
+    !isOoredoo && isMine && billingWorkflow?.can_close_ticket === false && closeStageActive;
   const closureBlocker =
-    closure?.enforced && !closure.ready
+    !isOoredoo && closure?.enforced && !closure.ready
       ? closure.checks.find((check) => !check.ok && check.severity === "block")
       : undefined;
-  const showChecklist = canEdit && view?.state === "IN_PROGRESS" && Boolean(closure?.checks.length);
+  const showChecklist =
+    !isOoredoo && canEdit && view?.state === "IN_PROGRESS" && Boolean(closure?.checks.length);
 
   async function assignUser() {
     setSubmitted(true);
@@ -253,7 +292,9 @@ export default function TicketDetailsPage() {
         timeoutMs: 30000,
       });
       if (result?.state !== "IN_PROGRESS") {
-        throw new Error("The CRM did not move the ticket to In progress. Please try again.");
+        throw new Error(
+          `The ${ticketSystem({ userSource: user?.source, ticketSource: view?.source, ticketId })} did not move the ticket to In progress. Please try again.`,
+        );
       }
       const updated = await notifyTicketMutation(
         ticketId,
@@ -303,12 +344,16 @@ export default function TicketDetailsPage() {
     if (submitted) {
       return;
     }
-    if (lmBlocking) {
-      showInfo("Finish Last Mile cabling before continuing this ticket.");
-      return;
-    }
     if (!isMine) {
       assignUser();
+      return;
+    }
+    if (isOoredoo) {
+      if (!isClosed) setModal("close");
+      return;
+    }
+    if (lmBlocking) {
+      showInfo("Finish Last Mile cabling before continuing this ticket.");
       return;
     }
     if (view?.state === "NEW") {
@@ -339,21 +384,25 @@ export default function TicketDetailsPage() {
     setModal("progress");
   }
 
-  const primaryLabel = lmBlocking
-    ? "Waiting for Last Mile"
-    : !isMine
-      ? "Assign to me"
-      : view?.state === "NEW"
-        ? `Start ${nextStage?.name ?? "work"}`
-        : closeStageActive
-          ? "Close ticket"
-          : `Move to ${nextStage?.name ?? "next stage"}`;
+  const primaryLabel = !isMine
+    ? "Assign to me"
+    : isOoredoo
+      ? "Close ticket"
+      : lmBlocking
+        ? "Waiting for Last Mile"
+        : view?.state === "NEW"
+          ? `Start ${nextStage?.name ?? "work"}`
+          : closeStageActive
+            ? "Close ticket"
+            : `Move to ${nextStage?.name ?? "next stage"}`;
   const primaryColor =
-    isMine && nextStage?.colour && !closeStageActive
-      ? nextStage.colour
-      : closeStageActive && isMine
-        ? colors.success
-        : undefined;
+    isOoredoo && isMine
+      ? colors.success
+      : isMine && nextStage?.colour && !closeStageActive
+        ? nextStage.colour
+        : closeStageActive && isMine
+          ? colors.success
+          : undefined;
 
   const stateTone = ticketStateMeta(view?.state);
   const stageTone: Tone | null = view?.stage?.name
@@ -421,8 +470,14 @@ export default function TicketDetailsPage() {
                 size="sm"
               />
             ))}
+            {view?.sub_category ? (
+              <ToneBadge
+                tone={{ label: view.sub_category, color: colors.primary, bg: colors.surface }}
+                size="sm"
+              />
+            ) : null}
           </div>
-          {view?.description ? (
+          {!isOoredoo && view?.description ? (
             <p className="whitespace-pre-line text-[15px] leading-[22px] text-ink">{view.description}</p>
           ) : null}
           {firstLoad ? (
@@ -440,8 +495,52 @@ export default function TicketDetailsPage() {
                 </div>
               ))}
             </div>
+          ) : isOoredoo && view?.priority ? (
+            <div className="flex items-center justify-between gap-2 border-t border-borderlight pt-3">
+              <div className="flex flex-col items-start gap-1">
+                <span className="caption">Priority</span>
+                <ToneBadge tone={priorityMeta(view.priority)} size="sm" showIcon />
+              </div>
+              {data ? (
+                <button
+                  type="button"
+                  onClick={() => openFmsEdit("priority")}
+                  className="text-[13px] font-semibold text-primary"
+                >
+                  Change
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </section>
+
+        {isOoredoo && data ? (
+          <Section title="FMS ticket">
+            <FmsChangeRow
+              label="TT status"
+              value={data?.fms?.status || view?.stage?.name}
+              onChange={() => openFmsEdit("status")}
+            />
+            <FmsChangeRow
+              label="Queue"
+              value={view?.queue?.name}
+              onChange={() => openFmsEdit("queue")}
+            />
+            <FmsChangeRow
+              label="Category"
+              value={
+                [data?.categories?.[0]?.name, view?.sub_category].filter(Boolean).join(" · ") ||
+                undefined
+              }
+              onChange={() => openFmsEdit("category")}
+            />
+            <FmsChangeRow
+              label="Assigned to"
+              value={view?.assigned_to?.user?.name}
+              onChange={() => openFmsEdit("assign")}
+            />
+          </Section>
+        ) : null}
 
         {isMine && lmBlocking ? (
           <InlineBanner
@@ -466,10 +565,14 @@ export default function TicketDetailsPage() {
               billingWorkflow.payment_status === "confirmed"
                 ? `Payment received (${
                     billingWorkflow.confirmed_receipt_number ?? "receipt"
-                  }). Finish the work, then close the ticket.`
+                  }). You can close when ready, or open Charges for another payment.`
                 : "Waiting for the customer to pay the link that was sent."
             }
-            actionLabel={billingWorkflow.payment_status === "pending" ? "Open" : undefined}
+            actionLabel={
+              billingWorkflow.payment_status === "pending"
+                ? "Open"
+                : "Charge again"
+            }
             onAction={() => setModal("billing")}
           />
         ) : null}
@@ -493,10 +596,46 @@ export default function TicketDetailsPage() {
                     href={dialablePhone ? `tel:${dialablePhone}` : undefined}
                   />
                   <InfoRow icon={Barcode} label="Customer code" value={data?.contact?.code} />
-                  <InfoRow icon={MapPin} label="Address" value={address || "No address on file"} />
+                  {isOoredoo && data?.fms?.can_edit_address ? (
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 flex-1 items-center gap-3">
+                        <MapPin className="h-[18px] w-[18px] shrink-0 text-gray2" />
+                        <span className="min-w-0 flex-1">
+                          <span className="caption block">Address</span>
+                          <span className="block break-words text-sm font-medium text-ink">
+                            {address || "No address on file"}
+                          </span>
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setModal("fms-address")}
+                        className="shrink-0 text-[13px] font-semibold text-primary"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  ) : (
+                    <InfoRow icon={MapPin} label="Address" value={address || "No address on file"} />
+                  )}
                 </>
               )}
-              {services.length > 0 ? (
+              {isOoredoo ? (
+                view?.description || view?.sub_category ? (
+                  <div className="mt-1 flex flex-col gap-1">
+                    <span className="caption">Description</span>
+                    <p className="whitespace-pre-line text-[14px] leading-5 text-ink">
+                      {view?.description || view?.sub_category}
+                    </p>
+                    {data?.fms?.serial_number ? (
+                      <InfoRow icon={Barcode} label="ONT serial" value={data.fms.serial_number} />
+                    ) : null}
+                    {data?.fms?.account_number ? (
+                      <InfoRow icon={Barcode} label="Account" value={data.fms.account_number} />
+                    ) : null}
+                  </div>
+                ) : null
+              ) : services.length > 0 ? (
                 <div className="mt-1 flex flex-col gap-2">
                   <span className="caption">Services and devices</span>
                   <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
@@ -635,8 +774,10 @@ export default function TicketDetailsPage() {
                 href={dialablePhone ? `tel:${dialablePhone}` : undefined}
               />
             ) : null}
-            {canEdit ? <ActionChip icon={Calendar} label="Schedule" onClick={() => setModal("schedule")} /> : null}
-            {canEdit && view?.state === "IN_PROGRESS" ? (
+            {canEdit && !isOoredoo ? (
+              <ActionChip icon={Calendar} label="Schedule" onClick={() => setModal("schedule")} />
+            ) : null}
+            {canEdit && view?.state === "IN_PROGRESS" && !isOoredoo ? (
               <ActionChip icon={CreditCard} label="Charges" onClick={() => setModal("billing")} />
             ) : null}
             {(canEdit && view?.state === "IN_PROGRESS") || correctsInventory ? (
@@ -645,7 +786,7 @@ export default function TicketDetailsPage() {
             {canEdit && view?.state === "IN_PROGRESS" ? (
               <ActionChip icon={Radio} label="INCA" onClick={() => setModal("provisioning")} />
             ) : null}
-            {canEdit && view?.state === "IN_PROGRESS" ? (
+            {canEdit && view?.state === "IN_PROGRESS" && !isOoredoo ? (
               <ActionChip
                 icon={noResponseBlocking ? PhoneCall : Phone}
                 label={noResponseBlocking ? "Clear No response" : "No response"}
@@ -654,7 +795,7 @@ export default function TicketDetailsPage() {
                 active={noResponseBlocking}
               />
             ) : null}
-            {canEdit && !lmBlocking ? (
+            {canEdit && !lmBlocking && !isOoredoo ? (
               <ActionChip icon={Network} label="Last Mile" onClick={() => setModal("lm")} />
             ) : null}
           </div>
@@ -677,6 +818,7 @@ export default function TicketDetailsPage() {
         visible={modal === "attachment"}
         onClose={closeModal}
         onSuccess={refreshAfterChange}
+        toFms={isOoredoo}
       />
       <AddNoteModal ticketId={ticketId} visible={modal === "note"} onClose={closeModal} onSuccess={refreshAfterChange} />
       <ViewImageModal ticketId={ticketId} visible={modal === "image"} onClose={closeModal} image={selectedImage} />
@@ -727,6 +869,19 @@ export default function TicketDetailsPage() {
         />
       ) : null}
       {modal === "info" ? <ViewInfoModal visible onClose={closeModal} ticket={data} /> : null}
+      <FmsEditModal
+        ticketId={ticketId}
+        field={fmsEditField}
+        visible={modal === "fms-edit"}
+        onClose={closeModal}
+        onSuccess={refreshAfterChange}
+      />
+      <FmsAddressModal
+        ticketId={ticketId}
+        visible={modal === "fms-address"}
+        onClose={closeModal}
+        onSuccess={refreshAfterChange}
+      />
     </div>
   );
 }
@@ -766,6 +921,28 @@ function Section({
       </div>
       {children}
     </section>
+  );
+}
+
+function FmsChangeRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value?: string;
+  onChange: () => void;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0 flex-1">
+        <span className="caption block">{label}</span>
+        <span className="block break-words text-sm font-medium text-ink">{value || "—"}</span>
+      </div>
+      <button type="button" onClick={onChange} className="shrink-0 text-[13px] font-semibold text-primary">
+        Change
+      </button>
+    </div>
   );
 }
 

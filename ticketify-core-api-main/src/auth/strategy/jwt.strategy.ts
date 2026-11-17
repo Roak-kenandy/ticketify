@@ -24,6 +24,18 @@ export type JwtPayload = {
   tv: number;
 };
 
+export type AuthUser = {
+  id: string;
+  name: string | null;
+  email: string;
+  phone: string | null;
+  source: 'MEDIANET' | 'OOREDOO';
+  crm_user_id: string;
+  ooredoo_user_id: string | null;
+  role: string[];
+  access: ReturnType<typeof resolveAccess>;
+};
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(
@@ -54,7 +66,9 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         email: true,
         name: true,
         phone: true,
+        source: true,
         crm_user_id: true,
+        ooredoo_user_id: true,
         is_active: true,
         token_version: true,
         role: { select: ROLE_ACCESS_SELECT },
@@ -71,9 +85,11 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       name: user.name,
       email: user.email,
       phone: user.phone,
+      source: user.source,
       crm_user_id: user.crm_user_id,
+      ooredoo_user_id: user.ooredoo_user_id,
       role: [user.role.name],
       access: resolveAccess(user.role, user.permissions),
-    };
+    } satisfies AuthUser;
   }
 }

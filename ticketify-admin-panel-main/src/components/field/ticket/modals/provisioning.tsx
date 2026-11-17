@@ -1355,8 +1355,8 @@ function TerminalNodeSection({
           error={lookingUp ? undefined : errors.tnIdentity}
           hint={
             fromCrm
-              ? "From the CRM contact."
-              : "Not on the CRM contact yet. For a Medianet ONT it is saved to the CRM once provisioning succeeds."
+              ? "From the customer contact."
+              : "Not on the customer contact yet. For a Medianet ONT it is saved to CRM once provisioning succeeds."
           }
         >
           <input

@@ -134,7 +134,13 @@ export class CrmApiClient {
 
   listTeamUsers(teamId: string, page = 1, size = 50) {
     return this.request<{
-      content?: { id: string; first_name?: string; last_name?: string }[];
+      content?: {
+        id: string;
+        first_name?: string;
+        last_name?: string;
+        email?: string;
+        username?: string;
+      }[];
     }>(
       'GET',
       `/users?size=${size}&page=${page}&teams=${encodeURIComponent(teamId)}`,

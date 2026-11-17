@@ -3,8 +3,15 @@
 import Link from "next/link";
 import { Skeleton } from "@/components/field/ui/state-views";
 import { STATUS_BUCKETS, type StatusBoard } from "@/lib/field/status-board";
+import { useSession } from "@/lib/field/session";
 
 export default function StatusBoardCard({ board, error }: { board: StatusBoard | null; error?: string | null }) {
+  const { user } = useSession();
+  const isOoredoo = user?.source === "OOREDOO";
+  const buckets = isOoredoo
+    ? STATUS_BUCKETS.filter((bucket) => bucket.key !== "payment_pending")
+    : STATUS_BUCKETS;
+
   return (
     <div className="flex h-full flex-col gap-3 rounded-lg bg-white p-4 shadow-card">
       <div className="flex items-baseline justify-between gap-2">
@@ -14,7 +21,7 @@ export default function StatusBoardCard({ board, error }: { board: StatusBoard |
         </span>
       </div>
       <div className="grid flex-1 grid-cols-2 gap-2">
-        {STATUS_BUCKETS.map((bucket) => {
+        {buckets.map((bucket) => {
           const Icon = bucket.icon;
           const count = board?.counts[bucket.key];
           const unknown = bucket.key === "no_response" && board && !board.no_response_available;

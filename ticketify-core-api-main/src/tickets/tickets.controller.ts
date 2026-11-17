@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   Post,
   Put,
   Query,
@@ -18,6 +19,7 @@ import type { Response } from 'express';
 import { JwtGuard } from 'src/auth/guard';
 import { TicketsService } from './tickets.service';
 import { StatusBoardService } from './status-board.service';
+import { OoredooTicketsService } from './ooredoo-tickets.service';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CreateActivityDto } from './dto/create-activity';
 import { ScheduleVisitDto } from 'src/config/dto/schedule-visit.dto';
@@ -29,9 +31,23 @@ import {
   ProgressTicketDto,
   StartTicketDto,
 } from './dto/ticket-actions.dto';
+import {
+  FmsAddressDto,
+  FmsAssignDto,
+  FmsCategoryDto,
+  FmsPriorityDto,
+  FmsQueueDto,
+  FmsStatusDto,
+} from './dto/fms-edit.dto';
 import { TicketAccessGuard } from 'src/infrastructure/security/ticket-access.guard';
 import { Access } from 'src/auth/access/access';
-import { CONSOLE_ANY, FIELD, OPS_VIEW, STATUS_BOARD } from 'src/auth/access/requirements';
+import {
+  CONSOLE_ANY,
+  FIELD,
+  OPS_VIEW,
+  STATUS_BOARD,
+} from 'src/auth/access/requirements';
+import { isFmsTicketId } from 'src/infrastructure/ooredoo-fms/ooredoo-fms.types';
 
 const ALLOWED_UPLOAD_TYPES = new Set([
   'image/jpeg',
@@ -58,7 +74,10 @@ const SMS_THROTTLE = { default: { limit: 10, ttl: 60000 } };
 type AuthedRequest = {
   user: {
     id: string;
+    email?: string;
     crm_user_id: string;
+    ooredoo_user_id?: string | null;
+    source?: 'MEDIANET' | 'OOREDOO';
     name?: string;
     phone?: string;
     role?: string[];
@@ -71,7 +90,12 @@ export class TicketsController {
   constructor(
     private readonly ticketsService: TicketsService,
     private readonly statusBoard: StatusBoardService,
+    private readonly ooredooTickets: OoredooTicketsService,
   ) {}
+
+  private isOoredoo(req: AuthedRequest) {
+    return this.ooredooTickets.isOoredooActor(req.user);
+  }
 
   @Access(OPS_VIEW)
   @Get('all')
@@ -79,7 +103,7 @@ export class TicketsController {
     return this.ticketsService.findAllTickets();
   }
 
-  /** Always scoped to the caller's own CRM user. */
+  /** Always scoped to the caller's own CRM / FMS user. */
   @Access(FIELD)
   @Get()
   async findAll(
@@ -87,6 +111,9 @@ export class TicketsController {
     @Query('team_id') team_id?: string,
     @Query('state') state?: string,
   ): Promise<any> {
+    if (this.isOoredoo(req)) {
+      return this.ooredooTickets.listMine(req.user);
+    }
     if (team_id || state) {
       return this.ticketsService.fetchServiceRequests(
         req.user.crm_user_id,
@@ -116,12 +143,20 @@ export class TicketsController {
     @Req() req: AuthedRequest,
     @Query('team') team?: string,
   ) {
+    // Ooredoo has no CRM status buckets — derive Pending from FMS list only.
+    if (this.isOoredoo(req)) {
+      return this.ooredooTickets.statusBoard(req.user);
+    }
     return this.statusBoard.board(req.user, team);
   }
 
   @Access(FIELD)
   @Get('teams')
   async fetchTeams(@Req() req: AuthedRequest) {
+    // Ooredoo techs only see their own tickets — no shared team queue.
+    if (this.isOoredoo(req)) {
+      return [];
+    }
     return this.ticketsService.findAllTeamTicketsSafe(req.user.crm_user_id);
   }
 
@@ -135,10 +170,18 @@ export class TicketsController {
   @UseGuards(TicketAccessGuard)
   @Get(':id/files/:file_id')
   async fetchTicketFile(
+    @Req() req: AuthedRequest,
     @Param('id') ticket_id: string,
     @Param('file_id') file_id: string,
     @Res() res: Response,
   ) {
+    if (this.isOoredoo(req) || isFmsTicketId(ticket_id)) {
+      this.sendFile(
+        res,
+        await this.ooredooTickets.readAttachmentFile(ticket_id, file_id),
+      );
+      return;
+    }
     this.sendFile(
       res,
       await this.ticketsService.fetchTicketFile(ticket_id, file_id),
@@ -183,11 +226,167 @@ export class TicketsController {
   @UseGuards(TicketAccessGuard)
   @Throttle(SMS_THROTTLE)
   @Put(':id/assign')
-  async assign(@Req() req: AuthedRequest, @Param('id') ticket_id: string) {
+  async assign(
+    @Req() req: AuthedRequest,
+    @Param('id') ticket_id: string,
+    @Body() body?: FmsAssignDto,
+  ) {
+    if (this.isOoredoo(req) || isFmsTicketId(ticket_id)) {
+      const target = body?.user_id?.trim();
+      if (target) {
+        return this.ooredooTickets.assignToUser(
+          ticket_id,
+          target,
+          req.user,
+          body?.comment,
+        );
+      }
+      return this.ooredooTickets.assignToMe(ticket_id, req.user);
+    }
     return this.ticketsService.assignServiceRequestToUser(
       ticket_id,
       req.user.crm_user_id,
     );
+  }
+
+  /** FMS Change-modal dropdowns for this ticket (Ooredoo only). */
+  @Access(FIELD)
+  @UseGuards(TicketAccessGuard)
+  @Get(':id/fms/options')
+  fmsOptions(@Req() req: AuthedRequest, @Param('id') ticket_id: string) {
+    this.assertOoredooTicket(req, ticket_id);
+    return this.ooredooTickets.editOptions(ticket_id, req.user);
+  }
+
+  @Access(FIELD)
+  @UseGuards(TicketAccessGuard)
+  @Get(':id/fms/sub-categories/:categoryId')
+  fmsSubCategories(
+    @Req() req: AuthedRequest,
+    @Param('id') ticket_id: string,
+    @Param('categoryId') categoryId: string,
+  ) {
+    this.assertOoredooTicket(req, ticket_id);
+    return this.ooredooTickets.listSubCategories(
+      ticket_id,
+      categoryId,
+      req.user,
+    );
+  }
+
+  @Access(FIELD)
+  @UseGuards(TicketAccessGuard)
+  @Throttle(SMS_THROTTLE)
+  @Patch(':id/fms/priority')
+  fmsPriority(
+    @Req() req: AuthedRequest,
+    @Param('id') ticket_id: string,
+    @Body() body: FmsPriorityDto,
+  ) {
+    this.assertOoredooTicket(req, ticket_id);
+    return this.ooredooTickets.updatePriority(
+      ticket_id,
+      body.priority_id,
+      body.comment,
+      req.user,
+    );
+  }
+
+  @Access(FIELD)
+  @UseGuards(TicketAccessGuard)
+  @Throttle(SMS_THROTTLE)
+  @Patch(':id/fms/status')
+  fmsStatus(
+    @Req() req: AuthedRequest,
+    @Param('id') ticket_id: string,
+    @Body() body: FmsStatusDto,
+  ) {
+    this.assertOoredooTicket(req, ticket_id);
+    return this.ooredooTickets.updateStatus(
+      ticket_id,
+      body.ticket_status,
+      body.ticket_sub_comment,
+      body.comment,
+      req.user,
+    );
+  }
+
+  @Access(FIELD)
+  @UseGuards(TicketAccessGuard)
+  @Throttle(SMS_THROTTLE)
+  @Patch(':id/fms/queue')
+  fmsQueue(
+    @Req() req: AuthedRequest,
+    @Param('id') ticket_id: string,
+    @Body() body: FmsQueueDto,
+  ) {
+    this.assertOoredooTicket(req, ticket_id);
+    return this.ooredooTickets.updateQueue(
+      ticket_id,
+      body.que_id,
+      body.t_subcat,
+      body.comment,
+      req.user,
+    );
+  }
+
+  @Access(FIELD)
+  @UseGuards(TicketAccessGuard)
+  @Throttle(SMS_THROTTLE)
+  @Patch(':id/fms/category')
+  fmsCategory(
+    @Req() req: AuthedRequest,
+    @Param('id') ticket_id: string,
+    @Body() body: FmsCategoryDto,
+  ) {
+    this.assertOoredooTicket(req, ticket_id);
+    return this.ooredooTickets.updateCategory(
+      ticket_id,
+      body.category,
+      body.sub_category,
+      body.comment,
+      req.user,
+    );
+  }
+
+  /** Relocation-only: locked identity + editable installation address. */
+  @Access(FIELD)
+  @UseGuards(TicketAccessGuard)
+  @Get(':id/fms/address')
+  fmsAddressForm(@Req() req: AuthedRequest, @Param('id') ticket_id: string) {
+    this.assertOoredooTicket(req, ticket_id);
+    return this.ooredooTickets.addressForm(ticket_id, req.user);
+  }
+
+  @Access(FIELD)
+  @UseGuards(TicketAccessGuard)
+  @Get(':id/fms/islands')
+  fmsIslands(
+    @Req() req: AuthedRequest,
+    @Param('id') ticket_id: string,
+    @Query('atoll_id') atoll_id: string,
+  ) {
+    this.assertOoredooTicket(req, ticket_id);
+    return this.ooredooTickets.listIslands(ticket_id, atoll_id, req.user);
+  }
+
+  @Access(FIELD)
+  @UseGuards(TicketAccessGuard)
+  @Throttle(SMS_THROTTLE)
+  @Patch(':id/fms/address')
+  fmsAddress(
+    @Req() req: AuthedRequest,
+    @Param('id') ticket_id: string,
+    @Body() body: FmsAddressDto,
+  ) {
+    this.assertOoredooTicket(req, ticket_id);
+    return this.ooredooTickets.updateAddress(ticket_id, body, req.user);
+  }
+
+  private assertOoredooTicket(req: AuthedRequest, ticketId: string) {
+    if (!(this.isOoredoo(req) || isFmsTicketId(ticketId))) {
+      throw new BadRequestException('FMS edits are only for Ooredoo tickets');
+    }
   }
 
   @Access(FIELD)
@@ -205,7 +404,14 @@ export class TicketsController {
   @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Put(':id/start')
-  async start(@Param('id') ticket_id: string, @Body() body: StartTicketDto) {
+  async start(
+    @Req() req: AuthedRequest,
+    @Param('id') ticket_id: string,
+    @Body() body: StartTicketDto,
+  ) {
+    if (this.isOoredoo(req) || isFmsTicketId(ticket_id)) {
+      return this.ooredooTickets.getDetail(ticket_id, req.user);
+    }
     return this.ticketsService.startTicket(ticket_id, body?.stage_id);
   }
 
@@ -214,10 +420,16 @@ export class TicketsController {
   @Throttle(SMS_THROTTLE)
   @Put(':id/progress')
   async progress(
+    @Req() req: AuthedRequest,
     @Param('id') ticket_id: string,
     @Body() body: ProgressTicketDto,
     @Query('smsNotification') smsNotificationRaw?: string,
   ) {
+    if (this.isOoredoo(req) || isFmsTicketId(ticket_id)) {
+      throw new BadRequestException(
+        'Ooredoo tickets close directly — use Complete instead of Progress',
+      );
+    }
     return this.ticketsService.progressTicket(
       ticket_id,
       body.stage_id,
@@ -236,6 +448,14 @@ export class TicketsController {
     @Param('id') ticket_id: string,
     @Body() body: CompleteTicketDto,
   ) {
+    if (this.isOoredoo(req) || isFmsTicketId(ticket_id)) {
+      return this.ooredooTickets.complete(
+        ticket_id,
+        body.comment ?? '',
+        body.closing_sub_comment,
+        req.user,
+      );
+    }
     return this.ticketsService.completeTicket(
       ticket_id,
       body.comment,
@@ -253,6 +473,9 @@ export class TicketsController {
     @Body() body: AddNoteDto,
   ) {
     const note = `${req.user.name ?? 'Technician'}\n\n${body.note.trim()}`;
+    if (this.isOoredoo(req) || isFmsTicketId(ticket_id)) {
+      return this.ooredooTickets.addNote(ticket_id, note, req.user);
+    }
     return this.ticketsService.crmAddNoteToTicket(
       ticket_id,
       note,
@@ -285,6 +508,17 @@ export class TicketsController {
     @Body() body: AttachmentDto,
     @UploadedFile() file?: Express.Multer.File,
   ) {
+    if (this.isOoredoo(req) || isFmsTicketId(ticket_id)) {
+      if (!file) {
+        throw new BadRequestException('Attach a file');
+      }
+      return this.ooredooTickets.uploadAttachment(
+        ticket_id,
+        file,
+        body?.description ?? '',
+        req.user,
+      );
+    }
     if (file) {
       return this.ticketsService.uploadDeviceFileToTicket(
         ticket_id,
@@ -314,7 +548,13 @@ export class TicketsController {
   @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Get(':id/context')
-  async findTicketActivitiesContext(@Param('id') ticket_id: string) {
+  async findTicketActivitiesContext(
+    @Req() req: AuthedRequest,
+    @Param('id') ticket_id: string,
+  ) {
+    if (this.isOoredoo(req) || isFmsTicketId(ticket_id)) {
+      return this.ooredooTickets.emptyContext(ticket_id);
+    }
     return this.ticketsService.findTicketActivitiesContext(ticket_id);
   }
 
@@ -375,7 +615,10 @@ export class TicketsController {
   @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Get(':id')
-  findOne(@Param('id') crm_id: string) {
+  findOne(@Req() req: AuthedRequest, @Param('id') crm_id: string) {
+    if (this.isOoredoo(req) || isFmsTicketId(crm_id)) {
+      return this.ooredooTickets.getDetail(crm_id, req.user);
+    }
     return this.ticketsService.crmFindServiceRequest(crm_id);
   }
 }

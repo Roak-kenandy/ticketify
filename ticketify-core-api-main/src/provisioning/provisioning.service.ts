@@ -56,6 +56,7 @@ import {
   StageFailure,
 } from './provisioning-runner';
 import { CrmContactSyncService } from './crm-contact-sync.service';
+import { TicketSystemNotesService } from 'src/infrastructure/ticket-notes/ticket-system-notes.service';
 import { UserAccess } from 'src/auth/access/access';
 
 type Actor = { id: string; crm_user_id?: string; access?: UserAccess };
@@ -115,6 +116,7 @@ export class ProvisioningService implements OnModuleInit {
     private readonly logger: LoggerService,
     @Inject(INCA_CLIENT) private readonly inca: IncaClient,
     private readonly contactSync: CrmContactSyncService,
+    private readonly ticketNotes: TicketSystemNotesService,
   ) {}
 
   /** Runs interrupted by a restart can never finish; release them so Retry works. */
@@ -204,7 +206,8 @@ export class ProvisioningService implements OnModuleInit {
     }
     const [transactions, crmIdentity] = await Promise.all([
       this.listForTicket(crmTicketId),
-      policy.actions.includes('NEW_CONNECTION')
+      policy.actions.includes('NEW_CONNECTION') &&
+      snapshot.source !== 'OOREDOO'
         ? this.contactSync.identity(snapshot.contact_id ?? null)
         : null,
     ]);
@@ -398,7 +401,7 @@ export class ProvisioningService implements OnModuleInit {
       );
     }
     const input = this.buildInput(snapshot, dto, await this.offeredChoices());
-    if (input.terminal_node) {
+    if (input.terminal_node && snapshot.source !== 'OOREDOO') {
       const crmIdentity = await this.contactSync.identity(
         snapshot.contact_id ?? null,
       );
@@ -616,6 +619,19 @@ export class ProvisioningService implements OnModuleInit {
         service_confirmed: Boolean(dto.service_confirmed),
       },
     });
+    this.ticketNotes.postLater(
+      txn.crm_ticket_id,
+      [
+        'mPro INCA — signal check follow-up confirmed.',
+        after
+          ? `After reading: ${after.rx_dbm ?? 'n/a'} dBm (${after.result ?? 'NO_READING'}).`
+          : 'After reading: no optical reading.',
+        `Action taken: ${dto.action_taken.trim()}.`,
+        dto.service_confirmed
+          ? 'Customer service confirmed working.'
+          : 'Customer service not confirmed.',
+      ].join(' '),
+    );
     return this.view(txn.id);
   }
 
@@ -760,6 +776,34 @@ export class ProvisioningService implements OnModuleInit {
     };
   }
 
+  private buildProvisioningSucceededNote(
+    action: ProvisioningAction,
+    ontSerial: string | null | undefined,
+    result: Record<string, unknown> | null | undefined,
+  ): string {
+    const parts = [
+      `mPro INCA — ${ACTION_LABELS[action]} provisioning succeeded.`,
+    ];
+    const serial =
+      (typeof ontSerial === 'string' && ontSerial.trim()) ||
+      (typeof result?.ont_serial === 'string' && result.ont_serial.trim()) ||
+      null;
+    if (serial) parts.push(`ONT SN ${serial}.`);
+    const optical = result?.optical as { rx_dbm?: number | null } | undefined;
+    if (optical && optical.rx_dbm != null) {
+      parts.push(`Optical RX ${optical.rx_dbm} dBm.`);
+    }
+    const signal = result?.signal as
+      | { rx_dbm?: number | null; result?: string }
+      | undefined;
+    if (signal && (signal.rx_dbm != null || signal.result)) {
+      parts.push(
+        `Signal ${signal.rx_dbm ?? 'n/a'} dBm (${signal.result ?? 'n/a'}).`,
+      );
+    }
+    return parts.join(' ');
+  }
+
   private launch(
     transactionId: string,
     input: RunInput,
@@ -846,6 +890,17 @@ export class ProvisioningService implements OnModuleInit {
           result: outcome.result,
         },
       });
+      this.ticketNotes.postLater(
+        txn.crm_ticket_id,
+        this.buildProvisioningSucceededNote(
+          txn.action,
+          outcome.ont_serial ??
+            (typeof outcome.result?.ont_serial === 'string'
+              ? outcome.result.ont_serial
+              : null),
+          outcome.result,
+        ),
+      );
       await this.syncContact(txn, input, outcome.result, recorder.step);
     } catch (error) {
       const failure =
@@ -905,6 +960,8 @@ export class ProvisioningService implements OnModuleInit {
     if (input.action === 'SIGNAL_CHECK') return;
     try {
       const snapshot = await this.snapshots.get(txn.crm_ticket_id);
+      // FMS tickets have no CRM contact — skip Medianet CRM writes.
+      if (snapshot.source === 'OOREDOO') return;
       const ooredoo = result.pppoe_required === true;
       const message = await this.contactSync.afterProvisioning({
         crm_ticket_id: txn.crm_ticket_id,

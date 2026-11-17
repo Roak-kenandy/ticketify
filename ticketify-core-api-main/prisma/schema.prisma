@@ -13,11 +13,22 @@ enum TechnicianPresence {
   OFFLINE
 }
 
+/// Which ticket platform this mPro login is tied to.
+enum UserSource {
+  MEDIANET
+  OOREDOO
+}
+
 model User {
   id                     String                 @id @default(cuid())
+  /// MEDIANET → CRM tickets; OOREDOO → FMS tickets. Existing rows are MEDIANET.
+  source                 UserSource             @default(MEDIANET)
+  /// CRM Backoffice user id. For OOREDOO users this is a synthetic `ooredoo-{id}` placeholder so CRM code paths stay keyed.
   crm_user_id            String                 @unique
+  /// Numeric FMS user id from Assign to User (e.g. 212). Null for Medianet users.
+  ooredoo_user_id        String?                @unique
   email                  String                 @unique
-  name                   String?              
+  name                   String?
   phone                  String?
   password               String
   user_location_tracking UserLocationTracking[]
@@ -35,16 +46,14 @@ model User {
   created_at             DateTime               @default(now())
   updated_at             DateTime               @updatedAt
   user_log               UserLog[]
-  user_tickets            UserTicket[]
-  feedbacks               UserFeedback[]
+  user_tickets           UserTicket[]
+  feedbacks              UserFeedback[]
   role                   Role                   @relation(fields: [role_id], references: [id])
   role_id                String
   /// Per-screen levels that differ from the role (raise or lower, never add screens).
   permissions            UserPermission[]
 
   @@map("users")
-
-  
 }
 
 model Role {
@@ -257,6 +266,35 @@ model SystemConfig {
   value Json
 
   @@map("system_config")
+}
+
+/// Photos for Ooredoo FMS tickets, stored in mPro (not uploaded to FMS).
+model FmsTicketAttachment {
+  id                  String   @id @default(cuid())
+  fms_ticket_id       String
+  description         String
+  mime_type           String
+  file_name           String
+  storage_key         String
+  size_bytes          Int
+  uploaded_by_user_id String?
+  created_at          DateTime @default(now())
+
+  @@index([fms_ticket_id])
+  @@map("fms_ticket_attachments")
+}
+
+/// Which Ooredoo tech (FMS user id) currently owns a ticket — mirrors CRM assign tracking under the shared tech2 FMS login.
+model FmsTicketAssignment {
+  fms_ticket_id       String   @id
+  ooredoo_user_id     String
+  assignee_email      String?
+  assigned_by_user_id String?
+  updated_at          DateTime @updatedAt
+  created_at          DateTime @default(now())
+
+  @@index([ooredoo_user_id])
+  @@map("fms_ticket_assignments")
 }
 
 enum TicketInvoiceStatus {

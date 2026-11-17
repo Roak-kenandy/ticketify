@@ -72,7 +72,13 @@ export default function BillingWorkflowModal({
 
   const applyWorkflow = React.useCallback((data: any) => {
     setWorkflow(data);
-    setStep(data?.payment_status === "pending" || data?.payment_status === "confirmed" ? "await" : "items");
+    // Pending → wait for bank. Confirmed → show receipt (tech can start another charge).
+    // Otherwise open the item picker so a new invoice can be created.
+    if (data?.payment_status === "pending" || data?.payment_status === "confirmed") {
+      setStep("await");
+    } else {
+      setStep("items");
+    }
   }, []);
 
   const loadWorkflow = React.useCallback(async () => {
@@ -398,7 +404,7 @@ export default function BillingWorkflowModal({
                     <Square className="h-5 w-5 shrink-0 text-gray3" />
                   )}
                   <span className="flex-1 text-[13px] text-gray2">
-                    Send to this number instead of the CRM number ({defaultPhone})
+                    Send to this number instead of the contact number ({defaultPhone})
                   </span>
                 </button>
               ) : null}
@@ -472,9 +478,19 @@ export default function BillingWorkflowModal({
                     <p className="text-center text-[13px] text-gray2">Receipt {workflow.confirmed_receipt_number}</p>
                   ) : null}
                   <p className="text-sm leading-5 text-gray2">
-                    Confirmed by Bank of Maldives. Finish the work and close the ticket.
+                    Confirmed by Bank of Maldives. You can finish and close, or charge another item on this ticket.
                   </p>
                   <PrimaryButton text="Done" onClick={onClose} />
+                  <SecondaryButton
+                    text="Create another payment"
+                    disabled={loading}
+                    onClick={() => {
+                      setPreview(null);
+                      setSelected({});
+                      setQty({});
+                      setStep("items");
+                    }}
+                  />
                 </>
               ) : (
                 <>

@@ -77,29 +77,68 @@ export function isStatusBucket(value: unknown): value is StatusBucket {
 
 const POLL_MS = 60_000;
 
+/** Build Pending counts from the tickets already loaded for Ooredoo (no CRM board). */
+export function boardFromTickets(tickets: Array<Record<string, any>>): StatusBoard {
+  const pending = tickets.filter((t) => t.state !== "CLOSED");
+  return {
+    scope: "mine",
+    generated_at: new Date().toISOString(),
+    counts: {
+      pending: pending.length,
+      no_response: 0,
+      payment_pending: 0,
+      rescheduled: 0,
+    },
+    no_response_available: false,
+    tickets: {
+      pending,
+      no_response: [],
+      payment_pending: [],
+      rescheduled: [],
+    },
+  };
+}
+
 export function useStatusBoard() {
-  const { token } = useSession();
+  const { token, user } = useSession();
   const [board, setBoard] = React.useState<StatusBoard | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const inflight = React.useRef<Promise<void> | null>(null);
+  // Ooredoo dashboard derives the board from /tickets — skip CRM status-board polls.
+  const skipRemote = user?.source === "OOREDOO";
 
   const load = React.useCallback(async () => {
-    if (!token) {
+    if (!token || skipRemote) {
       return;
     }
-    try {
-      const data: StatusBoard = await apiGet("/tickets/status-board", token, { silent: true });
-      setBoard(data);
-      setError(null);
-    } catch (err: any) {
-      setError(err?.message || "Could not load ticket status");
+    if (inflight.current) {
+      return inflight.current;
     }
-  }, [token]);
+    const run = (async () => {
+      try {
+        const data: StatusBoard = await apiGet("/tickets/status-board", token, { silent: true });
+        setBoard(data);
+        setError(null);
+      } catch (err: any) {
+        setError(err?.message || "Could not load ticket status");
+      }
+    })();
+    inflight.current = run.finally(() => {
+      inflight.current = null;
+    });
+    return inflight.current;
+  }, [token, skipRemote]);
 
   React.useEffect(() => {
+    if (skipRemote) {
+      setBoard(null);
+      setError(null);
+      return;
+    }
     load();
     const timer = setInterval(load, POLL_MS);
     return () => clearInterval(timer);
-  }, [load]);
+  }, [load, skipRemote]);
 
   return { board, error, reload: load };
 }

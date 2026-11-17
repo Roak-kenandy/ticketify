@@ -96,6 +96,7 @@ function build(
     releaseConsumption: jest.fn().mockResolvedValue(undefined),
     holderOf: jest.fn().mockResolvedValue(null),
   };
+  const ticketNotes = { postLater: jest.fn(), post: jest.fn() };
   const service = new TicketInventoryService(
     prisma as never,
     audit as never,
@@ -103,8 +104,9 @@ function build(
     snapshots as never,
     access as never,
     stock as never,
+    ticketNotes as never,
   );
-  return { service, created, audit, stock };
+  return { service, created, audit, stock, ticketNotes };
 }
 
 const actor = { id: 'tech-1', crm_user_id: 'crm-1', access: ACCESS.technician };

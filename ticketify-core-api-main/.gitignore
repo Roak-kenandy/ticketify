@@ -39,5 +39,8 @@ config/workflow-mapping.json
 !.vscode/launch.json
 !.vscode/extensions.json
 
-# Pinned INCA certificate (see INCA_TLS_CA_FILE)
+# TLS material (copy onto the server; do not commit)
 /certs/
+/certs/storage/
+
+storage/

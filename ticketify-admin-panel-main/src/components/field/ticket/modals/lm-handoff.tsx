@@ -79,7 +79,7 @@ export default function LmHandoffModal({
         : !addressId
           ? {
               field: "address" as const,
-              text: addresses.length ? "Select the site address." : "The customer has no address in the CRM. Add one there first.",
+              text: addresses.length ? "Select the site address." : "The customer has no address on file. Add one first.",
               el: addressRef.current,
             }
           : null;
@@ -224,7 +224,7 @@ export default function LmHandoffModal({
                 compact
                 icon={MapPin}
                 title="No addresses on file"
-                message="Add an address to the customer in the CRM first."
+                message="Add an address to the customer record first."
               />
             ) : (
               addresses.map((addr: any) => {

@@ -9,7 +9,9 @@ import { EmptyState, ErrorState, InlineBanner, TicketCardSkeleton } from "@/comp
 import { matchesQueue, QueueFilter, useQueueFilter } from "@/components/field/ui/queue-filter";
 import { cn } from "@/lib/field/cn";
 import { fieldCardGrid, fieldContainer } from "@/lib/field/layout";
+import { syncWithSystemHint, ticketSystem } from "@/lib/field/app";
 import { showError } from "@/lib/field/notify";
+import { useSession } from "@/lib/field/session";
 import { useTickets } from "@/lib/field/tickets";
 
 type TabKey = "NEW" | "IN_PROGRESS" | "CLOSED";
@@ -47,12 +49,14 @@ const TABS: Array<{
 function MyTickets() {
   const router = useRouter();
   const params = useSearchParams();
+  const { user } = useSession();
   const { tickets, syncedAt, error, refresh } = useTickets();
   const [refreshing, setRefreshing] = React.useState(false);
   const [queue, setQueue] = useQueueFilter();
   const requested = params.get("tab");
   const active: TabKey = TABS.some((tab) => tab.key === requested) ? (requested as TabKey) : "NEW";
   const loaded = syncedAt != null;
+  const system = ticketSystem({ userSource: user?.source });
 
   const groups = React.useMemo(() => {
     const ofType = tickets.filter((t) => matchesQueue(t, queue));
@@ -80,7 +84,7 @@ function MyTickets() {
 
   return (
     <>
-      <ScreenHeader title="My tickets" subtitle="Tap refresh to sync with the CRM" wide>
+      <ScreenHeader title="My tickets" subtitle={syncWithSystemHint(system)} wide>
           <div className="flex items-center gap-2">
             <div className="flex min-w-0 flex-1 rounded-md bg-white p-1 sm:max-w-md" role="tablist">
               {TABS.map((item) => {
