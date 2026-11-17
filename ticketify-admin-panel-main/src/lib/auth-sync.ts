@@ -18,6 +18,8 @@ function cookieMaxAge(token: string): number {
 function cookieFlags(maxAge: number): string {
   const secure =
     typeof window !== 'undefined' && window.location.protocol === 'https:';
+  // Not HttpOnly — Next middleware and the field client read the token in JS.
+  // Mitigations: CSP (next.config), short JWT TTL, SameSite=strict, Secure on HTTPS.
   return `path=/; samesite=strict; max-age=${maxAge}${secure ? '; secure' : ''}`;
 }
 

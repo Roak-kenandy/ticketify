@@ -74,9 +74,14 @@ async function bootstrap() {
       transform: true,
       validateCustomDecorators: true,
       skipMissingProperties: false,
-      disableErrorMessages: false,
+      // Production: do not leak DTO field names/shapes to unauthenticated scanners.
+      disableErrorMessages: isProduction,
     }),
   );
+
+  // Cap JSON/urlencoded bodies (file uploads use multer limits separately).
+  app.useBodyParser('json', { limit: '1mb' });
+  app.useBodyParser('urlencoded', { limit: '1mb', extended: true });
 
   const corsOrigins = parseCorsOrigins(config.get<string>('CORS_ORIGINS'));
   app.enableCors({
@@ -101,6 +106,11 @@ async function bootstrap() {
   );
   app.setGlobalPrefix('api/v1');
   app.enableShutdownHooks();
-  await app.listen(config.get<number>('PORT') ?? 3333);
+  const port = config.get<number>('PORT') ?? 3333;
+  // Production binds loopback only — nginx is the sole public entry (defense in depth).
+  const host =
+    config.get<string>('HOST')?.trim() ||
+    (isProduction ? '127.0.0.1' : '0.0.0.0');
+  await app.listen(port, host);
 }
 bootstrap();

@@ -38,7 +38,8 @@ import { RolesModule } from './roles/roles.module';
       validate: validateEnv,
     }),
     ThrottlerModule.forRoot({
-      throttlers: [{ name: 'default', ttl: 60000, limit: 200 }],
+      // Global ceiling; sensitive routes set tighter @Throttle limits.
+      throttlers: [{ name: 'default', ttl: 60000, limit: 120 }],
     }),
     CrmApiModule,
     OoredooFmsModule,

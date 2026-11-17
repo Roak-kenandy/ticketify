@@ -31,7 +31,8 @@ export class AuthController {
     return this.authService.signUp(dto, req.user);
   }
 
-  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  /** Tight login budget — account lockout still applies after repeated failures. */
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('login')
   login(@Body() dto: LoginDto, @Ip() ip: string) {
     return this.authService.login(dto, ip);
