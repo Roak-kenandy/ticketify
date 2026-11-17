@@ -220,6 +220,12 @@ export const apiPatch = (
   options?: ApiOptions,
 ) => apiRequest("PATCH", path, token, body, options);
 
+export const apiDelete = (
+  path: string,
+  token: string | null | undefined,
+  options?: ApiOptions,
+) => apiRequest("DELETE", path, token, undefined, options);
+
 /**
  * Ticket files need the Bearer header, so <img src> cannot load them directly.
  * Fetches the file and returns an object URL the caller must revoke.

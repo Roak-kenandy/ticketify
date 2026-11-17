@@ -34,6 +34,7 @@ import ProvisioningModal from "@/components/field/ticket/modals/provisioning";
 import ScheduleVisitModal from "@/components/field/ticket/modals/schedule-visit";
 import FmsAddressModal from "@/components/field/ticket/modals/fms-address";
 import FmsEditModal, { type FmsEditField } from "@/components/field/ticket/modals/fms-edit";
+import HelpersModal from "@/components/field/ticket/modals/helpers";
 import { AddNoteModal, CloseTicketModal, ProgressTicketModal } from "@/components/field/ticket/modals/text-modals";
 import ViewImageModal from "@/components/field/ticket/modals/view-image";
 import ViewInfoModal from "@/components/field/ticket/modals/view-info";
@@ -72,7 +73,8 @@ type ModalName =
   | "inventory"
   | "provisioning"
   | "fms-edit"
-  | "fms-address";
+  | "fms-address"
+  | "helpers";
 
 function findNextStage(ticket: any) {
   const order = ticket?.stage?.order ?? 0;
@@ -234,9 +236,23 @@ export default function TicketDetailsPage() {
   const view = data ?? seedTicket;
   const isOoredoo =
     user?.source === "OOREDOO" || view?.source === "OOREDOO";
+  const helpers: { user_id: string; name?: string | null; email?: string }[] = Array.isArray(
+    data?.helpers,
+  )
+    ? data.helpers
+    : [];
+  const isHelper =
+    !isOoredoo &&
+    (data?.my_role === "helper" ||
+      helpers.some((helper) => helper.user_id === user?.id) ||
+      Boolean(view?.helper_on));
   const isMine = Boolean(user?.crm_user_id) && user?.crm_user_id === view?.assigned_to?.user?.id;
   const isClosed = view?.state === "CLOSED" || view?.stage?.name === "Closed";
+  /** CRM workflow actions (start / progress / close) — primary assignee only. */
   const canEdit = isMine && !isClosed;
+  /** Notes / photos — primary or Medianet co-tech helper. */
+  const canContribute = (isMine || isHelper) && !isClosed;
+  const canManageHelpers = !isOoredoo && isMine && !isClosed;
   const [inventoryTeam, setInventoryTeam] = React.useState(false);
   React.useEffect(() => setInventoryTeam(can("inventory_consumption", "EDIT")), []);
   /** The inventory team corrects materials on closed requests; technicians are locked out. */
@@ -344,6 +360,9 @@ export default function TicketDetailsPage() {
     if (submitted) {
       return;
     }
+    if (isHelper && !isMine) {
+      return;
+    }
     if (!isMine) {
       assignUser();
       return;
@@ -384,17 +403,20 @@ export default function TicketDetailsPage() {
     setModal("progress");
   }
 
-  const primaryLabel = !isMine
-    ? "Assign to me"
-    : isOoredoo
-      ? "Close ticket"
-      : lmBlocking
-        ? "Waiting for Last Mile"
-        : view?.state === "NEW"
-          ? `Start ${nextStage?.name ?? "work"}`
-          : closeStageActive
-            ? "Close ticket"
-            : `Move to ${nextStage?.name ?? "next stage"}`;
+  const primaryLabel =
+    isHelper && !isMine
+      ? "Helping on this ticket"
+      : !isMine
+        ? "Assign to me"
+        : isOoredoo
+          ? "Close ticket"
+          : lmBlocking
+            ? "Waiting for Last Mile"
+            : view?.state === "NEW"
+              ? `Start ${nextStage?.name ?? "work"}`
+              : closeStageActive
+                ? "Close ticket"
+                : `Move to ${nextStage?.name ?? "next stage"}`;
   const primaryColor =
     isOoredoo && isMine
       ? colors.success
@@ -539,6 +561,46 @@ export default function TicketDetailsPage() {
               value={view?.assigned_to?.user?.name}
               onChange={() => openFmsEdit("assign")}
             />
+          </Section>
+        ) : null}
+
+        {!isOoredoo && (isMine || isHelper || helpers.length > 0) ? (
+          <Section
+            title="Team on this job"
+            count={helpers.length ? helpers.length + (view?.assigned_to?.user ? 1 : 0) : undefined}
+            actionLabel={canManageHelpers ? (helpers.length ? "Manage" : "Add helper") : undefined}
+            onAction={() => setModal("helpers")}
+          >
+            <InfoRow
+              icon={User}
+              label="Primary"
+              value={view?.assigned_to?.user?.name || "Unassigned"}
+            />
+            {helpers.length === 0 ? (
+              <p className="text-[13px] text-gray2">
+                {canManageHelpers
+                  ? "Add a helper if two techs work this visit together. One customer review credits both."
+                  : isHelper
+                    ? "You are helping on this ticket. CRM actions stay with the primary tech."
+                    : "No helpers on this ticket."}
+              </p>
+            ) : (
+              helpers.map((helper) => (
+                <InfoRow
+                  key={helper.user_id}
+                  icon={User}
+                  label="Helper"
+                  value={helper.name || helper.email || "Technician"}
+                />
+              ))
+            )}
+            {isHelper && !isMine ? (
+              <InlineBanner
+                tone="info"
+                icon={User}
+                message="You are a helper on this job. Notes and photos are available; closing stays with the primary technician."
+              />
+            ) : null}
           </Section>
         ) : null}
 
@@ -707,7 +769,7 @@ export default function TicketDetailsPage() {
             <Section
               title="Photos & attachments"
               count={attachments.length}
-              actionLabel={canEdit ? "Add" : undefined}
+              actionLabel={canContribute ? "Add" : undefined}
               onAction={() => setModal("attachment")}
             >
               {firstLoad ? (
@@ -737,7 +799,7 @@ export default function TicketDetailsPage() {
             <Section
               title="Notes"
               count={notes.length}
-              actionLabel={canEdit ? "Add" : undefined}
+              actionLabel={canContribute ? "Add" : undefined}
               onAction={() => setModal("note")}
             >
               {firstLoad ? (
@@ -799,7 +861,7 @@ export default function TicketDetailsPage() {
               <ActionChip icon={Network} label="Last Mile" onClick={() => setModal("lm")} />
             ) : null}
           </div>
-          {!isClosed && data ? (
+          {!isClosed && data && !(isHelper && !isMine) ? (
             <PrimaryButton
               text={primaryLabel}
               loading={submitted}
@@ -822,6 +884,16 @@ export default function TicketDetailsPage() {
       />
       <AddNoteModal ticketId={ticketId} visible={modal === "note"} onClose={closeModal} onSuccess={refreshAfterChange} />
       <ViewImageModal ticketId={ticketId} visible={modal === "image"} onClose={closeModal} image={selectedImage} />
+      <HelpersModal
+        ticketId={ticketId}
+        visible={modal === "helpers"}
+        helpers={helpers}
+        onClose={closeModal}
+        onChanged={(next) => {
+          setData((prev: any) => ({ ...(prev ?? {}), helpers: next }));
+          refreshAfterChange();
+        }}
+      />
       <CloseTicketModal
         visible={modal === "close"}
         onClose={closeModal}

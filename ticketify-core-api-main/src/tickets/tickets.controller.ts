@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -20,6 +21,7 @@ import { JwtGuard } from 'src/auth/guard';
 import { TicketsService } from './tickets.service';
 import { StatusBoardService } from './status-board.service';
 import { OoredooTicketsService } from './ooredoo-tickets.service';
+import { TicketHelpersService } from './ticket-helpers.service';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CreateActivityDto } from './dto/create-activity';
 import { ScheduleVisitDto } from 'src/config/dto/schedule-visit.dto';
@@ -39,8 +41,9 @@ import {
   FmsQueueDto,
   FmsStatusDto,
 } from './dto/fms-edit.dto';
+import { AddTicketHelperDto } from './dto/ticket-helper.dto';
 import { TicketAccessGuard } from 'src/infrastructure/security/ticket-access.guard';
-import { Access } from 'src/auth/access/access';
+import { Access, UserAccess } from 'src/auth/access/access';
 import {
   CONSOLE_ANY,
   FIELD,
@@ -81,6 +84,7 @@ type AuthedRequest = {
     name?: string;
     phone?: string;
     role?: string[];
+    access?: UserAccess;
   };
 };
 
@@ -91,6 +95,7 @@ export class TicketsController {
     private readonly ticketsService: TicketsService,
     private readonly statusBoard: StatusBoardService,
     private readonly ooredooTickets: OoredooTicketsService,
+    private readonly ticketHelpers: TicketHelpersService,
   ) {}
 
   private isOoredoo(req: AuthedRequest) {
@@ -121,7 +126,11 @@ export class TicketsController {
         state,
       );
     }
-    return this.ticketsService.fetchMyTickets(req.user.crm_user_id);
+    return this.ticketsService.fetchMyTickets(
+      req.user.crm_user_id,
+      50,
+      req.user.id,
+    );
   }
 
   @Access(OPS_VIEW)
@@ -613,13 +622,61 @@ export class TicketsController {
     return this.ticketsService.createActivity(ticket_id, body);
   }
 
+  /** Medianet co-tech helpers on this CRM ticket. */
+  @Access(FIELD)
+  @UseGuards(TicketAccessGuard)
+  @Get(':id/helpers')
+  async listHelpers(@Req() req: AuthedRequest, @Param('id') ticket_id: string) {
+    this.ticketHelpers.assertMedianetTicket(ticket_id, req.user);
+    return { items: await this.ticketHelpers.list(ticket_id) };
+  }
+
+  @Access(FIELD)
+  @UseGuards(TicketAccessGuard)
+  @Get(':id/helpers/candidates')
+  helperCandidates(@Req() req: AuthedRequest, @Param('id') ticket_id: string) {
+    return this.ticketHelpers.candidates(ticket_id, req.user);
+  }
+
+  @Access(FIELD)
+  @UseGuards(TicketAccessGuard)
+  @Post(':id/helpers')
+  addHelper(
+    @Req() req: AuthedRequest,
+    @Param('id') ticket_id: string,
+    @Body() body: AddTicketHelperDto,
+  ) {
+    return this.ticketHelpers.add(ticket_id, body.user_id, req.user);
+  }
+
+  @Access(FIELD)
+  @UseGuards(TicketAccessGuard)
+  @Delete(':id/helpers/:userId')
+  removeHelper(
+    @Req() req: AuthedRequest,
+    @Param('id') ticket_id: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.ticketHelpers.remove(ticket_id, userId, req.user);
+  }
+
   @Access(FIELD)
   @UseGuards(TicketAccessGuard)
   @Get(':id')
-  findOne(@Req() req: AuthedRequest, @Param('id') crm_id: string) {
+  async findOne(@Req() req: AuthedRequest, @Param('id') crm_id: string) {
     if (this.isOoredoo(req) || isFmsTicketId(crm_id)) {
       return this.ooredooTickets.getDetail(crm_id, req.user);
     }
-    return this.ticketsService.crmFindServiceRequest(crm_id);
+    const ticket = await this.ticketsService.crmFindServiceRequest(crm_id);
+    const helpers = await this.ticketHelpers.list(crm_id);
+    const isPrimary =
+      Boolean(req.user.crm_user_id) &&
+      req.user.crm_user_id === ticket?.assigned_to?.user?.id;
+    const isHelper = helpers.some((h) => h.user_id === req.user.id);
+    return {
+      ...ticket,
+      helpers,
+      my_role: isPrimary ? 'primary' : isHelper ? 'helper' : 'viewer',
+    };
   }
 }

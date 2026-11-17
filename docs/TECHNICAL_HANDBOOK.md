@@ -131,7 +131,11 @@ flowchart LR
 8. **Complete** — CRM close → SMS with customer review link.
 9. **Finance** (office) — mPro invoices + BML (not CRM).
 
-### 5.2 Creating a Medianet user (admin)
+### 5.2 Co-tech helpers (Medianet only)
+
+CRM still has **one** assignee. In mPro the primary tech can add up to **2 helpers** on the same ticket (`ticket_helpers`). Helpers see the ticket in their list, can add notes/photos, but CRM start/progress/close stay with the primary. When the customer submits **one** review, mPro writes the same rating/comment for the primary **and** every helper.
+
+### 5.3 Creating a Medianet user (admin)
 
 1. Admin → **Users → Create**.
 2. Source = **MEDIANET**.

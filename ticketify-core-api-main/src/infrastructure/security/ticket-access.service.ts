@@ -9,7 +9,7 @@ import { OoredooFmsClient } from '../ooredoo-fms/ooredoo-fms.client';
 export type TicketScopeKind = 'ticket' | 'payment' | 'invoice' | 'receipt';
 
 type AccessUser = {
-  id: string;
+  id?: string;
   email?: string;
   crm_user_id?: string;
   ooredoo_user_id?: string | null;
@@ -61,6 +61,21 @@ export class TicketAccessService {
     }
     if (ticket.userId && ticket.userId === user.crm_user_id) {
       return true;
+    }
+    // Medianet co-tech: helper recorded in mPro (CRM still has one primary assignee).
+    if (user.id) {
+      const helper = await this.prisma.ticketHelper.findUnique({
+        where: {
+          crm_ticket_id_helper_user_id: {
+            crm_ticket_id: ticketId,
+            helper_user_id: user.id,
+          },
+        },
+        select: { id: true },
+      });
+      if (helper) {
+        return true;
+      }
     }
     if (ticket.teamId) {
       const teams = await this.userTeams(user.crm_user_id);

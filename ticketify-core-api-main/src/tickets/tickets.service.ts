@@ -951,7 +951,11 @@ Medianet Support Team
    * most recent closed tickets. Replaces a single unfiltered page of 100 that
    * was mostly CLOSED and silently dropped open jobs for busy technicians.
    */
-  async fetchMyTickets(crm_user_id: string, recentClosed = 50) {
+  async fetchMyTickets(
+    crm_user_id: string,
+    recentClosed = 50,
+    mproUserId?: string,
+  ) {
     if (!crm_user_id) {
       throw new BadRequestException('Your account is not linked to a CRM user.');
     }
@@ -964,6 +968,30 @@ Medianet Support Team
       ),
     ]);
     const content = [...inProgressRows, ...newRows, ...closedRows];
+    const seen = new Set(
+      content.map((ticket) => String(ticket?.id ?? '')).filter(Boolean),
+    );
+
+    // Open tickets where this tech is a Medianet co-tech helper (not CRM primary).
+    if (mproUserId) {
+      const helperIds = await this.prisma.ticketHelper.findMany({
+        where: { helper_user_id: mproUserId },
+        select: { crm_ticket_id: true },
+      });
+      for (const row of helperIds) {
+        if (seen.has(row.crm_ticket_id)) continue;
+        try {
+          const ticket = await this.crmFindServiceRequest(row.crm_ticket_id);
+          if (!ticket || ticket instanceof ForbiddenException) continue;
+          if (ticket.state === 'CLOSED') continue;
+          content.push({ ...ticket, helper_on: true });
+          seen.add(row.crm_ticket_id);
+        } catch {
+          // Skip missing CRM tickets; helper row can be cleaned up later.
+        }
+      }
+    }
+
     return {
       content,
       counts: {

@@ -81,6 +81,13 @@ function TicketCard({
         {ticket.stage?.name ? (
           <ToneBadge tone={{ label: ticket.stage.name, color: colors.primary, bg: colors.surface, icon: Flag }} size="sm" />
         ) : null}
+        {ticket.helper_on ? (
+          <ToneBadge
+            tone={{ label: "Helping", color: colors.info, bg: colors.infoBg, icon: UserCheck }}
+            size="sm"
+            showIcon
+          />
+        ) : null}
       </div>
 
       {footer}

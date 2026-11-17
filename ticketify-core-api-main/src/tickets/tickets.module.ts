@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TicketsService } from './tickets.service';
 import { StatusBoardService } from './status-board.service';
 import { OoredooTicketsService } from './ooredoo-tickets.service';
+import { TicketHelpersService } from './ticket-helpers.service';
 import { TicketsController } from './tickets.controller';
 import { LoggerModule } from 'src/infrastructure/logger/logger.module';
 import { UserModule } from 'src/user/user.module';
@@ -14,7 +15,12 @@ import { RequeueModule } from 'src/requeue/requeue.module';
 
 @Module({
   controllers: [TicketsController],
-  providers: [TicketsService, StatusBoardService, OoredooTicketsService],
+  providers: [
+    TicketsService,
+    StatusBoardService,
+    OoredooTicketsService,
+    TicketHelpersService,
+  ],
   imports: [
     LoggerModule,
     UserModule,
@@ -25,6 +31,6 @@ import { RequeueModule } from 'src/requeue/requeue.module';
     ClosureModule,
     RequeueModule,
   ],
-  exports: [TicketsService, OoredooTicketsService],
+  exports: [TicketsService, OoredooTicketsService, TicketHelpersService],
 })
 export class TicketsModule {}

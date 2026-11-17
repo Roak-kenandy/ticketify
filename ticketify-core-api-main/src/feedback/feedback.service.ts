@@ -4,7 +4,7 @@ import { verifyReviewLink } from 'src/infrastructure/security/review-link';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { CrmApiClient } from 'src/infrastructure/crm/crm-api.client';
 import { PushNotifierService } from 'src/shared/one-signal/notification/push-notifier.service';
-import { TicketsService } from 'src/tickets/tickets.service';
+import { TicketHelpersService } from 'src/tickets/ticket-helpers.service';
 import { UserService } from 'src/user/user.service';
 
 type TicketSummary = {
@@ -19,10 +19,10 @@ export class FeedbackService {
   constructor(
     private prisma: PrismaService,
     private user: UserService,
-    private ticket: TicketsService,
     private push: PushNotifierService,
     private crm: CrmApiClient,
     private config: ConfigService,
+    private helpers: TicketHelpersService,
   ) {}
 
   async create(
@@ -61,38 +61,45 @@ export class FeedbackService {
       if (!assignedCrmUserId || String(assignedCrmUserId) !== String(user_id)) {
         throw new ForbiddenException('Invalid review link for this ticket');
       }
-      // let ticket = await this.ticket.findOne(ticket_id);
-      // if (!ticket) {
-      //   throw new Error('Ticket not found');
-      // }
-      let user = await this.user.findOneByCrmId(user_id);
-      let exisingFeedback = await this.findOne(ticket_id, user.id);
-      if (exisingFeedback) {
+
+      const primary = await this.user.findOneByCrmId(user_id);
+      if (!primary?.id) {
+        throw new ForbiddenException('Technician not found');
+      }
+
+      // One customer submission credits primary + Medianet co-tech helpers.
+      const creditIds = await this.helpers.creditUserIds(ticket_id, primary.id);
+      const already = await this.prisma.userFeedback.findFirst({
+        where: { ticket_id, user_id: { in: creditIds } },
+        select: { id: true },
+      });
+      if (already) {
         throw new ForbiddenException('Feedback already submitted');
       }
 
-      let feedback = await this.prisma.userFeedback.create({
-        data: {
-          user_id: user?.id,
-          ticket_id: ticket_id,
-          rating: rating,
-          feedback: review,
-        },
-      });
+      const created = await this.prisma.$transaction(
+        creditIds.map((creditUserId) =>
+          this.prisma.userFeedback.create({
+            data: {
+              user_id: creditUserId,
+              ticket_id,
+              rating,
+              feedback: review,
+            },
+          }),
+        ),
+      );
 
-      if (user?.id) {
-        void this.push.newReview(user.id, {
+      for (const creditUserId of creditIds) {
+        void this.push.newReview(creditUserId, {
           ticketId: ticket_id,
           number: ticketData?.number,
           rating,
         });
       }
 
-      if (feedback) {
-        return feedback;
-      } else {
-        throw new Error('Failed to submit feedback');
-      }
+      // Return the primary tech's row (matches the review link userId).
+      return created.find((row) => row.user_id === primary.id) ?? created[0];
     } catch (error) {
       if (error instanceof HttpException) throw error;
       throw new ForbiddenException('Failed to submit feedback');
@@ -186,15 +193,11 @@ export class FeedbackService {
   }
 
   async findOne(ticket_id: string, user_id: string) {
-    let feedback = await this.prisma.userFeedback.findFirst({
+    return this.prisma.userFeedback.findFirst({
       where: {
         ticket_id: ticket_id,
         user_id: user_id,
       },
     });
-
-    // for each feedback find ticket deta
-
-    return feedback;
   }
 }

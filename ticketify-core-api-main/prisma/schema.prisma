@@ -48,12 +48,31 @@ model User {
   user_log               UserLog[]
   user_tickets           UserTicket[]
   feedbacks              UserFeedback[]
+  /// Medianet co-tech: tickets where this user is a helper (not CRM primary).
+  ticket_helpers         TicketHelper[]         @relation("TicketHelperUser")
+  ticket_helpers_added   TicketHelper[]         @relation("TicketHelperAddedBy")
   role                   Role                   @relation(fields: [role_id], references: [id])
   role_id                String
   /// Per-screen levels that differ from the role (raise or lower, never add screens).
   permissions            UserPermission[]
 
   @@map("users")
+}
+
+/// Extra Medianet technicians on one CRM ticket (CRM still has a single assignee).
+model TicketHelper {
+  id               String   @id @default(cuid())
+  crm_ticket_id    String
+  helper_user_id   String
+  added_by_user_id String
+  created_at       DateTime @default(now())
+  helper           User     @relation("TicketHelperUser", fields: [helper_user_id], references: [id], onDelete: Cascade)
+  added_by         User     @relation("TicketHelperAddedBy", fields: [added_by_user_id], references: [id], onDelete: Cascade)
+
+  @@unique([crm_ticket_id, helper_user_id])
+  @@index([helper_user_id])
+  @@index([crm_ticket_id])
+  @@map("ticket_helpers")
 }
 
 model Role {
