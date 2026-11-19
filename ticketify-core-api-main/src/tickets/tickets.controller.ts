@@ -152,11 +152,21 @@ export class TicketsController {
     @Req() req: AuthedRequest,
     @Query('team') team?: string,
   ) {
-    // Ooredoo has no CRM status buckets — derive Pending from FMS list only.
+    // Medianet Dashboard uses CRM. Ooredoo-source callers get their own FMS list.
     if (this.isOoredoo(req)) {
       return this.ooredooTickets.statusBoard(req.user);
     }
     return this.statusBoard.board(req.user, team);
+  }
+
+  /** Ooredoo Dashboard — all @medianet.com.mv FMS tickets (Dashboard access). */
+  @Access(STATUS_BOARD)
+  @Get('ooredoo/status-board')
+  async fetchOoredooStatusBoard(
+    @Req() req: AuthedRequest,
+    @Query('technician') technician?: string,
+  ) {
+    return this.ooredooTickets.opsDashboard(req.user, technician);
   }
 
   @Access(FIELD)

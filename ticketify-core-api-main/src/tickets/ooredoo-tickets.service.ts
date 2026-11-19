@@ -8,10 +8,13 @@ import {
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { UserAccess } from 'src/auth/access/access';
 import { PrismaService } from 'src/infrastructure/config/prisma/prisma.service';
 import { OoredooFmsClient } from 'src/infrastructure/ooredoo-fms/ooredoo-fms.client';
 import {
   FmsTicketDetail,
+  FmsTicketSummary,
+  FMS_MEDIANET_QUEUES,
   isFmsTicketId,
 } from 'src/infrastructure/ooredoo-fms/ooredoo-fms.types';
 
@@ -22,9 +25,14 @@ export type OoredooActor = {
   source?: string;
   crm_user_id: string;
   ooredoo_user_id?: string | null;
+  access?: UserAccess;
 };
 
 const CLOSED_STATUSES = /fault\s*resolved|cancelled|canceled|closed/i;
+const MEDIANET_EMAIL = /@medianet\.com\.mv$/i;
+/** Cap each dashboard bucket list (same idea as CRM status board). */
+const BOARD_LIST_LIMIT = 200;
+const UNASSIGNED_TEAM = { id: 'unassigned', name: 'Unassigned' };
 
 @Injectable()
 export class OoredooTicketsService {
@@ -487,7 +495,7 @@ export class OoredooTicketsService {
     return this.fms.downloadAttachment(match.file_url);
   }
 
-  /** Dashboard status board without hitting CRM (Ooredoo has no CRM buckets). */
+  /** Field / legacy: caller's own open FMS tickets only (Medianet Dashboard stays CRM). */
   async statusBoard(actor: OoredooActor) {
     const list = await this.listMine(actor);
     const pending = (list.content ?? []).filter((t) => t.state !== 'CLOSED');
@@ -510,8 +518,96 @@ export class OoredooTicketsService {
         payment_pending: [],
         rescheduled: [],
       },
-      source: 'OOREDOO',
+      source: 'OOREDOO' as const,
     };
+  }
+
+  /**
+   * Dedicated Ooredoo Dashboard — all open FMS tickets for @medianet.com.mv
+   * techs (+ unassigned MediaNet queue). `technician` filters by assignee email
+   * or `unassigned`. Available to any user with Dashboard access.
+   */
+  async opsDashboard(actor: OoredooActor, technician?: string | null) {
+    if (!this.fms.enabled()) {
+      throw new ServiceUnavailableException(
+        'Ooredoo FMS is not enabled (set OOREDOO_FMS_ENABLED=true)',
+      );
+    }
+    const filter = technician?.trim().toLowerCase() || null;
+
+    const summaries = await this.fms.listAssignedSummaries().catch((error) => {
+      this.logger.warn(`FMS Ooredoo dashboard list failed: ${error}`);
+      return [] as FmsTicketSummary[];
+    });
+
+    const open = summaries.filter(
+      (ticket) =>
+        !CLOSED_STATUSES.test(ticket.status ?? '') &&
+        this.isMedianetDashboardTicket(ticket),
+    );
+
+    const teamsMap = new Map<
+      string,
+      { id: string; name: string; count: number }
+    >();
+    for (const ticket of open) {
+      const key = this.boardTeamOf(ticket);
+      const entry = teamsMap.get(key.id) ?? { ...key, count: 0 };
+      entry.count += 1;
+      teamsMap.set(key.id, entry);
+    }
+    const technicians = [...teamsMap.values()].sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
+
+    const filtered = filter
+      ? open.filter((ticket) => this.boardTeamOf(ticket).id === filter)
+      : open;
+
+    const tickets = filtered
+      .map((ticket) => this.toListItem(ticket, actor))
+      .sort((a, b) => (b.creation_date ?? 0) - (a.creation_date ?? 0));
+
+    this.logger.log(
+      `Ooredoo opsDashboard ${actor.email}: ${tickets.length}/${open.length} open (filter=${filter ?? 'all'})`,
+    );
+
+    return {
+      generated_at: new Date().toISOString(),
+      count: tickets.length,
+      technician: filter,
+      technicians,
+      tickets: tickets.slice(0, BOARD_LIST_LIMIT),
+      source: 'OOREDOO' as const,
+    };
+  }
+
+  /** Tickets owned by a Medianet FMS user, or unassigned in a MediaNet partner queue. */
+  private isMedianetDashboardTicket(ticket: FmsTicketSummary): boolean {
+    const email = ticket.assignee_email?.trim().toLowerCase() ?? '';
+    if (email && MEDIANET_EMAIL.test(email)) {
+      return true;
+    }
+    if (email && email !== '-' && email.includes('@')) {
+      return false;
+    }
+    return this.isMedianetQueue(ticket.queue);
+  }
+
+  private isMedianetQueue(queue: string | null | undefined): boolean {
+    const name = (queue ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!name) return false;
+    return FMS_MEDIANET_QUEUES.some(
+      (q) => q.name.replace(/\s+/g, ' ').trim().toLowerCase() === name,
+    );
+  }
+
+  private boardTeamOf(ticket: FmsTicketSummary): { id: string; name: string } {
+    const email = ticket.assignee_email?.trim().toLowerCase() ?? '';
+    if (email && MEDIANET_EMAIL.test(email)) {
+      return { id: email, name: email };
+    }
+    return { ...UNASSIGNED_TEAM };
   }
 
   /** Billing is never required for Ooredoo FMS tickets. */
@@ -658,21 +754,23 @@ export class OoredooTicketsService {
     ticket: { assignee_email: string | null },
     actor: OoredooActor,
   ) {
-    if (this.isAssignedTo(ticket, actor)) {
+    const email = ticket.assignee_email?.trim().toLowerCase() || '';
+    const hasAssignee = Boolean(email && email !== '-' && email.includes('@'));
+    if (hasAssignee && this.isAssignedTo(ticket, actor)) {
       return {
         user: {
           id: actor.crm_user_id,
-          name: ticket.assignee_email ?? actor.name ?? actor.email,
+          name: email || actor.name || actor.email,
         },
       };
     }
-    if (!ticket.assignee_email) {
+    if (!hasAssignee) {
       return { user: null };
     }
     return {
       user: {
-        id: `fms-other`,
-        name: ticket.assignee_email,
+        id: `fms:${email}`,
+        name: email,
       },
     };
   }

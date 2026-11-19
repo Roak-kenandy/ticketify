@@ -191,7 +191,7 @@ export default function StatusDashboardPage() {
   return (
     <>
       <PageHeader
-        title="Dashboard"
+        title="Medianet Dashboard"
         description={team ? `Open tickets for ${team.name} by status.` : "Open tickets across all teams by status."}
         actions={
           <>

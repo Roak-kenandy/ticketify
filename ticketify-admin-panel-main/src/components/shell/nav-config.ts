@@ -34,7 +34,8 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Operations",
     items: [
       { label: "Live map", href: "/", icon: MapPinned, screen: "live_map", exact: true },
-      { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, screen: "dashboard" },
+      { label: "Medianet Dashboard", href: "/dashboard", icon: LayoutDashboard, screen: "dashboard", exact: true },
+      { label: "Ooredoo Dashboard", href: "/dashboard/ooredoo", icon: LayoutDashboard, screen: "dashboard" },
       {
         label: "Operations board",
         href: "/dispatch",

@@ -32,12 +32,14 @@ const DETAIL_CACHE_MS = 120_000;
 const HTML_CACHE_MS = 90_000;
 /** Cap in-memory ticket details (20+ techs open many tickets). */
 const MAX_DETAIL_CACHE = 120;
-/** My Tickets HTML is multi‑MB — keep longer and serve stale while refreshing. */
+/** My Tickets list (DataTables JSON) — keep warm and serve stale while refreshing. */
 const LIST_CACHE_MS = 120_000;
 /** Serve expired list for this long while a background refresh runs. */
 const LIST_STALE_MS = 10 * 60_000;
-/** Prefetch My Tickets so field polls rarely hit a cold multi‑MB download. */
+/** Prefetch My Tickets so field polls rarely hit a cold list download. */
 const LIST_PREFETCH_MS = 90_000;
+/** DataTables page size for /tickets/tickets_assigned/data. */
+const LIST_PAGE_SIZE = 100;
 
 @Injectable()
 export class OoredooFmsClient implements OnModuleInit, OnModuleDestroy {
@@ -264,8 +266,8 @@ export class OoredooFmsClient implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * My Tickets page only — parse table rows. Do NOT fetch ticket_info for
-   * every id (300+ × ~10s was timing out the field list).
+   * My Tickets via FMS DataTables JSON (open + queue + closed).
+   * Do NOT fetch ticket_info for every id (300+ × ~10s times out the field list).
    */
   async listAssignedSummaries(opts?: {
     fresh?: boolean;
@@ -303,15 +305,174 @@ export class OoredooFmsClient implements OnModuleInit, OnModuleDestroy {
   private async fetchAssignedSummaries(): Promise<FmsTicketSummary[]> {
     await this.ensureSession();
     const started = Date.now();
+    try {
+      const summaries = await this.fetchAssignedSummariesFromDataTables();
+      this.listCache = { at: Date.now(), summaries };
+      this.logger.log(
+        `FMS My Tickets (data): ${summaries.length} row(s) in ${Date.now() - started}ms`,
+      );
+      return summaries;
+    } catch (error) {
+      this.logger.warn(
+        `FMS My Tickets data API failed, falling back to HTML: ${error}`,
+      );
+    }
+    // Legacy path — FMS used to embed full tables in the HTML shell.
     const res = await this.fetchAuthedHtml('/tickets/tickets_assigned', {
       timeoutMs: Math.max(this.timeoutMs, 90_000),
     });
     const summaries = this.parseAssignedSummaries(res.body);
     this.listCache = { at: Date.now(), summaries };
     this.logger.log(
-      `FMS My Tickets: ${summaries.length} row(s) in ${Date.now() - started}ms (${Math.round(res.body.length / 1024)}KB)`,
+      `FMS My Tickets (html): ${summaries.length} row(s) in ${Date.now() - started}ms (${Math.round(res.body.length / 1024)}KB)`,
     );
     return summaries;
+  }
+
+  private async fetchAssignedSummariesFromDataTables(): Promise<
+    FmsTicketSummary[]
+  > {
+    const tabs: Array<'open' | 'queue' | 'closed'> = [
+      'open',
+      'queue',
+      'closed',
+    ];
+    const byId = new Map<string, FmsTicketSummary>();
+    for (const tab of tabs) {
+      const rows = await this.fetchAssignedDataTable(tab);
+      for (const summary of rows) {
+        const existing = byId.get(summary.id);
+        // Prefer a non-closed row when the same id appears in multiple tabs.
+        if (
+          !existing ||
+          (existing.status === 'Fault Resolved' &&
+            summary.status !== 'Fault Resolved')
+        ) {
+          byId.set(summary.id, summary);
+        }
+      }
+    }
+    return [...byId.values()];
+  }
+
+  private async fetchAssignedDataTable(
+    tab: 'open' | 'queue' | 'closed',
+  ): Promise<FmsTicketSummary[]> {
+    const out: FmsTicketSummary[] = [];
+    let start = 0;
+    let total = Infinity;
+    let page = 0;
+    let authRetries = 1;
+    while (start < total && page < 30) {
+      page += 1;
+      const qs = new URLSearchParams({
+        draw: String(page),
+        start: String(start),
+        length: String(LIST_PAGE_SIZE),
+        tab,
+        'search[value]': '',
+        'order[0][column]': '8',
+        'order[0][dir]': 'desc',
+      });
+      const res = await this.request(
+        'GET',
+        `/tickets/tickets_assigned/data?${qs}`,
+        {
+          redirect: 'manual',
+          timeoutMs: Math.max(this.timeoutMs, 45_000),
+          ajax: true,
+        },
+      );
+      if (this.isLoginRedirect(res) || this.isLoginHtml(res.body)) {
+        if (authRetries <= 0) {
+          throw new ServiceUnavailableException(
+            `FMS auth failed for tickets_assigned/data (${tab})`,
+          );
+        }
+        authRetries -= 1;
+        await this.login();
+        page -= 1;
+        continue;
+      }
+      if (res.status !== 200) {
+        throw new ServiceUnavailableException(
+          `FMS tickets_assigned/data (${tab}) failed (HTTP ${res.status})`,
+        );
+      }
+      let payload: {
+        recordsTotal?: number;
+        recordsFiltered?: number;
+        data?: unknown[];
+      };
+      try {
+        payload = JSON.parse(res.body) as typeof payload;
+      } catch {
+        throw new ServiceUnavailableException(
+          `FMS tickets_assigned/data (${tab}) returned non-JSON`,
+        );
+      }
+      const data = Array.isArray(payload.data) ? payload.data : [];
+      total =
+        Number(payload.recordsFiltered ?? payload.recordsTotal ?? data.length) ||
+        0;
+      for (const row of data) {
+        if (!Array.isArray(row)) continue;
+        const summary = this.summaryFromDataTableRow(
+          row.map((cell) => String(cell ?? '')),
+          tab,
+        );
+        if (summary) out.push(summary);
+      }
+      if (data.length === 0) break;
+      start += data.length;
+      // FMS may return fewer rows than requested (e.g. pageLength 50) — keep
+      // paging until start covers recordsFiltered, not until a short page.
+      if (start >= total) break;
+    }
+    return out;
+  }
+
+  /**
+   * Parse one DataTables row from /tickets/tickets_assigned/data.
+   * Columns (open/queue/closed): aging|badge, id link, account, date, status,
+   * queue, category, sub-category, updated, assignee, queue-aging|badge.
+   */
+  summaryFromDataTableRow(
+    cells: string[],
+    tab: 'open' | 'queue' | 'closed',
+  ): FmsTicketSummary | null {
+    const joined = cells.join('\n');
+    const id = joined.match(/tickets\/ticket_info\/(\d{3,12})/i)?.[1];
+    if (!id) return null;
+    const text = cells.map((c) =>
+      this.stripHtml(c).replace(/\s+/g, ' ').trim(),
+    );
+    const account = (text[2] || '').replace(/\s+/g, '') || null;
+    const created = text[3] || null;
+    const statusRaw = text[4] || '';
+    const queue = text[5] || null;
+    const category = text[6] || null;
+    const subCategory = text[7] || null;
+    const assignee =
+      text.find((t) => t.includes('@'))?.trim().toLowerCase() || null;
+    const closed =
+      tab === 'closed' ||
+      /close/i.test(statusRaw) ||
+      /closed/i.test(text[0] || '');
+    return {
+      id,
+      queue,
+      status: closed ? 'Fault Resolved' : statusRaw || 'Open',
+      assignee_email: assignee,
+      account_number: account,
+      serial_number: null,
+      customer_name: account,
+      description: subCategory || category,
+      created_at: created,
+      priority: statusRaw || null,
+      category,
+      sub_category: subCategory,
+    };
   }
 
   /**
@@ -1380,6 +1541,8 @@ export class OoredooFmsClient implements OnModuleInit, OnModuleDestroy {
       timeoutMs?: number;
       /** Login flow owns the cookie jar — do not wait on loginInflight. */
       duringLogin?: boolean;
+      /** DataTables / JSON endpoints expect XHR headers. */
+      ajax?: boolean;
     } = {},
   ): Promise<{
     status: number;
@@ -1406,6 +1569,7 @@ export class OoredooFmsClient implements OnModuleInit, OnModuleDestroy {
       form?: boolean;
       redirect?: RequestRedirect;
       timeoutMs?: number;
+      ajax?: boolean;
     } = {},
   ): Promise<{
     status: number;
@@ -1415,15 +1579,20 @@ export class OoredooFmsClient implements OnModuleInit, OnModuleDestroy {
   }> {
     const url = path.startsWith('http') ? path : `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
-      Accept:
-        'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      Accept: opts.ajax
+        ? 'application/json, text/javascript, */*; q=0.01'
+        : 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Accept-Language': 'en-US,en;q=0.9',
-      // Let Node decompress gzip — FMS My Tickets HTML is multi‑MB uncompressed.
+      // Let Node decompress gzip — large FMS payloads are compressed.
       'Accept-Encoding': 'gzip, deflate, br',
       // Browser-like UA — FMS/Cloudflare was flaky with a custom bot UA.
       'User-Agent':
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     };
+    if (opts.ajax) {
+      headers['X-Requested-With'] = 'XMLHttpRequest';
+      headers.Referer = `${this.baseUrl}/tickets/tickets_assigned`;
+    }
     const cookie = [...this.cookies.entries()]
       .map(([k, v]) => `${k}=${v}`)
       .join('; ');
