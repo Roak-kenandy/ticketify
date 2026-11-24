@@ -524,16 +524,20 @@ export class OoredooTicketsService {
 
   /**
    * Dedicated Ooredoo Dashboard — all open FMS tickets for @medianet.com.mv
-   * techs (+ unassigned MediaNet queue). `technician` filters by assignee email
-   * or `unassigned`. Available to any user with Dashboard access.
+   * techs (+ unassigned MediaNet queue). Filter by technician email /
+   * `unassigned` and/or queue name. Available to any user with Dashboard access.
    */
-  async opsDashboard(actor: OoredooActor, technician?: string | null) {
+  async opsDashboard(
+    actor: OoredooActor,
+    opts?: { technician?: string | null; queue?: string | null },
+  ) {
     if (!this.fms.enabled()) {
       throw new ServiceUnavailableException(
         'Ooredoo FMS is not enabled (set OOREDOO_FMS_ENABLED=true)',
       );
     }
-    const filter = technician?.trim().toLowerCase() || null;
+    const techFilter = opts?.technician?.trim().toLowerCase() || null;
+    const queueFilter = opts?.queue?.trim().toLowerCase() || null;
 
     const summaries = await this.fms.listAssignedSummaries().catch((error) => {
       this.logger.warn(`FMS Ooredoo dashboard list failed: ${error}`);
@@ -546,37 +550,47 @@ export class OoredooTicketsService {
         this.isMedianetDashboardTicket(ticket),
     );
 
-    const teamsMap = new Map<
-      string,
-      { id: string; name: string; count: number }
-    >();
+    const techMap = new Map<string, { id: string; name: string; count: number }>();
+    const queueMap = new Map<string, { id: string; name: string; count: number }>();
     for (const ticket of open) {
-      const key = this.boardTeamOf(ticket);
-      const entry = teamsMap.get(key.id) ?? { ...key, count: 0 };
-      entry.count += 1;
-      teamsMap.set(key.id, entry);
+      const tech = this.boardTeamOf(ticket);
+      const techEntry = techMap.get(tech.id) ?? { ...tech, count: 0 };
+      techEntry.count += 1;
+      techMap.set(tech.id, techEntry);
+
+      const queue = this.boardQueueOf(ticket);
+      const queueEntry = queueMap.get(queue.id) ?? { ...queue, count: 0 };
+      queueEntry.count += 1;
+      queueMap.set(queue.id, queueEntry);
     }
-    const technicians = [...teamsMap.values()].sort((a, b) =>
+    const technicians = [...techMap.values()].sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
+    const queues = [...queueMap.values()].sort((a, b) =>
       a.name.localeCompare(b.name),
     );
 
-    const filtered = filter
-      ? open.filter((ticket) => this.boardTeamOf(ticket).id === filter)
-      : open;
+    const filtered = open.filter((ticket) => {
+      if (techFilter && this.boardTeamOf(ticket).id !== techFilter) return false;
+      if (queueFilter && this.boardQueueOf(ticket).id !== queueFilter) return false;
+      return true;
+    });
 
     const tickets = filtered
       .map((ticket) => this.toListItem(ticket, actor))
       .sort((a, b) => (b.creation_date ?? 0) - (a.creation_date ?? 0));
 
     this.logger.log(
-      `Ooredoo opsDashboard ${actor.email}: ${tickets.length}/${open.length} open (filter=${filter ?? 'all'})`,
+      `Ooredoo opsDashboard ${actor.email}: ${tickets.length}/${open.length} open (tech=${techFilter ?? 'all'}, queue=${queueFilter ?? 'all'})`,
     );
 
     return {
       generated_at: new Date().toISOString(),
       count: tickets.length,
-      technician: filter,
+      technician: techFilter,
+      queue: queueFilter,
       technicians,
+      queues,
       tickets: tickets.slice(0, BOARD_LIST_LIMIT),
       source: 'OOREDOO' as const,
     };
@@ -608,6 +622,11 @@ export class OoredooTicketsService {
       return { id: email, name: email };
     }
     return { ...UNASSIGNED_TEAM };
+  }
+
+  private boardQueueOf(ticket: FmsTicketSummary): { id: string; name: string } {
+    const name = (ticket.queue ?? '').replace(/\s+/g, ' ').trim() || 'Unknown queue';
+    return { id: name.toLowerCase(), name };
   }
 
   /** Billing is never required for Ooredoo FMS tickets. */

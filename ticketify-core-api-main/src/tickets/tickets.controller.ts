@@ -165,8 +165,9 @@ export class TicketsController {
   async fetchOoredooStatusBoard(
     @Req() req: AuthedRequest,
     @Query('technician') technician?: string,
+    @Query('queue') queue?: string,
   ) {
-    return this.ooredooTickets.opsDashboard(req.user, technician);
+    return this.ooredooTickets.opsDashboard(req.user, { technician, queue });
   }
 
   @Access(FIELD)

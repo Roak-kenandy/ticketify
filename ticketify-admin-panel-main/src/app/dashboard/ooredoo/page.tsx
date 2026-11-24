@@ -18,10 +18,11 @@ import axiosInterceptorInstance, { apiErrorMessage } from "@/lib/axios-intercept
 import { cn } from "@/lib/utils";
 
 const REFRESH_MS = 60_000;
-const ALL_TECHS = "all";
+const ALL = "all";
 const TECH_KEY = "ticketify.dashboard.ooredoo.technician";
+const QUEUE_KEY = "ticketify.dashboard.ooredoo.queue";
 
-type TechOption = { id: string; name: string; count?: number };
+type FilterOption = { id: string; name: string; count?: number };
 
 type BoardTicket = {
   id: string;
@@ -38,17 +39,28 @@ type Board = {
   generated_at: string;
   count: number;
   technician?: string | null;
-  technicians?: TechOption[];
+  queue?: string | null;
+  technicians?: FilterOption[];
+  queues?: FilterOption[];
   tickets: BoardTicket[];
   source?: "OOREDOO";
 };
 
-function savedTech(): TechOption | null {
+function savedFilter(key: string): FilterOption | null {
   try {
-    const value = JSON.parse(localStorage.getItem(TECH_KEY) ?? "null");
+    const value = JSON.parse(localStorage.getItem(key) ?? "null");
     return value && typeof value.id === "string" && typeof value.name === "string" ? value : null;
   } catch {
     return null;
+  }
+}
+
+function rememberFilter(key: string, next: FilterOption | null) {
+  try {
+    if (next) localStorage.setItem(key, JSON.stringify({ id: next.id, name: next.name }));
+    else localStorage.removeItem(key);
+  } catch {
+    // Private mode: the choice just isn't remembered.
   }
 }
 
@@ -59,18 +71,26 @@ export default function OoredooDashboardPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(10);
-  const [technician, setTechnician] = React.useState<TechOption | null | undefined>(undefined);
+  const [technician, setTechnician] = React.useState<FilterOption | null | undefined>(undefined);
+  const [queue, setQueue] = React.useState<FilterOption | null | undefined>(undefined);
   const latest = React.useRef(0);
   const technicianId = technician?.id ?? null;
+  const queueId = queue?.id ?? null;
 
-  React.useEffect(() => setTechnician(savedTech()), []);
+  React.useEffect(() => {
+    setTechnician(savedFilter(TECH_KEY));
+    setQueue(savedFilter(QUEUE_KEY));
+  }, []);
 
   const load = React.useCallback(async () => {
     const request = ++latest.current;
     setRefreshing(true);
     try {
       const response = await axiosInterceptorInstance.get<Board>("/tickets/ooredoo/status-board", {
-        params: technicianId ? { technician: technicianId } : undefined,
+        params: {
+          ...(technicianId ? { technician: technicianId } : {}),
+          ...(queueId ? { queue: queueId } : {}),
+        },
       });
       if (request !== latest.current) return;
       setBoard(response.data);
@@ -84,63 +104,89 @@ export default function OoredooDashboardPage() {
         setRefreshing(false);
       }
     }
-  }, [technicianId]);
+  }, [technicianId, queueId]);
 
   React.useEffect(() => {
-    if (technician === undefined) return;
+    if (technician === undefined || queue === undefined) return;
     load();
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") load();
     }, REFRESH_MS);
     return () => clearInterval(timer);
-  }, [load, technician]);
+  }, [load, technician, queue]);
 
   const techOptions = React.useMemo(() => {
-    const options: TechOption[] = board?.technicians ?? [];
+    const options: FilterOption[] = board?.technicians ?? [];
     return technician && !options.some((option) => option.id === technician.id)
       ? [...options, { ...technician, count: 0 }]
       : options;
   }, [board?.technicians, technician]);
 
+  const queueOptions = React.useMemo(() => {
+    const options: FilterOption[] = board?.queues ?? [];
+    return queue && !options.some((option) => option.id === queue.id)
+      ? [...options, { ...queue, count: 0 }]
+      : options;
+  }, [board?.queues, queue]);
+
   const chooseTech = (value: string) => {
-    const next = value === ALL_TECHS ? null : (techOptions.find((option) => option.id === value) ?? null);
+    const next = value === ALL ? null : (techOptions.find((option) => option.id === value) ?? null);
     setTechnician(next);
     setPage(1);
     setLoading(true);
-    try {
-      if (next) localStorage.setItem(TECH_KEY, JSON.stringify({ id: next.id, name: next.name }));
-      else localStorage.removeItem(TECH_KEY);
-    } catch {
-      // Private mode: the choice just isn't remembered.
-    }
+    rememberFilter(TECH_KEY, next);
+  };
+
+  const chooseQueue = (value: string) => {
+    const next = value === ALL ? null : (queueOptions.find((option) => option.id === value) ?? null);
+    setQueue(next);
+    setPage(1);
+    setLoading(true);
+    rememberFilter(QUEUE_KEY, next);
   };
 
   const rows = board?.tickets ?? [];
   const { pageCount, current, pageRows, rangeStart, rangeEnd } = paginate(rows, page, pageSize);
   const total = board?.count ?? 0;
+  const filtersReady = technician !== undefined && queue !== undefined;
+  const filterBits = [technician?.name, queue?.name].filter(Boolean);
 
   return (
     <>
       <PageHeader
         title="Ooredoo Dashboard"
         description={
-          technician
-            ? `Open FMS tickets for ${technician.name}.`
+          filterBits.length
+            ? `Open FMS tickets for ${filterBits.join(" · ")}.`
             : "Open FMS tickets for @medianet.com.mv technicians."
         }
         actions={
           <>
             <Select
-              value={technician?.id ?? ALL_TECHS}
+              value={technician?.id ?? ALL}
               onValueChange={chooseTech}
-              disabled={technician === undefined}
+              disabled={!filtersReady}
             >
-              <SelectTrigger className="h-9 w-72" aria-label="Filter by technician">
+              <SelectTrigger className="h-9 w-64" aria-label="Filter by technician">
                 <SelectValue placeholder="All technicians" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL_TECHS}>All technicians</SelectItem>
+                <SelectItem value={ALL}>All technicians</SelectItem>
                 {techOptions.map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    {option.name}
+                    {option.count !== undefined ? ` (${option.count})` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={queue?.id ?? ALL} onValueChange={chooseQueue} disabled={!filtersReady}>
+              <SelectTrigger className="h-9 w-56" aria-label="Filter by queue">
+                <SelectValue placeholder="All queues" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>All queues</SelectItem>
+                {queueOptions.map((option) => (
                   <SelectItem key={option.id} value={option.id}>
                     {option.name}
                     {option.count !== undefined ? ` (${option.count})` : ""}
@@ -196,8 +242,8 @@ export default function OoredooDashboardPage() {
               <h2 className="flex items-center gap-2 text-base font-semibold">
                 <Clock className="h-4 w-4 text-muted-foreground" />
                 Pending tickets
-                {technician ? (
-                  <span className="font-normal text-muted-foreground">· {technician.name}</span>
+                {filterBits.length ? (
+                  <span className="font-normal text-muted-foreground">· {filterBits.join(" · ")}</span>
                 ) : null}
                 {board ? <Badge variant="secondary">{total}</Badge> : null}
               </h2>
@@ -211,7 +257,7 @@ export default function OoredooDashboardPage() {
               <EmptyState
                 icon={Clock}
                 title="No pending tickets"
-                description="There are no open FMS tickets for Medianet technicians."
+                description="There are no open FMS tickets for these filters."
               />
             ) : (
               <Table>

@@ -288,36 +288,57 @@ export class ProvisioningService implements OnModuleInit {
         : '';
 
       if (device?.registered) {
-        const pon =
-          device.pon ?? (onOlt?.olt_id === device.olt_id ? onOlt.pon : null);
-        const where = describeLocation(device.olt_name ?? device.olt_id, pon);
+        // INCA still points at the old OLT. Autofind on a different OLT means
+        // the ONT has moved: confirm that live port, not the stale record.
+        const moved =
+          onOlt?.olt_state === 'UNREGISTERED' &&
+          !!onOlt.olt_id &&
+          !!device.olt_id &&
+          onOlt.olt_id !== device.olt_id;
+        const pon = moved
+          ? onOlt.pon
+          : (device.pon ??
+            (onOlt?.olt_id === device.olt_id ? onOlt.pon : null));
+        const oltId = moved ? onOlt.olt_id : device.olt_id;
+        const oltName = moved
+          ? (onOlt.olt_name ?? null)
+          : (device.olt_name ?? null);
+        const where = describeLocation(oltName ?? oltId, pon);
+        const incaWhere = describeLocation(
+          device.olt_name ?? device.olt_id,
+          device.pon,
+        );
         const elsewhere =
-          onOlt && device.olt_id && onOlt.olt_id !== device.olt_id
+          !moved && onOlt && device.olt_id && onOlt.olt_id !== device.olt_id
             ? ` The OLT currently sees it${describeLocation(onOlt.olt_name ?? onOlt.olt_id, onOlt.pon)}.`
             : '';
         const waiting =
-          onOlt?.olt_state === 'UNREGISTERED'
+          !moved && onOlt?.olt_state === 'UNREGISTERED'
             ? ' The OLT lists it as unregistered: it will be configured when it is added to the Terminal Node.'
             : '';
+        const movedNote = moved
+          ? ` INCA still has it${incaWhere}${device.terminal_node_id ? ` on Terminal Node ${device.terminal_node_id}` : ''}. Confirm this port; the run moves it here.`
+          : '';
         return {
           serial,
           status: 'REGISTERED' as const,
-          olt_id: device.olt_id,
-          olt_name: device.olt_name ?? null,
+          olt_id: oltId,
+          olt_name: oltName,
           pon,
           device_type: device.device_type,
           terminal_node_id: device.terminal_node_id,
           olt_state: onOlt?.olt_state ?? null,
           online: onOlt?.online ?? null,
           ...operator,
-          message:
-            (device.terminal_node_id
-              ? `In INCA${where} and bound to Terminal Node ${device.terminal_node_id}.`
-              : `In INCA${where}, not on any Terminal Node; the INCA record will be reused.`) +
-            runState +
-            waiting +
-            elsewhere +
-            pppoeNote,
+          message: moved
+            ? `Detected as unregistered${where}.${movedNote}${runState}${pppoeNote}`
+            : (device.terminal_node_id
+                ? `In INCA${where} and bound to Terminal Node ${device.terminal_node_id}.`
+                : `In INCA${where}, not on any Terminal Node; the INCA record will be reused.`) +
+              runState +
+              waiting +
+              elsewhere +
+              pppoeNote,
         };
       }
       if (active.status === 'rejected') throw active.reason;
