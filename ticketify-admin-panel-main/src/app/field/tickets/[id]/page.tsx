@@ -806,6 +806,20 @@ export default function TicketDetailsPage() {
                 <Skeleton height={56} />
               ) : notes.length === 0 ? (
                 <p className="text-[13px] text-gray2">No notes yet</p>
+              ) : isOoredoo ? (
+                notes.map((item: any, index: number) => (
+                  <div key={String(item?.id ?? index)} className="flex flex-col gap-1 rounded-md bg-surface p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="min-w-0 break-all text-[13px] font-semibold text-ink">
+                        {item?.created_by?.name || "—"}
+                      </span>
+                      <span className="shrink-0 caption">
+                        {item?.created_at || crmDate(item?.creation_date, "YYYY-MM-DD HH:mm:ss")}
+                      </span>
+                    </div>
+                    <p className="whitespace-pre-line text-sm leading-5 text-ink">{item?.note}</p>
+                  </div>
+                ))
               ) : (
                 notes.map((item: any, index: number) => (
                   <div key={String(item?.id ?? index)} className="flex flex-col gap-1 rounded-md bg-surface p-3">

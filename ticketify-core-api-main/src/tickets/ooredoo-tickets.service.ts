@@ -889,6 +889,7 @@ export class OoredooTicketsService {
           id: `fms-note-${index}`,
           note: c.comment,
           creation_date: this.toUnix(c.at),
+          created_at: c.at,
           created_by: { name: c.user },
         })),
       },

@@ -1311,8 +1311,8 @@ export class OoredooFmsClient implements OnModuleInit, OnModuleDestroy {
       let row: RegExpExecArray | null;
       while ((row = rowRe.exec(commentBlock))) {
         comments.push({
-          user: this.stripHtml(row[1]),
-          comment: this.stripHtml(row[2]),
+          user: this.textWithEmails(row[1]),
+          comment: this.textWithEmails(row[2]),
           at: this.stripHtml(row[3]),
         });
       }
@@ -1507,6 +1507,15 @@ export class OoredooFmsClient implements OnModuleInit, OnModuleDestroy {
     const re = new RegExp(`name=["']${name}["'][^>]*>([\\s\\S]*?)<\\/p>`, 'i');
     const m = html.match(re);
     return m?.[1] ? this.stripHtml(m[1]) : null;
+  }
+
+  /** Comment cells hide addresses behind Cloudflare email protection. */
+  private textWithEmails(html: string): string {
+    const decoded = html.replace(
+      /<a[^>]*data-cfemail=["']([a-f0-9]+)["'][^>]*>[\s\S]*?<\/a>/gi,
+      (_, hex: string) => this.decodeCfEmail(hex),
+    );
+    return this.stripHtml(decoded);
   }
 
   private stripHtml(value: string): string {
