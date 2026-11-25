@@ -312,6 +312,10 @@ export class ProvisioningService implements OnModuleInit {
           !moved && onOlt && device.olt_id && onOlt.olt_id !== device.olt_id
             ? ` The OLT currently sees it${describeLocation(onOlt.olt_name ?? onOlt.olt_id, onOlt.pon)}.`
             : '';
+        const autofind = onOlt?.also_unregistered;
+        const autofindNote = autofind
+          ? ` Autofind also sees it${describeLocation(autofind.olt_name ?? autofind.olt_id, autofind.pon)}. The ONT is still registered, so only the address changes. To move it onto that PON, remove the old OLT registration first, then detect again.`
+          : '';
         const waiting =
           !moved && onOlt?.olt_state === 'UNREGISTERED'
             ? ' The OLT lists it as unregistered: it will be configured when it is added to the Terminal Node.'
@@ -338,6 +342,7 @@ export class ProvisioningService implements OnModuleInit {
               runState +
               waiting +
               elsewhere +
+              autofindNote +
               pppoeNote,
         };
       }

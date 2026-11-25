@@ -10,6 +10,7 @@ import {
   IncaTerminalNodeInput,
   IncaUnavailableError,
 } from 'src/infrastructure/inca/inca.types';
+import { revokeAlreadyGone } from 'src/infrastructure/inca/live/inca-live.mappers';
 import {
   classifySignal,
   OpticalRange,
@@ -607,15 +608,7 @@ export class ProvisioningRunner {
     const rebind = detected.olt_state === 'UNREGISTERED';
     this.assertConfirmedLocation(detected, input, rebind);
     const where = `${detected.olt_name ?? detected.olt_id} PON ${detected.pon || '-'}`;
-    if (!rebind && detected.online === false) {
-      // Action C: address-only needs the ONT online on its current PON; a physical
-      // move needs it in autofind (UNREGISTERED) on the destination OLT/PON.
-      this.fail(
-        `ONT ${serial} is still configured on ${where} but offline — Relocation cannot tell address-only from a move yet. ` +
-          `For address-only: power the ONT on the same fibre/PON and retry when Detect shows online. ` +
-          `For a physical move: connect it at the new location until Detect shows unregistered on the destination OLT/PON, confirm that port, then retry.`,
-      );
-    }
+    // A registered ONT stays on its OLT. Only an autofind-only sighting is a fibre move.
     await this.recorder.step(
       rebind
         ? `ONT ${serial} is new on ${where}: it will be moved to that port`
@@ -937,14 +930,35 @@ export class ProvisioningRunner {
 
   private async waitForTodo(terminalNodeId: string) {
     await this.enter('WAITING_TODO');
-    await this.pollTodos(terminalNodeId);
+    await this.pollTodos(terminalNodeId, true);
   }
 
-  /** Polls the node's INCA Todo until every task is done; fails on a failed task. */
-  private async pollTodos(terminalNodeId: string) {
+  /**
+   * Polls the node's INCA Todo until every task is done; fails on a failed task.
+   * A revoke that cannot find the ONT on its old OLT is already done: that OLT
+   * has nothing to delete, and the run continues on the OLT that sees the ONT.
+   * After an add, look once more so a new WAN task is not missed behind that revoke.
+   */
+  private async pollTodos(terminalNodeId: string, afterAdd = false) {
     const deadline = Date.now() + this.config.todoTimeoutMs;
+    let lookedPastStaleRevoke = false;
     for (;;) {
-      const todos = await this.inca.listTodo(terminalNodeId);
+      const open = await this.inca.listTodo(terminalNodeId);
+      const gone = open.filter((todo) => revokeAlreadyGone(todo));
+      const todos = open.filter((todo) => !revokeAlreadyGone(todo));
+      if (gone.length && !todos.length) {
+        if (afterAdd && !lookedPastStaleRevoke) {
+          lookedPastStaleRevoke = true;
+          await new Promise((resolve) =>
+            setTimeout(resolve, this.config.todoPollMs),
+          );
+          continue;
+        }
+        await this.recorder.step(
+          'The old OLT no longer has this ONT, so INCA has nothing to delete there',
+        );
+        return;
+      }
       const failed = todos.find((todo) => todo.status === 'FAILED');
       if (failed)
         this.fail(

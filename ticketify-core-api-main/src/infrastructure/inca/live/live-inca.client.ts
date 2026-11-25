@@ -192,12 +192,34 @@ export class LiveIncaClient implements IncaClient {
       this.deviceTypes().catch(() => [] as IncaOption[]),
     ]);
     const known = types.status === 'fulfilled' ? types.value : [];
-    const found =
-      (unregistered.status === 'fulfilled' &&
-        mapDetection(unregistered.value, incaSerial, known, 'UNREGISTERED')) ||
-      (registered.status === 'fulfilled' &&
-        mapDetection(registered.value, incaSerial, known, 'REGISTERED'));
-    if (found) return found;
+    const unregisteredHit =
+      unregistered.status === 'fulfilled'
+        ? mapDetection(unregistered.value, incaSerial, known, 'UNREGISTERED')
+        : null;
+    const registeredHit =
+      registered.status === 'fulfilled'
+        ? mapDetection(registered.value, incaSerial, known, 'REGISTERED')
+        : null;
+    // Still on the registered list means the ONT has not left its OLT. Autofind
+    // on another port is not a move until that registration is gone.
+    if (registeredHit) {
+      if (
+        unregisteredHit &&
+        (unregisteredHit.olt_id !== registeredHit.olt_id ||
+          unregisteredHit.pon !== registeredHit.pon)
+      ) {
+        return {
+          ...registeredHit,
+          also_unregistered: {
+            olt_id: unregisteredHit.olt_id,
+            olt_name: unregisteredHit.olt_name ?? null,
+            pon: unregisteredHit.pon,
+          },
+        };
+      }
+      return registeredHit;
+    }
+    if (unregisteredHit) return unregisteredHit;
     const failed = [unregistered, registered].find(
       (result): result is PromiseRejectedResult => result.status === 'rejected',
     );

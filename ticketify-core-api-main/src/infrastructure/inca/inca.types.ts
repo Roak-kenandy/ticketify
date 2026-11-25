@@ -75,6 +75,8 @@ export function operatorNeedsPppoe(operator: string | null | undefined) {
 export type IncaTodo = {
   id: string;
   type: string;
+  /** INCA entityOperation, or the first token of params (delete_onu / create_onu). */
+  operation?: string | null;
   status: 'PENDING' | 'DONE' | 'FAILED';
   message?: string;
 };
@@ -109,6 +111,15 @@ export type IncaDetection = {
   operator?: string | null;
   /** The ONT only gets service once PPPoE is set on its Terminal Node. */
   pppoe_required?: boolean;
+  /**
+   * Set when the ONT is still on the registered list and autofind also sees it
+   * on another port. Relocation keeps the registered OLT.
+   */
+  also_unregistered?: {
+    olt_id: string;
+    olt_name?: string | null;
+    pon: string;
+  } | null;
 };
 
 /**

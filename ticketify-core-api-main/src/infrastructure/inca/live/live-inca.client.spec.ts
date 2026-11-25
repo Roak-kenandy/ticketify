@@ -132,14 +132,31 @@ describe('LiveIncaClient', () => {
       );
     });
 
-    it('prefers the unregistered list', async () => {
+    it('keeps the registered OLT when autofind also sees the ONT', async () => {
       const { transport } = fakeTransport({
-        '/fttx/unregistered-active-devices': row('OFFLINE'),
-        '/fttx/registered-active-devices': row('ONLINE'),
+        '/fttx/unregistered-active-devices': {
+          resultList: [
+            {
+              requestedOltId: 36,
+              requestedOlt: 'OLT_5',
+              frameId: 0,
+              slotId: 7,
+              portId: 13,
+              serialNumber: '4857544388FE0A3C',
+              generalStatus: 'OFFLINE',
+            },
+          ],
+        },
+        '/fttx/registered-active-devices': row('OFFLINE'),
       });
       await expect(
         new LiveIncaClient(transport).detectOnOlt('4857544388FE0A3C'),
-      ).resolves.toMatchObject({ olt_state: 'UNREGISTERED' });
+      ).resolves.toMatchObject({
+        olt_state: 'REGISTERED',
+        olt_id: '37',
+        olt_name: 'OLT_2',
+        also_unregistered: { olt_id: '36', olt_name: 'OLT_5', pon: '0/7/13' },
+      });
     });
 
     it('never reports "not detected" when a list failed', async () => {

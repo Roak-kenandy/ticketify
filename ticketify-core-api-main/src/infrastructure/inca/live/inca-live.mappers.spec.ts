@@ -2,8 +2,10 @@ import {
   mapDetection,
   mapDeviceTypes,
   mapOpticalDevice,
+  mapTodos,
   matchDeviceType,
   parseLoginResponse,
+  revokeAlreadyGone,
   safeIncaMessage,
 } from './inca-live.mappers';
 
@@ -188,6 +190,27 @@ describe('INCA live mappers', () => {
         'ABCD1234ABCD1234',
       ),
     ).toBeNull();
+  });
+
+  it('treats a revoke the old OLT cannot see as already gone', () => {
+    const [todo] = mapTodos([
+      {
+        id: 310860,
+        task: 'WAN_CONFIGURATION',
+        entityOperation: 'terminal_node_onu_revoke',
+        todoTries: 10,
+        additionalInfo: 'Not found on the normal or autofind list',
+        params: 'delete_onu,terminal_node_id=55765,olt_id=40',
+      },
+    ]);
+    expect(todo.operation).toBe('terminal_node_onu_revoke');
+    expect(revokeAlreadyGone(todo)).toBe(true);
+    expect(
+      revokeAlreadyGone({
+        ...todo,
+        operation: 'terminal_node_onu_add',
+      }),
+    ).toBe(false);
   });
 
   it('keeps only a short, token-free error message', () => {

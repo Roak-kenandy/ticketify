@@ -541,16 +541,31 @@ export function mapTodos(payload: unknown): IncaTodo[] {
       const todoId = id(row.id);
       if (!todoId) return null;
       const info = text(row.additionalInfo);
+      const params = text(row.params);
       const tries = typeof row.todoTries === 'number' ? row.todoTries : 0;
       const todo: IncaTodo = {
         id: todoId,
         type: text(row.task) ?? text(row.entityOperation) ?? 'TASK',
+        operation: text(row.entityOperation) ?? params?.split(',')[0] ?? null,
         status: info && tries >= TODO_FAILED_TRIES ? 'FAILED' : 'PENDING',
         message: info ? info.slice(0, 200) : undefined,
       };
       return todo;
     })
     .filter((todo): todo is IncaTodo => todo !== null);
+}
+
+/**
+ * A revoke Todo that cannot see the ONT on the OLT it was told to delete from.
+ * The binding is already gone; INCA keeps retrying a delete that has nothing to
+ * remove. Relocation moves the record to the OLT that does see the ONT.
+ */
+export function revokeAlreadyGone(todo: IncaTodo): boolean {
+  const operation = todo.operation ?? '';
+  return (
+    /revoke|delete_onu/i.test(operation) &&
+    /not found on the (normal or )?autofind list/i.test(todo.message ?? '')
+  );
 }
 
 export function nodeHistoryFilter(language = false) {
