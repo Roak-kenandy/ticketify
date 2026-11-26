@@ -26,6 +26,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import moment from "moment";
+import { shownOpticalLines } from "@/lib/field/optical-lines";
 import React from "react";
 import { PrimaryButton, SecondaryButton } from "@/components/field/ui/button";
 import SerialScanner from "@/components/field/ui/serial-scanner";
@@ -2191,22 +2192,16 @@ function SignalReadout({
       <p className="text-xs text-gray2">
         Good at {Math.max(range.min_dbm, range.max_dbm)} dBm or weaker. A stronger reading cannot close the ticket.
       </p>
-      {reading?.details?.length ? (
+      {shownOpticalLines(reading?.details).map((line) => (
+        <Fact key={line.label} label={line.label} value={line.value} />
+      ))}
+      {reading && !reading.details?.length ? (
         <>
-          {reading.details.map((line) => (
-            <Fact key={line.label} label={line.label} value={line.value} />
-          ))}
-          <Fact label="Read at" value={moment(reading.read_at).format("HH:mm:ss")} />
-        </>
-      ) : reading ? (
-        <>
-          <Fact label="Tx" value={reading.tx_dbm !== null ? `${reading.tx_dbm} dBm` : null} />
-          <Fact label="OLT Rx" value={reading.olt_rx_dbm !== null ? `${reading.olt_rx_dbm} dBm` : null} />
-          <Fact label="Status" value={reading.online ? "Online" : "Offline"} />
-          <Fact label="Alarms" value={reading.alarms.join(", ") || "None"} />
-          <Fact label="Read at" value={moment(reading.read_at).format("HH:mm:ss")} />
+          <Fact label="ONT Tx optical power (dBm)" value={reading.tx_dbm} />
+          <Fact label="ONT Rx optical power (dBm)" value={reading.rx_dbm} />
         </>
       ) : null}
+      {reading ? <Fact label="Read at" value={moment(reading.read_at).format("DD MMM, HH:mm:ss")} /> : null}
     </SheetCard>
   );
 }

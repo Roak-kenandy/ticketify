@@ -1,12 +1,15 @@
 import {
+  IncaBandwidthPoint,
   IncaClientRecord,
   IncaDetection,
   IncaDevice,
   IncaOpticalInfo,
   IncaOption,
   IncaPppoeCredentials,
+  IncaStatusPoint,
   IncaSubscriber,
   IncaTodo,
+  IncaTr069Fact,
   operatorNeedsPppoe,
 } from '../inca.types';
 
@@ -781,4 +784,136 @@ export function mapRegisteredOnt(
     pon: input.pon || null,
     terminal_node_id: null,
   };
+}
+
+const HOUR_STAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
+
+/** The window INCA's bandwidth and status views filter on. */
+export function hourWindowFilter(from: string, to: string) {
+  return {
+    order: 'subjectHour ASC',
+    where: {
+      and: [{ subjectHour: { gt: from } }, { subjectHour: { lte: to } }],
+    },
+    include: {},
+  };
+}
+
+export function mapBandwidth(payload: unknown): IncaBandwidthPoint[] {
+  return rows(payload)
+    .map((row) => {
+      const at = text(row.subjectHour);
+      if (!at) return null;
+      const services = Object.entries(asRecord(row.jsonData))
+        .map(([id, raw]) => {
+          const item = asRecord(raw);
+          const up = numberValue(item.up);
+          const down = numberValue(item.down);
+          if (up === null && down === null) return null;
+          return { id, up: up ?? 0, down: down ?? 0 };
+        })
+        .filter((item): item is IncaBandwidthPoint['services'][number] =>
+          Boolean(item),
+        );
+      return services.length ? { at, services } : null;
+    })
+    .filter((point): point is IncaBandwidthPoint => Boolean(point))
+    .slice(0, 400);
+}
+
+export function mapStatusPoints(payload: unknown): IncaStatusPoint[] {
+  return rows(payload)
+    .map((row) => {
+      const at = text(row.subjectHour);
+      if (!at) return null;
+      const services = Object.entries(asRecord(row.jsonData))
+        .map(([id, raw]) => {
+          const status = numberValue(asRecord(raw).status);
+          return status === null ? null : { id, status };
+        })
+        .filter((item): item is IncaStatusPoint['services'][number] =>
+          Boolean(item),
+        );
+      return services.length ? { at, services } : null;
+    })
+    .filter((point): point is IncaStatusPoint => Boolean(point))
+    .slice(0, 400);
+}
+
+/**
+ * The signal screen shows the ONU, PPPoE and later WAN addresses. The rest of the
+ * TR-069 tree (voice, hosts, management URLs) stays out.
+ */
+export function mapTr069(payload: unknown): IncaTr069Fact[] {
+  const device = rows(payload)[0]?.InternetGatewayDevice as
+    | Record<string, unknown>
+    | undefined;
+  if (!device) return [];
+  const facts: IncaTr069Fact[] = [];
+  const uptime = trValue(
+    (device.DeviceInfo as Record<string, unknown> | undefined)?.UpTime,
+  );
+  if (uptime) facts.push({ label: 'Uptime', value: `${uptime} seconds` });
+  const connections = (
+    (device.WANDevice as Record<string, unknown> | undefined)?.['1'] as
+      | Record<string, unknown>
+      | undefined
+  )?.WANConnectionDevice as Record<string, unknown> | undefined;
+  if (!connections) return facts;
+  let pppoe = 0;
+  for (const [index, raw] of Object.entries(connections)) {
+    if (index.startsWith('_') || !raw || typeof raw !== 'object') continue;
+    const node = raw as Record<string, unknown>;
+    const ppp = firstChild(node.WANPPPConnection);
+    if (ppp) {
+      pppoe += 1;
+      const name = pppoe === 1 ? 'PPPoE' : `PPPoE ${pppoe}`;
+      pushFact(facts, `${name} IP`, trValue(ppp.ExternalIPAddress));
+      pushFact(facts, `${name} MAC`, trValue(ppp.MACAddress));
+      const session = trValue(ppp.Uptime);
+      if (session) facts.push({ label: `${name} uptime`, value: `${session} seconds` });
+    }
+    const ip = firstChild(node.WANIPConnection);
+    if (ip) {
+      const name = index === '1' ? 'ONU' : `WAN${index}`;
+      pushFact(facts, `${name} IP`, trValue(ip.ExternalIPAddress));
+      pushFact(facts, `${name} MAC`, trValue(ip.MACAddress));
+    }
+  }
+  return facts;
+}
+
+export function isHourStamp(value: string): boolean {
+  return HOUR_STAMP.test(value);
+}
+
+function pushFact(facts: IncaTr069Fact[], label: string, value: string | null) {
+  if (value) facts.push({ label, value });
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function trValue(node: unknown): string | null {
+  const value = asRecord(node)._value;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  const textValue = typeof value === 'string' ? value.trim() : '';
+  return textValue || null;
+}
+
+function firstChild(group: unknown): Record<string, unknown> | null {
+  const entry = Object.entries(asRecord(group)).find(
+    ([key]) => !key.startsWith('_'),
+  );
+  const child = entry?.[1];
+  return child && typeof child === 'object'
+    ? (child as Record<string, unknown>)
+    : null;
 }

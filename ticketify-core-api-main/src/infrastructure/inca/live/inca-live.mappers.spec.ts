@@ -1,8 +1,12 @@
 import {
+  hourWindowFilter,
+  mapBandwidth,
   mapDetection,
   mapDeviceTypes,
   mapOpticalDevice,
+  mapStatusPoints,
   mapTodos,
+  mapTr069,
   matchDeviceType,
   parseLoginResponse,
   revokeAlreadyGone,
@@ -233,5 +237,107 @@ describe('INCA live mappers', () => {
       ),
     ).toBe('Bad token [token] retry');
     expect(safeIncaMessage('<html>oops</html>')).toBe('');
+  });
+
+  it('keeps bandwidth and status numbers and the TR-069 addresses', () => {
+    expect(hourWindowFilter('2026-11-19T00:00:00', '2026-11-26T23:59:59')).toEqual({
+      order: 'subjectHour ASC',
+      where: {
+        and: [
+          { subjectHour: { gt: '2026-11-19T00:00:00' } },
+          { subjectHour: { lte: '2026-11-26T23:59:59' } },
+        ],
+      },
+      include: {},
+    });
+    expect(
+      mapBandwidth([
+        {
+          subjectHour: '2026-11-25T13:00:00+05:00',
+          jsonData: {
+            '42': { up: 0, down: 0, cause_of_zero: 'PREVIOUS_DATA_NOT_FOUND' },
+            '56': { up: 72, down: 100736 },
+          },
+        },
+      ]),
+    ).toEqual([
+      {
+        at: '2026-11-25T13:00:00+05:00',
+        services: [
+          { id: '42', up: 0, down: 0 },
+          { id: '56', up: 72, down: 100736 },
+        ],
+      },
+    ]);
+    expect(
+      mapStatusPoints([
+        {
+          subjectHour: '2026-11-25T13:00:00+05:00',
+          jsonData: { '56': { status: 1 }, '26': { status: 2 } },
+        },
+      ]),
+    ).toEqual([
+      {
+        at: '2026-11-25T13:00:00+05:00',
+        services: [
+          { id: '26', status: 2 },
+          { id: '56', status: 1 },
+        ],
+      },
+    ]);
+    expect(
+      mapTr069([
+        {
+          InternetGatewayDevice: {
+            DeviceInfo: { UpTime: { _value: 6800 } },
+            WANDevice: {
+              1: {
+                WANConnectionDevice: {
+                  1: {
+                    WANIPConnection: {
+                      1: {
+                        ExternalIPAddress: { _value: '10.36.253.230' },
+                        MACAddress: { _value: '3C:05:8E:D3:CE:2E' },
+                      },
+                    },
+                  },
+                  2: {
+                    WANPPPConnection: {
+                      1: {
+                        ExternalIPAddress: { _value: '172.21.92.128' },
+                        MACAddress: { _value: '3C:05:8E:D3:CE:2F' },
+                        Uptime: { _value: 9 },
+                      },
+                    },
+                  },
+                  3: {
+                    WANIPConnection: {
+                      1: {
+                        ExternalIPAddress: { _value: '10.20.21.47' },
+                        MACAddress: { _value: '3C:05:8E:D3:CE:30' },
+                      },
+                    },
+                  },
+                  4: {
+                    WANIPConnection: {
+                      1: { ExternalIPAddress: { _value: '' }, MACAddress: { _value: '' } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      ]),
+    ).toEqual([
+      { label: 'Uptime', value: '6800 seconds' },
+      { label: 'ONU IP', value: '10.36.253.230' },
+      { label: 'ONU MAC', value: '3C:05:8E:D3:CE:2E' },
+      { label: 'PPPoE IP', value: '172.21.92.128' },
+      { label: 'PPPoE MAC', value: '3C:05:8E:D3:CE:2F' },
+      { label: 'PPPoE uptime', value: '9 seconds' },
+      { label: 'WAN3 IP', value: '10.20.21.47' },
+      { label: 'WAN3 MAC', value: '3C:05:8E:D3:CE:30' },
+    ]);
   });
 });

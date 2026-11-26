@@ -434,6 +434,21 @@ export class DummyIncaClient implements IncaClient {
     }));
   }
 
+  async terminalNodeBandwidth() {
+    await this.call();
+    return [];
+  }
+
+  async terminalNodeStatus() {
+    await this.call();
+    return [];
+  }
+
+  async terminalNodeTr069() {
+    await this.call();
+    return [];
+  }
+
   async getOpticalInfo(serial: string): Promise<IncaOpticalInfo | null> {
     await this.call();
     const device = this.devices.get(serial);

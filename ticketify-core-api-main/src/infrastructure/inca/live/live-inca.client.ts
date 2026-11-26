@@ -31,6 +31,10 @@ import {
   nodeHistoryFilter,
   packagesFilter,
   parseOpticalInfo,
+  mapBandwidth,
+  mapStatusPoints,
+  mapTr069,
+  hourWindowFilter,
   terminalNodeViewFilter,
   todosFilter,
   US_LANGUAGE,
@@ -664,6 +668,32 @@ export class LiveIncaClient implements IncaClient {
         { where: US_LANGUAGE },
       ),
       new Date(this.now()).toISOString(),
+    );
+  }
+
+  async terminalNodeBandwidth(terminalNodeId: string, from: string, to: string) {
+    return mapBandwidth(
+      await this.transport.get(
+        `/fttx/terminal-nodes/${nodeIdOf(terminalNodeId)}/bandwidth`,
+        hourWindowFilter(from, to),
+      ),
+    );
+  }
+
+  async terminalNodeStatus(terminalNodeId: string, from: string, to: string) {
+    return mapStatusPoints(
+      await this.transport.get(
+        `/fttx/terminal-nodes/${nodeIdOf(terminalNodeId)}/status-graph`,
+        hourWindowFilter(from, to),
+      ),
+    );
+  }
+
+  async terminalNodeTr069(terminalNodeId: string) {
+    return mapTr069(
+      await this.transport.get(
+        `/fttx/terminal-nodes/${nodeIdOf(terminalNodeId)}/tr-069`,
+      ),
     );
   }
 

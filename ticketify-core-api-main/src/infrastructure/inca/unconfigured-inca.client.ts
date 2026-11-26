@@ -39,4 +39,7 @@ export class UnconfiguredIncaClient implements IncaClient {
   moveDevice = () => this.fail();
   listTodo = () => this.fail();
   getOpticalInfo = () => this.fail();
+  terminalNodeBandwidth = () => this.fail();
+  terminalNodeStatus = () => this.fail();
+  terminalNodeTr069 = () => this.fail();
 }

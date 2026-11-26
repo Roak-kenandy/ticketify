@@ -129,6 +129,19 @@ export class ProvisioningController {
     return this.provisioning.signalStatus(req.user, serial);
   }
 
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @UseGuards(JwtGuard)
+  @Access(FIELD)
+  @Get('signal/history')
+  signalHistory(
+    @Req() req: AuthedRequest,
+    @Query('serial') serial = '',
+    @Query('from') from = '',
+    @Query('to') to = '',
+  ) {
+    return this.provisioning.signalHistory(req.user, serial, from, to);
+  }
+
   @UseGuards(JwtGuard)
   @Access(PROVISIONING_LOG)
   @Get('transactions')

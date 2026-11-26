@@ -31,6 +31,7 @@ import {
   IncaTerminalNodeInput,
   IncaUnavailableError,
 } from 'src/infrastructure/inca/inca.types';
+import { isHourStamp } from 'src/infrastructure/inca/live/inca-live.mappers';
 import {
   TicketSnapshot,
   TicketSnapshotService,
@@ -1158,10 +1159,11 @@ export class ProvisioningService implements OnModuleInit {
       this.noopRecorder(),
       this.runnerConfig(),
     );
-    const [reading, device, types] = await Promise.all([
+    const [reading, device, types, subscriber] = await Promise.all([
       this.incaRead(() => runner.readSignal(serial)),
       this.incaRead(() => this.inca.findDevice(serial)).catch(() => null),
       this.inca.deviceTypes().catch(() => [] as IncaOption[]),
+      this.inca.findSubscriberBySerial(serial).catch(() => null),
     ]);
     const deviceType = device?.device_type
       ? types.find((type) => type.code === device.device_type)?.label ??
@@ -1182,6 +1184,7 @@ export class ProvisioningService implements OnModuleInit {
       serial,
       range: this.range(),
       found: Boolean(reading || device),
+      terminal_node_id: subscriber?.terminal_node_id ?? null,
       device: device
         ? {
             registered: device.registered,
@@ -1192,6 +1195,66 @@ export class ProvisioningService implements OnModuleInit {
         : null,
       reading,
     };
+  }
+
+  /** Bandwidth and status for a date range, plus the current TR-069 addresses. */
+  async signalHistory(
+    actor: Actor,
+    rawSerial: string,
+    fromDate: string,
+    toDate: string,
+  ) {
+    const serial = normalizeSerial(rawSerial);
+    if (!serial || !SERIAL_PATTERN.test(serial)) {
+      throw new BadRequestException(
+        `"${rawSerial}" is not a valid ONT serial number.`,
+      );
+    }
+    const from = dayStamp(fromDate, '00:00:00');
+    const to = dayStamp(toDate, '23:59:59');
+    if (!from || !to) {
+      throw new BadRequestException('Choose a from date and a to date.');
+    }
+    if (from > to) {
+      throw new BadRequestException('The from date is after the to date.');
+    }
+    const span = Date.parse(to) - Date.parse(from);
+    if (!Number.isFinite(span) || span > 31 * 24 * 60 * 60 * 1000) {
+      throw new BadRequestException('Choose a period of 31 days or less.');
+    }
+    const subscriber = await this.incaRead(() =>
+      this.inca.findSubscriberBySerial(serial),
+    );
+    if (!subscriber) {
+      return {
+        serial,
+        terminal_node_id: null,
+        bandwidth: [],
+        status: [],
+        tr069: [],
+      };
+    }
+    const nodeId = subscriber.terminal_node_id;
+    const [bandwidth, status, tr069] = await Promise.all([
+      this.incaRead(() => this.inca.terminalNodeBandwidth(nodeId, from, to)),
+      this.incaRead(() => this.inca.terminalNodeStatus(nodeId, from, to)),
+      this.incaRead(() => this.inca.terminalNodeTr069(nodeId)),
+    ]);
+    await this.audit.log({
+      entity_type: 'provisioning',
+      entity_id: serial,
+      action: 'INCA_SIGNAL_HISTORY',
+      actor_user_id: actor.id,
+      new_state: {
+        serial,
+        terminal_node_id: nodeId,
+        from,
+        to,
+        bandwidth: bandwidth.length,
+        status: status.length,
+      },
+    });
+    return { serial, terminal_node_id: nodeId, bandwidth, status, tr069 };
   }
 
   private async incaRead<T>(call: () => Promise<T>): Promise<T> {
@@ -1576,6 +1639,13 @@ function readingOf(txn: ProvisioningTransaction): number | null {
       : result.optical;
   const rx = reading?.rx_dbm;
   return typeof rx === 'number' && Number.isFinite(rx) ? rx : null;
+}
+
+function dayStamp(day: string, time: string): string | null {
+  const value = day.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const stamp = `${value}T${time}`;
+  return isHourStamp(stamp) ? stamp : null;
 }
 
 function parseDate(value?: string, endOfDay = false): Date | null {

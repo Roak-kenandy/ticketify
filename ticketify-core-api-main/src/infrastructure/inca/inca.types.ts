@@ -104,6 +104,21 @@ export type IncaOpticalInfo = {
   details?: { label: string; value: string }[];
 };
 
+/** One hour of INCA bandwidth. `up` and `down` are the numbers INCA stores. */
+export type IncaBandwidthPoint = {
+  at: string;
+  services: { id: string; up: number; down: number }[];
+};
+
+/** One hour of INCA status. The status is the number INCA stores, not a graph. */
+export type IncaStatusPoint = {
+  at: string;
+  services: { id: string; status: number }[];
+};
+
+/** A single TR-069 fact worth showing on the signal screen. */
+export type IncaTr069Fact = { label: string; value: string };
+
 export type IncaOption = { code: string; label: string; item_code?: string };
 
 export type IncaDetection = {
@@ -235,6 +250,20 @@ export interface IncaClient {
   moveDevice(serial: string, oltId: string): Promise<{ changed: boolean }>;
   listTodo(terminalNodeId: string): Promise<IncaTodo[]>;
   getOpticalInfo(serial: string): Promise<IncaOpticalInfo | null>;
+  /** Hourly upload and download between two local timestamps (`YYYY-MM-DDTHH:mm:ss`). */
+  terminalNodeBandwidth(
+    terminalNodeId: string,
+    from: string,
+    to: string,
+  ): Promise<IncaBandwidthPoint[]>;
+  /** Hourly status numbers for the same window. */
+  terminalNodeStatus(
+    terminalNodeId: string,
+    from: string,
+    to: string,
+  ): Promise<IncaStatusPoint[]>;
+  /** ONU, PPPoE and WAN addresses from the node's current TR-069 snapshot. */
+  terminalNodeTr069(terminalNodeId: string): Promise<IncaTr069Fact[]>;
 }
 
 /** INCA could not be reached or refused the session; safe to retry later. */
