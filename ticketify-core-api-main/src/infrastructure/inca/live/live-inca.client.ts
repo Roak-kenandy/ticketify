@@ -19,7 +19,9 @@ import {
   cityBody,
   clientBody,
   clientFilter,
-  connectedStatusId,
+  CONNECTED_STATUS,
+  TERMINATED_STATUS,
+  statusIdByListValue,
   createdId,
   currentPackageId,
   currentStatus,
@@ -44,6 +46,8 @@ import {
   mapRegisteredOnt,
   mapServiceAreas,
   mapTerminalNode,
+  mapTerminalNodeMatches,
+  terminalNodeNameFilter,
   opticalDeviceFilter,
   registerOntBody,
   sameName,
@@ -166,6 +170,17 @@ export class LiveIncaClient implements IncaClient {
       );
     }
     return nodes.length ? this.getSubscriber(nodes[0]) : null;
+  }
+
+  async searchTerminalNodes(query: string) {
+    const name = query.trim().replace(/[%_]/g, '').slice(0, 40);
+    if (name.length < 2) return [];
+    return mapTerminalNodeMatches(
+      await this.transport.get(
+        '/views/fttx/terminal-nodes',
+        terminalNodeNameFilter(name),
+      ),
+    );
   }
 
   async findDevice(serial: string): Promise<IncaDevice | null> {
@@ -542,7 +557,20 @@ export class LiveIncaClient implements IncaClient {
     return { label: pkg.label, changed: true };
   }
 
+  async markTerminated(terminalNodeId: string) {
+    return this.setStatus(terminalNodeId, TERMINATED_STATUS, 'Terminated');
+  }
+
   async markConnected(terminalNodeId: string) {
+    return this.setStatus(terminalNodeId, CONNECTED_STATUS, 'Connected');
+  }
+
+  /** INCA edits status by PATCHing the open status row, not the Terminal Node. */
+  private async setStatus(
+    terminalNodeId: string,
+    listValue: string,
+    label: string,
+  ) {
     const nodeId = nodeIdOf(terminalNodeId);
     const [statuses, history] = await Promise.all([
       this.statuses(),
@@ -551,9 +579,9 @@ export class LiveIncaClient implements IncaClient {
         nodeHistoryFilter(true),
       ),
     ]);
-    const connected = connectedStatusId(statuses);
-    if (!connected) {
-      throw new IncaUnavailableError('INCA has no "Connected" status');
+    const wanted = statusIdByListValue(statuses, listValue);
+    if (!wanted) {
+      throw new IncaUnavailableError(`INCA has no "${label}" status`);
     }
     const current = currentStatus(history);
     if (!current) {
@@ -561,9 +589,9 @@ export class LiveIncaClient implements IncaClient {
         `Terminal Node ${nodeId} has no status to update`,
       );
     }
-    if (current.statusId === connected) return { changed: false };
+    if (current.statusId === wanted) return { changed: false };
     await this.transport.patch(`/fttx/terminal-nodes-status/${current.rowId}`, {
-      statusId: connected,
+      statusId: wanted,
     });
     return { changed: true };
   }
@@ -600,7 +628,7 @@ export class LiveIncaClient implements IncaClient {
     return { address, location, changed: true, notes };
   }
 
-  /** INCA's optical device edit, OLT only; refused while the ONT is still on a node. */
+  /** INCA's optical device edit, OLT only. The device admin password is never sent. */
   async moveDevice(serial: string, oltId: string) {
     if (!isIncaId(oltId))
       throw new IncaRejectedError(
@@ -610,11 +638,6 @@ export class LiveIncaClient implements IncaClient {
     if (!device?.device_id)
       throw new IncaRejectedError(`ONT ${serial} is not registered in INCA`);
     if (device.olt_id === oltId) return { changed: false };
-    if (device.terminal_node_id) {
-      throw new IncaRejectedError(
-        `ONT ${serial} is still on Terminal Node ${device.terminal_node_id}; revoke it before moving it to another OLT`,
-      );
-    }
     await this.transport.patch(
       `/fttx/optical-devices/${device.device_id}`,
       deviceOltBody(oltId),

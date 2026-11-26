@@ -133,16 +133,15 @@ export class ClosureValidationService {
 
     if (prov.last_reading) {
       const { rx_dbm, within_range, range, action } = prov.last_reading;
-      const low = Math.min(range.min_dbm, range.max_dbm);
-      const high = Math.max(range.min_dbm, range.max_dbm);
+      const limit = Math.max(range.min_dbm, range.max_dbm);
       checks.push({
         key: SIGNAL_LEVEL,
-        label: `Signal level ${high} to ${low} dBm`,
+        label: `Signal ${limit} dBm or weaker`,
         ok: within_range,
         severity: 'block',
         message: within_range
           ? null
-          : `Signal is ${rx_dbm} dBm after the ${ACTION_LABELS[action].toLowerCase()}; it must be between ${high} and ${low} dBm. Fix the fibre or connectors, then run a signal check again.`,
+          : `Signal is ${rx_dbm} dBm after the ${ACTION_LABELS[action].toLowerCase()}. Only a reading stronger than ${limit} dBm blocks closing.`,
         action: 'provisioning',
       });
     }

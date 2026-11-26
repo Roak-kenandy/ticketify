@@ -205,6 +205,19 @@ describe('INCA live mappers', () => {
     ]);
     expect(todo.operation).toBe('terminal_node_onu_revoke');
     expect(revokeAlreadyGone(todo)).toBe(true);
+    const [statusChange] = mapTodos([
+      {
+        id: 310895,
+        task: 'WAN_CONFIGURATION',
+        entityOperation: 'terminal_node_status_change',
+        todoTries: 8,
+        additionalInfo:
+          'Not found on the autofind list (normal list check is omitted)',
+        params: 'delete_onu,terminal_node_id=56008,olt_id=37',
+      },
+    ]);
+    expect(statusChange.operation).toBe('delete_onu');
+    expect(revokeAlreadyGone(statusChange)).toBe(true);
     expect(
       revokeAlreadyGone({
         ...todo,

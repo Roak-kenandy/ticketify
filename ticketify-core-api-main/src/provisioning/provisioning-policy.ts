@@ -84,9 +84,9 @@ export function classifySignal(
   if (!reading || reading.rx_dbm === null || !Number.isFinite(reading.rx_dbm)) {
     return 'NO_READING';
   }
-  return reading.rx_dbm >= range.min_dbm && reading.rx_dbm <= range.max_dbm
-    ? 'WITHIN_RANGE'
-    : 'OUTSIDE_RANGE';
+  // Weaker than the floor (for example -29) is a good signal. Only a reading
+  // stronger than max_dbm (for example -15 when the limit is -17) blocks closing.
+  return reading.rx_dbm <= range.max_dbm ? 'WITHIN_RANGE' : 'OUTSIDE_RANGE';
 }
 
 export const ACTION_LABELS: Record<ProvisioningAction, string> = {

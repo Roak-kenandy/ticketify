@@ -151,6 +151,24 @@ export class DummyIncaClient implements IncaClient {
     return sub ? clone(sub) : null;
   }
 
+  async searchTerminalNodes(query: string) {
+    await this.call();
+    const needle = query.trim().toLowerCase();
+    return [...this.subscribers.values()]
+      .filter((item) => item.name.toLowerCase().includes(needle))
+      .map((item) => ({
+        terminal_node_id: item.terminal_node_id,
+        name: item.name,
+        client_name: item.name,
+        client_identifier: item.client_identifier,
+        address: item.address,
+        serial: item.onu_serials[0] ?? null,
+        package: item.package,
+        status: item.connected ? 'Connected' : 'Terminated',
+        olt_name: item.olt_id,
+      }));
+  }
+
   async findSubscriberBySerial(serial: string) {
     await this.call();
     const sub = [...this.subscribers.values()].find((item) =>
@@ -321,6 +339,14 @@ export class DummyIncaClient implements IncaClient {
     return { label, changed };
   }
 
+  async markTerminated(terminalNodeId: string) {
+    await this.call();
+    const sub = this.mustGet(terminalNodeId);
+    const changed = sub.connected;
+    sub.connected = false;
+    return { changed };
+  }
+
   async markConnected(terminalNodeId: string) {
     await this.call();
     const sub = this.mustGet(terminalNodeId);
@@ -375,11 +401,6 @@ export class DummyIncaClient implements IncaClient {
     if (!device?.registered)
       throw new IncaRejectedError(`ONT ${serial} is not registered in INCA`);
     if (device.olt_id === oltId) return { changed: false };
-    if (device.terminal_node_id) {
-      throw new IncaRejectedError(
-        `ONT ${serial} is still on Terminal Node ${device.terminal_node_id}; revoke it before moving it to another OLT`,
-      );
-    }
     device.olt_id = oltId;
     return { changed: true };
   }

@@ -107,6 +107,19 @@ export class ProvisioningController {
     return this.provisioning.subscriberBySerial(crmTicketId, req.user, serial);
   }
 
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @UseGuards(JwtGuard, TicketAccessGuard)
+  @TicketScope('crmTicketId')
+  @Access(FIELD)
+  @Get('tickets/:crmTicketId/inca/terminal-nodes')
+  terminalNodes(
+    @Req() req: AuthedRequest,
+    @Param('crmTicketId') crmTicketId: string,
+    @Query('q') query = '',
+  ) {
+    return this.provisioning.searchTerminalNodes(crmTicketId, req.user, query);
+  }
+
   // Live INCA read by serial with no ticket scope; capped like the other serial lookups.
   @Throttle({ default: { limit: 20, ttl: 60000 } })
   @UseGuards(JwtGuard)

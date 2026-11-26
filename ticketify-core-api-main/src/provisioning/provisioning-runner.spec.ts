@@ -1,6 +1,9 @@
 import { ProvisioningStatus } from '@prisma/client';
 import { DummyIncaClient } from 'src/infrastructure/inca/dummy-inca.client';
-import { IncaNotIntegratedError } from 'src/infrastructure/inca/inca.types';
+import {
+  IncaNotIntegratedError,
+  IncaUnavailableError,
+} from 'src/infrastructure/inca/inca.types';
 import {
   ProvisioningRunner,
   RunBaseline,
@@ -328,6 +331,43 @@ describe('ProvisioningRunner', () => {
     expect(state.baseline?.old_ont_serial).toBe(before?.onu_serials[0]);
   });
 
+  it('points a replacement ONT at the OLT autofind sees before adding it', async () => {
+    await inca.registerOnt({
+      serial: 'HWTCREPLACED1',
+      device_type: '52',
+      service_area: 'Male',
+      olt_id: '37',
+      pon: '0/1/6',
+    });
+    jest.spyOn(inca, 'detectOnOlt').mockResolvedValue({
+      olt_id: '37',
+      olt_name: 'OLT_2',
+      pon: '0/1/6',
+      olt_state: 'REGISTERED',
+      also_unregistered: { olt_id: '38', olt_name: 'OLT_3', pon: '0/7/13' },
+    });
+    const before = await inca.findSubscriber('contact-2', 'existing_service');
+    const { rec, state } = recorder();
+    await new ProvisioningRunner(inca, rec, config).run(
+      input({
+        action: 'ONT_REPLACEMENT',
+        client_identifier: 'contact-2',
+        ont_serial: 'HWTCREPLACED1',
+        confirmed_olt_id: '38',
+        confirmed_pon: '0/7/13',
+      }),
+      null,
+      null,
+    );
+    expect((await inca.findDevice('HWTCREPLACED1'))?.olt_id).toBe('38');
+    expect(
+      (await inca.getSubscriber(before!.terminal_node_id))?.onu_serials,
+    ).toEqual(['HWTCREPLACED1']);
+    expect(state.steps).toContain(
+      'ONT HWTCREPLACED1 is registered on 37 and seen on OLT_3 PON 0/7/13',
+    );
+  });
+
   it('keeps the existing PPPoE when an Ooredoo ONT replaces the ONT', async () => {
     const setPppoe = jest.spyOn(inca, 'setPppoe');
     const { rec, state } = recorder();
@@ -541,7 +581,7 @@ describe('ProvisioningRunner', () => {
       expect(revoke).not.toHaveBeenCalled();
     });
 
-    it('revokes, moves to the new OLT and re-adds an ONT seen on another OLT', async () => {
+    it('sets Terminated, points the ONT at the new OLT, then sets Connected', async () => {
       const before = await inca.findSubscriber('contact-7', 'existing_service');
       const serial = before!.onu_serials[0];
       jest.spyOn(inca, 'detectOnOlt').mockResolvedValue({
@@ -551,8 +591,10 @@ describe('ProvisioningRunner', () => {
         olt_state: 'UNREGISTERED',
         online: null,
       });
-      const add = jest
-        .spyOn(inca, 'addOnu')
+      const revoke = jest.spyOn(inca, 'revokeOnu');
+      const add = jest.spyOn(inca, 'addOnu');
+      const connect = jest
+        .spyOn(inca, 'markConnected')
         .mockRejectedValueOnce(new Error('OLT busy'));
       const first = recorder();
       await expect(
@@ -564,12 +606,13 @@ describe('ProvisioningRunner', () => {
       ).rejects.toBeInstanceOf(StageFailure);
       expect(first.state.steps).toEqual(
         expect.arrayContaining([
-          `ONU ${serial} revoked from Terminal Node ${before!.terminal_node_id}`,
+          `Terminal Node ${before!.terminal_node_id} set to Terminated`,
           `ONT ${serial} record moved to OLT OLT-9 in INCA`,
         ]),
       );
+      expect(revoke).not.toHaveBeenCalled();
+      expect(add).not.toHaveBeenCalled();
 
-      const move = jest.spyOn(inca, 'moveDevice');
       const second = recorder();
       const outcome = await new ProvisioningRunner(
         inca,
@@ -580,11 +623,7 @@ describe('ProvisioningRunner', () => {
         first.state.baseline,
         null,
       );
-      expect(add).toHaveBeenCalledTimes(2);
-      expect(move).toHaveReturnedTimes(1);
-      expect(second.state.steps).toEqual(
-        expect.arrayContaining([`ONU ${serial} already revoked; skipped`]),
-      );
+      expect(connect).toHaveBeenCalledTimes(2);
       expect((await inca.findDevice(serial))?.olt_id).toBe('OLT-9');
       expect(
         (await inca.getSubscriber(before!.terminal_node_id))?.onu_serials,
@@ -597,8 +636,30 @@ describe('ProvisioningRunner', () => {
       });
     });
 
+    it('keeps waiting when INCA drops the connection during a Todo', async () => {
+      jest
+        .spyOn(inca, 'listTodo')
+        .mockRejectedValueOnce(
+          new IncaUnavailableError('INCA connection failed (ECONNRESET)'),
+        )
+        .mockResolvedValue([]);
+      const outcome = await new ProvisioningRunner(
+        inca,
+        recorder().rec,
+        config,
+      ).run(relocation(), null, null);
+      expect(outcome.result).toMatchObject({ rebound: false });
+    });
+
     it('swaps in a new ONT at the destination like a replacement', async () => {
       const before = await inca.findSubscriber('contact-8', 'existing_service');
+      await inca.registerOnt({
+        serial: 'HWTCRELOC001',
+        device_type: '52',
+        service_area: 'Male',
+        olt_id: '37',
+        pon: '0/1/6',
+      });
       const outcome = await new ProvisioningRunner(
         inca,
         recorder().rec,
@@ -608,6 +669,7 @@ describe('ProvisioningRunner', () => {
           client_identifier: 'contact-8',
           new_ont: true,
           ont_serial: 'HWTCRELOC001',
+          terminal_node_id: before!.terminal_node_id,
         }),
         null,
         null,
@@ -624,6 +686,209 @@ describe('ProvisioningRunner', () => {
         recovered_ont_serial: before!.onu_serials[0],
         address: 'Nirolhu Magu 22, Hulhumale',
       });
+    });
+
+    it('points a new relocation ONT at the OLT autofind sees before adding it', async () => {
+      const before = await inca.findSubscriber('contact-8', 'existing_service');
+      await inca.registerOnt({
+        serial: 'HWTCRELOC002',
+        device_type: '52',
+        service_area: 'Male',
+        olt_id: '37',
+        pon: '0/1/6',
+      });
+      jest.spyOn(inca, 'detectOnOlt').mockResolvedValue({
+        olt_id: '37',
+        olt_name: 'OLT_2',
+        pon: '0/1/6',
+        olt_state: 'REGISTERED',
+        also_unregistered: { olt_id: '38', olt_name: 'OLT_3', pon: '0/2/4' },
+      });
+      await new ProvisioningRunner(inca, recorder().rec, config).run(
+        relocation({
+          client_identifier: 'contact-8',
+          new_ont: true,
+          ont_serial: 'HWTCRELOC002',
+          terminal_node_id: before!.terminal_node_id,
+        }),
+        null,
+        null,
+      );
+      expect((await inca.findDevice('HWTCRELOC002'))?.olt_id).toBe('38');
+      expect(
+        (await inca.getSubscriber(before!.terminal_node_id))?.onu_serials,
+      ).toEqual(['HWTCRELOC002']);
+    });
+
+    it('points a new relocation ONT at the found OLT on the registered list', async () => {
+      const before = await inca.findSubscriber('contact-8', 'existing_service');
+      await inca.registerOnt({
+        serial: 'HWTCRELOC006',
+        device_type: '52',
+        service_area: 'Male',
+        olt_id: '37',
+        pon: '0/1/6',
+      });
+      jest.spyOn(inca, 'detectOnOlt').mockResolvedValue({
+        olt_id: '38',
+        olt_name: 'OLT_3',
+        pon: '0/1/0',
+        olt_state: 'REGISTERED',
+      });
+      const { rec, state } = recorder();
+      await new ProvisioningRunner(inca, rec, config).run(
+        relocation({
+          client_identifier: 'contact-8',
+          new_ont: true,
+          ont_serial: 'HWTCRELOC006',
+          terminal_node_id: before!.terminal_node_id,
+        }),
+        null,
+        null,
+      );
+      expect((await inca.findDevice('HWTCRELOC006'))?.olt_id).toBe('38');
+      expect(
+        state.steps.some((step) => step.includes('seen on OLT_3 PON 0/1/0')),
+      ).toBe(true);
+    });
+
+    it('continues when the configure task was built for the previous OLT', async () => {
+      const before = await inca.findSubscriber('contact-8', 'existing_service');
+      await inca.registerOnt({
+        serial: 'HWTCRELOC003',
+        device_type: '52',
+        service_area: 'Male',
+        olt_id: '37',
+        pon: '0/1/6',
+      });
+      jest.spyOn(inca, 'detectOnOlt').mockResolvedValue({
+        olt_id: '37',
+        olt_name: 'OLT_2',
+        pon: '0/1/6',
+        olt_state: 'REGISTERED',
+        also_unregistered: { olt_id: '38', olt_name: 'OLT_3', pon: '0/1/0' },
+      });
+      const stale = {
+        id: '310900',
+        type: 'WAN_CONFIGURATION',
+        status: 'FAILED' as const,
+        message: 'The olt_id of the ONU got updated.',
+      };
+      let calls = 0;
+      jest.spyOn(inca, 'listTodo').mockImplementation(async () => {
+        calls += 1;
+        return calls <= 2 ? [] : [stale];
+      });
+      const { rec, state } = recorder();
+      const outcome = await new ProvisioningRunner(inca, rec, config).run(
+        relocation({
+          client_identifier: 'contact-8',
+          new_ont: true,
+          ont_serial: 'HWTCRELOC003',
+          terminal_node_id: before!.terminal_node_id,
+        }),
+        null,
+        null,
+      );
+      expect(outcome.ont_serial).toBe('HWTCRELOC003');
+      expect(state.steps).toContain(
+        'INCA dropped the configure task from the previous OLT. Continuing on the OLT that sees the ONT.',
+      );
+    });
+
+    it('accepts a configure task that missed an ONT already reporting optical info', async () => {
+      const before = await inca.findSubscriber('contact-8', 'existing_service');
+      await inca.registerOnt({
+        serial: 'HWTCRELOC004',
+        device_type: '52',
+        service_area: 'Male',
+        olt_id: '38',
+        pon: '0/1/0',
+      });
+      let calls = 0;
+      jest.spyOn(inca, 'listTodo').mockImplementation(async () => {
+        calls += 1;
+        return calls <= 2
+          ? []
+          : [
+              {
+                id: '310910',
+                type: 'WAN_CONFIGURATION',
+                status: 'FAILED',
+                message:
+                  'Not found on the autofind list (normal list check is omitted)',
+              },
+            ];
+      });
+      const { rec, state } = recorder();
+      const outcome = await new ProvisioningRunner(inca, rec, config).run(
+        relocation({
+          client_identifier: 'contact-8',
+          new_ont: true,
+          ont_serial: 'HWTCRELOC004',
+          terminal_node_id: before!.terminal_node_id,
+        }),
+        null,
+        null,
+      );
+      expect(outcome.ont_serial).toBe('HWTCRELOC004');
+      expect(state.steps.some((step) => step.includes('optical info'))).toBe(
+        true,
+      );
+    });
+
+    it('waits through an optical-info 500 and continues once a reading arrives', async () => {
+      const before = await inca.findSubscriber('contact-8', 'existing_service');
+      await inca.registerOnt({
+        serial: 'HWTCRELOC005',
+        device_type: '52',
+        service_area: 'Male',
+        olt_id: '38',
+        pon: '0/1/0',
+      });
+      let calls = 0;
+      jest.spyOn(inca, 'listTodo').mockImplementation(async () => {
+        calls += 1;
+        return calls <= 2
+          ? []
+          : [
+              {
+                id: '310996',
+                type: 'WAN_CONFIGURATION',
+                status: 'FAILED',
+                message:
+                  'Not found on the autofind list (normal list check is omitted)',
+              },
+            ];
+      });
+      let reads = 0;
+      jest.spyOn(inca, 'getOpticalInfo').mockImplementation(async () => {
+        reads += 1;
+        if (reads === 1) throw new IncaUnavailableError('INCA error (500)');
+        return {
+          online: true,
+          rx_dbm: -23.28,
+          tx_dbm: 2.27,
+          olt_rx_dbm: -24.44,
+          alarms: [],
+          read_at: new Date().toISOString(),
+          details: [],
+        };
+      });
+      const { rec, state } = recorder();
+      const outcome = await new ProvisioningRunner(inca, rec, config).run(
+        relocation({
+          client_identifier: 'contact-8',
+          new_ont: true,
+          ont_serial: 'HWTCRELOC005',
+          terminal_node_id: before!.terminal_node_id,
+        }),
+        null,
+        null,
+      );
+      expect(outcome.ont_serial).toBe('HWTCRELOC005');
+      expect(reads).toBeGreaterThan(1);
+      expect(state.steps.some((step) => step.includes('-23.28'))).toBe(true);
     });
 
     it('needs the destination address', async () => {
@@ -761,7 +1026,8 @@ describe('provisioning policy', () => {
       read_at: '',
     });
     expect(classifySignal(reading(-20), range)).toBe('WITHIN_RANGE');
-    expect(classifySignal(reading(-29.4), range)).toBe('OUTSIDE_RANGE');
+    expect(classifySignal(reading(-29.4), range)).toBe('WITHIN_RANGE');
+    expect(classifySignal(reading(-7), range)).toBe('OUTSIDE_RANGE');
     expect(classifySignal(reading(null), range)).toBe('NO_READING');
     expect(classifySignal(null, range)).toBe('NO_READING');
   });

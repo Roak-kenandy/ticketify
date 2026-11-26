@@ -279,7 +279,7 @@ describe('LiveIncaClient', () => {
       expect(already.patch).not.toHaveBeenCalled();
     });
 
-    it('points an unbound ONT at its new OLT, never sending the admin password', async () => {
+    it('points an ONT at its new OLT, never sending the admin password', async () => {
       const device = (assigned: number | null) => ({
         '/views/fttx/optical-devices': [
           {
@@ -314,8 +314,10 @@ describe('LiveIncaClient', () => {
           '485754430060D99E',
           '37',
         ),
-      ).rejects.toThrow('revoke it before');
-      expect(bound.patch).not.toHaveBeenCalled();
+      ).resolves.toEqual({ changed: true });
+      expect(bound.patch).toHaveBeenCalledWith('/fttx/optical-devices/13002', {
+        oltId: '37',
+      });
     });
 
     it('revokes the ONU by deleting its binding row, like INCA "Revoke"', async () => {
@@ -446,6 +448,26 @@ describe('LiveIncaClient', () => {
       await expect(
         new LiveIncaClient(done.transport).assignPackage('55596', '999'),
       ).rejects.toBeInstanceOf(IncaRejectedError);
+    });
+
+    it('sets the status to Terminated by patching the current status row', async () => {
+      const statuses = [
+        { id: 8, listValue: 'DD_STATUS_MEGSZUNT' },
+        { id: 5, listValue: 'DD_STATUS_BEKOTVE' },
+      ];
+      const connected = nodeTransport({
+        '/views/statuses': statuses,
+        '/views/fttx/terminal-nodes/55596/status': [
+          { id: 96205, statusId: 5, endDate: null },
+        ],
+      });
+      await expect(
+        new LiveIncaClient(connected.transport).markTerminated('55596'),
+      ).resolves.toEqual({ changed: true });
+      expect(connected.patch).toHaveBeenCalledWith(
+        '/fttx/terminal-nodes-status/96205',
+        { statusId: '8' },
+      );
     });
 
     it('sets the status to Connected by patching the current status row', async () => {

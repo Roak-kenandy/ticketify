@@ -39,8 +39,7 @@ function Fact({ label, value }: { label: string; value: React.ReactNode }) {
 function ResultCard({ status, onRefresh, refreshing }: { status: SignalStatus; onRefresh: () => void; refreshing: boolean }) {
   const { reading, device, range } = status;
   const tone = TONES[reading?.result ?? "NO_READING"];
-  const high = Math.max(range.min_dbm, range.max_dbm);
-  const low = Math.min(range.min_dbm, range.max_dbm);
+  const limit = Math.max(range.min_dbm, range.max_dbm);
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-borderlight bg-white p-4">
       <div className="flex items-center justify-between gap-3">
@@ -52,7 +51,7 @@ function ResultCard({ status, onRefresh, refreshing }: { status: SignalStatus; o
         <span className="text-sm font-semibold text-gray2">dBm Rx</span>
       </div>
       <p className="text-xs text-gray2">
-        Accepted range {high} to {low} dBm. Tickets can&apos;t be closed with a signal outside it.
+        Good at {limit} dBm or weaker. A stronger reading cannot close the ticket.
       </p>
       {!reading ? (
         <InlineBanner

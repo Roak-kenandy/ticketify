@@ -471,6 +471,54 @@ export function existingTerminalNodeId(payload: unknown): string | null {
 /** INCA views repeat each row once per UI language; keep the English one. */
 export const US_LANGUAGE = { or: [{ language: 'US' }, { language: null }] };
 
+/** INCA's Terminal Node name search. The name is matched, never a password field. */
+export function terminalNodeNameFilter(query: string) {
+  return {
+    skip: 0,
+    limit: 100,
+    order: 'name DESC',
+    where: {
+      and: [{ name: { ilike: `%${query}%` } }, US_LANGUAGE],
+    },
+  };
+}
+
+export function mapTerminalNodeMatches(payload: unknown): {
+  terminal_node_id: string;
+  name: string;
+  client_name: string;
+  client_identifier: string;
+  address: string | null;
+  serial: string | null;
+  package: string;
+  status: string | null;
+  olt_name: string | null;
+}[] {
+  const seen = new Set<string>();
+  const matches = [];
+  for (const row of rows(payload)) {
+    if (row.deletedAt) continue;
+    const nodeId = id(row.id);
+    if (!nodeId || seen.has(nodeId)) continue;
+    seen.add(nodeId);
+    matches.push({
+      terminal_node_id: nodeId,
+      name: text(row.name) ?? '',
+      client_name: text(row.clientName) ?? '',
+      client_identifier: text(row.clientIdentifier) ?? '',
+      address:
+        [text(row.streetName), text(row.number), text(row.cityName)]
+          .filter(Boolean)
+          .join(', ') || null,
+      serial: text(row.serialNumber)?.toUpperCase() ?? null,
+      package: text(row.packageName) ?? '',
+      status: text(row.status),
+      olt_name: text(row.oltName),
+    });
+  }
+  return matches;
+}
+
 export function terminalNodeViewFilter(terminalNodeId: string) {
   return {
     limit: 50,
@@ -542,12 +590,25 @@ export function mapTodos(payload: unknown): IncaTodo[] {
       if (!todoId) return null;
       const info = text(row.additionalInfo);
       const params = text(row.params);
+      const action = params?.split(',')[0]?.trim() ?? '';
+      const entity = text(row.entityOperation);
       const tries = typeof row.todoTries === 'number' ? row.todoTries : 0;
+      const skipping = /cache is outdated/i.test(info ?? '');
       const todo: IncaTodo = {
         id: todoId,
-        type: text(row.task) ?? text(row.entityOperation) ?? 'TASK',
-        operation: text(row.entityOperation) ?? params?.split(',')[0] ?? null,
-        status: info && tries >= TODO_FAILED_TRIES ? 'FAILED' : 'PENDING',
+        type: text(row.task) ?? entity ?? 'TASK',
+        // A status change carries delete_onu or create_onu in params. The delete is what
+        // Terminated asks the OLT to do; the entity name alone hides that.
+        operation:
+          entity && /revoke|delete_onu/i.test(entity)
+            ? entity
+            : /^(delete_onu|create_onu)$/i.test(action)
+              ? action
+              : entity ?? (action || null),
+        status:
+          info && tries >= TODO_FAILED_TRIES && !skipping
+            ? 'FAILED'
+            : 'PENDING',
         message: info ? info.slice(0, 200) : undefined,
       };
       return todo;
@@ -594,12 +655,21 @@ export function currentStatus(
 
 /** INCA's fixed list value for "Connected"; ids can differ between installations. */
 export const CONNECTED_STATUS = 'DD_STATUS_BEKOTVE';
+/** INCA's fixed list value for "Terminated". */
+export const TERMINATED_STATUS = 'DD_STATUS_MEGSZUNT';
 
-export function connectedStatusId(payload: unknown): string | null {
+export function statusIdByListValue(
+  payload: unknown,
+  listValue: string,
+): string | null {
   const row = rows(payload).find(
-    (item) => item.listValue === CONNECTED_STATUS && !item.deletedAt,
+    (item) => item.listValue === listValue && !item.deletedAt,
   );
   return row ? id(row.id) : null;
+}
+
+export function connectedStatusId(payload: unknown): string | null {
+  return statusIdByListValue(payload, CONNECTED_STATUS);
 }
 
 const OPTICAL_FIELDS: [

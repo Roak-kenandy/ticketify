@@ -7,6 +7,7 @@ import {
   IncaOpticalInfo,
   IncaRejectedError,
   IncaSubscriber,
+  IncaTodo,
   IncaTerminalNodeInput,
   IncaUnavailableError,
 } from 'src/infrastructure/inca/inca.types';
@@ -37,6 +38,8 @@ export type RunInput = {
   terminal_node?: IncaTerminalNodeInput | null;
   /** Relocation: the destination address. */
   location?: IncaLocationInput | null;
+  /** Relocation with a new ONT: the Terminal Node the technician picked. */
+  terminal_node_id?: string | null;
 };
 
 /** Pre-change facts captured on the first attempt so a retry can verify against them. */
@@ -96,8 +99,11 @@ export class StageFailure extends Error {
 
 export type RunnerConfig = {
   range: OpticalRange;
+  /** How long to wait for an INCA Todo to leave the list. Status changes can take many minutes. */
   todoTimeoutMs: number;
   todoPollMs: number;
+  /** How long to wait for the OLT to report optical levels. */
+  opticalTimeoutMs?: number;
   /** An ONT is only registered on, or moved to, an OLT / PON the technician confirmed. */
   requireOltConfirmation?: boolean;
 };
@@ -349,10 +355,11 @@ export class ProvisioningRunner {
     );
 
     await this.enter('REGISTERING_ONT');
-    await this.ensureRegistered(serial, device, {
+    const registered = await this.ensureRegistered(serial, device, {
       ...input,
       service_area: input.service_area ?? subscriber.service_area,
     });
+    await this.pointAtLiveOlt(serial, registered, input, true);
 
     await this.enter('APPLYING_CONFIG');
     const nodeId = subscriber.terminal_node_id;
@@ -407,10 +414,9 @@ export class ProvisioningRunner {
   }
 
   /**
-   * Same customer and Terminal Node at a new address. Where the ONT is seen decides the
-   * rest: still configured on its OLT port = address only; on the destination's autofind
-   * list = revoke, point its INCA record at that OLT and add it again; a new ONT = the
-   * replacement sequence.
+   * Same customer and Terminal Node. Status goes to Terminated, the address is updated,
+   * then the same ONT is pointed at the OLT autofind sees, or a new ONT is revoked and
+   * added, and the node is set Connected.
    */
   private async relocation(
     input: RunInput,
@@ -421,7 +427,9 @@ export class ProvisioningRunner {
     const location = input.location;
     if (!location) this.fail('Choose the destination city, street and number.');
     const given = input.old_ont_serial?.trim().toUpperCase() || null;
-    const subscriber = await this.replacementSubscriber(input, given, baseline);
+    const subscriber = input.new_ont
+      ? await this.chosenSubscriber(input, baseline)
+      : await this.replacementSubscriber(input, given, baseline);
     const current =
       baseline?.old_ont_serial !== undefined
         ? baseline.old_ont_serial
@@ -474,41 +482,72 @@ export class ProvisioningRunner {
       : null;
 
     await this.enter('REGISTERING_ONT');
-    const destination = input.new_ont
-      ? await this.newOntDestination(target, device, input, subscriber)
+    let destination = input.new_ont
+      ? {
+          olt_id: device?.olt_id ?? '',
+          olt_name: device?.olt_name ?? null,
+          pon: device?.pon ?? null,
+          rebind: true,
+        }
       : await this.sameOntDestination(target, input);
-    const where = `${destination.olt_name ?? destination.olt_id} PON ${destination.pon ?? '-'}`;
-
-    await this.enter('APPLYING_CONFIG');
-    const moved = await this.inca.updateLocation(nodeId, location);
-    for (const note of moved.notes) await this.recorder.step(note);
-    await this.recorder.step(
-      moved.changed
-        ? `Terminal Node ${nodeId} moved to ${moved.address} (no new subscriber created)`
-        : `Terminal Node ${nodeId} already at ${moved.address}; skipped`,
-    );
+    const where = input.new_ont
+      ? `Terminal Node ${nodeId}`
+      : `${destination.olt_name ?? destination.olt_id} PON ${destination.pon ?? '-'}`;
     if (input.new_ont) {
-      await this.revokeIfAttached(nodeId, current);
-      if (pppoe) await this.ensurePppoe(nodeId, pppoe);
-      await this.moveToOlt(target, destination.olt_id);
-      await this.addIfMissing(nodeId, target);
-    } else if (destination.rebind) {
-      await this.revokeIfAttached(nodeId, target);
-      await this.moveToOlt(target, destination.olt_id);
-      await this.addIfMissing(nodeId, target);
-    } else if (
-      (await this.mustGetSubscriber(nodeId)).onu_serials.includes(target)
-    ) {
+      if (!device?.registered) {
+        this.fail(
+          `ONT ${target} is not registered in INCA. It must already be an optical device before it can be added.`,
+        );
+      }
       await this.recorder.step(
-        `ONU ${target} binding is still valid on ${where}; no rebind needed`,
-      );
-    } else {
-      this.fail(
-        `ONT ${target} is configured on ${where} but not on this customer's Terminal Node. If INCA is still removing it, wait for the Todo and retry; otherwise ask the NOC to remove it from the OLT.`,
+        `New ONT ${target} will replace ${current ?? 'the current ONU'} on Terminal Node ${nodeId}`,
       );
     }
 
-    await this.waitForTodo(nodeId);
+    await this.enter('APPLYING_CONFIG');
+    const terminated = await this.inca.markTerminated(nodeId);
+    await this.recorder.step(
+      terminated.changed
+        ? `Terminal Node ${nodeId} set to Terminated`
+        : `Terminal Node ${nodeId} already Terminated`,
+    );
+    await this.recorder.step('Waiting for INCA to finish Terminated');
+    await this.pollTodos(nodeId, false, false, true);
+    const moved = await this.inca.updateLocation(nodeId, location!);
+    if (moved) {
+      for (const note of moved.notes) await this.recorder.step(note);
+      await this.recorder.step(
+        moved.changed
+          ? `Terminal Node ${nodeId} moved to ${moved.address} (no new subscriber created)`
+          : `Terminal Node ${nodeId} already at ${moved.address}; skipped`,
+      );
+    }
+    let movedToLiveOlt = false;
+    if (input.new_ont) {
+      const live = await this.pointAtLiveOlt(target, device!, input, false);
+      if (live.moved) {
+        movedToLiveOlt = true;
+        destination = {
+          olt_id: live.olt_id,
+          olt_name: live.olt_name,
+          pon: live.pon,
+          rebind: true,
+        };
+      }
+      await this.revokeIfAttached(nodeId, current);
+      if (pppoe) await this.ensurePppoe(nodeId, pppoe);
+      await this.addIfMissing(nodeId, target);
+    } else {
+      await this.moveToOlt(target, destination.olt_id);
+    }
+    const connected = await this.inca.markConnected(nodeId);
+    await this.recorder.step(
+      connected.changed
+        ? `Terminal Node ${nodeId} set to Connected`
+        : `Terminal Node ${nodeId} already Connected`,
+    );
+
+    await this.waitForTodo(nodeId, movedToLiveOlt, target);
 
     await this.enter('VERIFYING');
     const live = await this.mustGetSubscriber(nodeId);
@@ -517,6 +556,7 @@ export class ProvisioningRunner {
     if (input.new_ont && current && live.onu_serials.includes(current))
       this.fail(`Old ONT ${current} is still attached.`);
     if (
+      moved &&
       live.location &&
       (live.location.city_id !== moved.location.city_id ||
         live.location.street_id !== moved.location.street_id ||
@@ -526,7 +566,7 @@ export class ProvisioningRunner {
     }
     this.assertRetained(live, base, Boolean(pppoe));
     this.assertPppoe(live, pppoe);
-    if (input.new_ont || destination.rebind) {
+    if (!input.new_ont && destination.rebind) {
       const record = await this.inca.findDevice(target);
       if (record?.olt_id && record.olt_id !== destination.olt_id) {
         this.fail(
@@ -536,13 +576,13 @@ export class ProvisioningRunner {
     }
     const optical = await this.waitForOptical(target);
     await this.recorder.step(
-      `Relocation verified: same Terminal Node, package and PPPoE at ${moved.address} on ${where}; optical info ONT Rx ${optical.rx_dbm} dBm`,
+      `Relocation verified: same Terminal Node, package and PPPoE at ${moved?.address ?? live.address ?? 'the current address'} on ${where}; optical info ONT Rx ${optical.rx_dbm} dBm`,
       { rx_dbm: optical.rx_dbm, details: optical.details ?? [] },
     );
 
     return {
       result: this.summary(live, target, optical, {
-        address: moved.address,
+        address: moved?.address ?? subscriber.address,
         previous_address: previousAddress,
         olt_id: destination.olt_id,
         olt_name: destination.olt_name,
@@ -560,37 +600,6 @@ export class ProvisioningRunner {
     };
   }
 
-  /** New ONT: registered from the destination's autofind list (or its record reused). */
-  private async newOntDestination(
-    serial: string,
-    device: IncaDevice | null,
-    input: RunInput,
-    subscriber: IncaSubscriber,
-  ): Promise<RelocationDestination> {
-    const registered = await this.ensureRegistered(serial, device, {
-      ...input,
-      service_area: input.service_area ?? subscriber.service_area,
-    });
-    const seen = device?.registered
-      ? await this.inca.detectOnOlt(serial)
-      : null;
-    if (seen?.olt_state === 'UNREGISTERED') {
-      this.assertConfirmedLocation(seen, input);
-      return {
-        olt_id: seen.olt_id,
-        olt_name: seen.olt_name ?? null,
-        pon: seen.pon || null,
-        rebind: true,
-      };
-    }
-    return {
-      olt_id: registered.olt_id ?? '',
-      olt_name: registered.olt_name ?? null,
-      pon: registered.pon,
-      rebind: true,
-    };
-  }
-
   /**
    * Same ONT: on the OLT's registered list it is still on its old port (same PON); on the
    * autofind list it has moved to a new PON or OLT and must be re-added there.
@@ -605,20 +614,23 @@ export class ProvisioningRunner {
         `ONT ${serial} is not seen on any OLT at the destination. Check power and fibre, then retry.`,
       );
     }
-    const rebind = detected.olt_state === 'UNREGISTERED';
-    this.assertConfirmedLocation(detected, input, rebind);
-    const where = `${detected.olt_name ?? detected.olt_id} PON ${detected.pon || '-'}`;
-    // A registered ONT stays on its OLT. Only an autofind-only sighting is a fibre move.
+    const live = detected.also_unregistered;
+    const olt_id = live?.olt_id ?? detected.olt_id;
+    const olt_name = live ? (live.olt_name ?? null) : (detected.olt_name ?? null);
+    const pon = live?.pon || detected.pon;
+    const rebind = Boolean(live) || detected.olt_state === 'UNREGISTERED';
+    this.assertConfirmedLocation({ olt_id, pon }, input, true);
+    const where = `${olt_name ?? olt_id} PON ${pon || '-'}`;
     await this.recorder.step(
       rebind
-        ? `ONT ${serial} is new on ${where}: it will be moved to that port`
-        : `ONT ${serial} is still on ${where}: same PON`,
-      { olt_id: detected.olt_id, pon: detected.pon },
+        ? `ONT ${serial} is seen on ${where}: the record will be pointed at that OLT`
+        : `ONT ${serial} is still on ${where}: same OLT`,
+      { olt_id, pon },
     );
     return {
-      olt_id: detected.olt_id,
-      olt_name: detected.olt_name ?? null,
-      pon: detected.pon || null,
+      olt_id,
+      olt_name,
+      pon: pon || null,
       rebind,
     };
   }
@@ -639,6 +651,65 @@ export class ProvisioningRunner {
     );
     await this.recorder.step('Waiting for INCA to remove it from the OLT');
     await this.pollTodos(nodeId);
+  }
+
+  /**
+   * An ONT can be registered on one OLT and seen on another. The record is pointed at
+   * the autofind OLT before it is added. Replacement asks the technician to confirm
+   * that port; a new-ONT relocation follows the OLT that sees the fibre.
+   */
+  private async pointAtLiveOlt(
+    serial: string,
+    device: IncaDevice,
+    input: RunInput,
+    confirm: boolean,
+  ): Promise<{
+    moved: boolean;
+    olt_id: string;
+    olt_name: string | null;
+    pon: string | null;
+  }> {
+    const detected = await this.inca.detectOnOlt(serial);
+    // "Found on OLT" is requestedOlt, including on the registered list. The optical
+    // device record can still say the old OLT; that record has to follow the fibre.
+    const seenElsewhere =
+      detected?.olt_id && detected.olt_id !== device.olt_id
+        ? {
+            olt_id: detected.olt_id,
+            olt_name: detected.olt_name ?? null,
+            pon: detected.pon,
+          }
+        : null;
+    const live = detected?.also_unregistered ?? seenElsewhere;
+    if (!live?.olt_id || (device.olt_id && live.olt_id === device.olt_id)) {
+      await this.recorder.step(
+        `ONT ${serial} stays on ${device.olt_name ?? device.olt_id ?? 'its registered OLT'}`,
+      );
+      return {
+        moved: false,
+        olt_id: device.olt_id ?? '',
+        olt_name: device.olt_name ?? null,
+        pon: device.pon,
+      };
+    }
+    if (confirm) {
+      this.assertConfirmedLocation(
+        { olt_id: live.olt_id, pon: live.pon || '' },
+        input,
+        true,
+      );
+    }
+    const where = `${live.olt_name ?? live.olt_id} PON ${live.pon || '-'}`;
+    await this.recorder.step(
+      `ONT ${serial} is registered on ${device.olt_name ?? device.olt_id} and seen on ${where}`,
+    );
+    await this.moveToOlt(serial, live.olt_id);
+    return {
+      moved: true,
+      olt_id: live.olt_id,
+      olt_name: live.olt_name ?? null,
+      pon: live.pon || null,
+    };
   }
 
   private async moveToOlt(serial: string, oltId: string) {
@@ -739,6 +810,19 @@ export class ProvisioningRunner {
         );
     if (!subscriber)
       this.fail('Customer mapping not found in INCA for this Service Request.');
+    return subscriber;
+  }
+
+  /** New-ONT relocation uses the Terminal Node the technician picked. */
+  private async chosenSubscriber(
+    input: RunInput,
+    baseline: RunBaseline | null,
+  ): Promise<IncaSubscriber> {
+    const nodeId = baseline?.terminal_node_id ?? input.terminal_node_id;
+    if (!nodeId) this.fail('Choose the customer Terminal Node.');
+    const subscriber = await this.inca.getSubscriber(nodeId);
+    if (!subscriber)
+      this.fail(`Terminal Node ${nodeId} was not found in INCA.`);
     return subscriber;
   }
 
@@ -928,9 +1012,13 @@ export class ProvisioningRunner {
     }
   }
 
-  private async waitForTodo(terminalNodeId: string) {
+  private async waitForTodo(
+    terminalNodeId: string,
+    autofindRetry = false,
+    serial?: string,
+  ) {
     await this.enter('WAITING_TODO');
-    await this.pollTodos(terminalNodeId, true);
+    await this.pollTodos(terminalNodeId, true, autofindRetry, false, serial);
   }
 
   /**
@@ -939,13 +1027,48 @@ export class ProvisioningRunner {
    * has nothing to delete, and the run continues on the OLT that sees the ONT.
    * After an add, look once more so a new WAN task is not missed behind that revoke.
    */
-  private async pollTodos(terminalNodeId: string, afterAdd = false) {
+  private async pollTodos(
+    terminalNodeId: string,
+    afterAdd = false,
+    autofindRetry = false,
+    releaseUnseenDelete = false,
+    serial?: string,
+  ) {
     const deadline = Date.now() + this.config.todoTimeoutMs;
     let lookedPastStaleRevoke = false;
+    let lastNotice = Date.now();
     for (;;) {
-      const open = await this.inca.listTodo(terminalNodeId);
-      const gone = open.filter((todo) => revokeAlreadyGone(todo));
-      const todos = open.filter((todo) => !revokeAlreadyGone(todo));
+      let open;
+      try {
+        open = await this.inca.listTodo(terminalNodeId);
+      } catch (error) {
+        if (
+          !(error instanceof IncaUnavailableError) ||
+          error instanceof IncaNotIntegratedError
+        ) {
+          throw error;
+        }
+        const now = Date.now();
+        if (now - lastNotice >= 30_000) {
+          lastNotice = now;
+          await this.recorder.step(
+            'INCA connection dropped. Waiting and trying again.',
+          );
+        }
+        if (now >= deadline) {
+          this.fail(`INCA unavailable: ${error.message}`);
+        }
+        await new Promise((resolve) =>
+          setTimeout(resolve, this.config.todoPollMs),
+        );
+        continue;
+      }
+      const alreadyGone = (todo: IncaTodo) =>
+        revokeAlreadyGone(todo) ||
+        (releaseUnseenDelete && configureNotOnAutofind(todo)) ||
+        (autofindRetry && oltRecordUpdated(todo));
+      const gone = open.filter(alreadyGone);
+      const todos = open.filter((todo) => !alreadyGone(todo));
       if (gone.length && !todos.length) {
         if (afterAdd && !lookedPastStaleRevoke) {
           lookedPastStaleRevoke = true;
@@ -955,23 +1078,64 @@ export class ProvisioningRunner {
           continue;
         }
         await this.recorder.step(
-          'The old OLT no longer has this ONT, so INCA has nothing to delete there',
+          gone.some(oltRecordUpdated)
+            ? 'INCA dropped the configure task from the previous OLT. Continuing on the OLT that sees the ONT.'
+            : 'The old OLT no longer has this ONT, so INCA has nothing to delete there',
         );
         return;
       }
-      const failed = todos.find((todo) => todo.status === 'FAILED');
-      if (failed)
+      const retryingAutofind = (todo: IncaTodo) =>
+        autofindRetry && configureNotOnAutofind(todo);
+      const failed = todos.find(
+        (todo) => todo.status === 'FAILED' && !retryingAutofind(todo),
+      );
+      // The OLT's optical-info call often returns 500 while the ONT is still
+      // settling. That is not a finished failure: keep waiting for a reading.
+      let opticalUnreadable = false;
+      if (failed && serial && configureNotOnAutofind(failed)) {
+        try {
+          const optical = await this.inca.getOpticalInfo(serial);
+          if (optical?.rx_dbm != null) {
+            await this.recorder.step(
+              `ONT ${serial} is already on the OLT with optical info (${optical.rx_dbm} dBm). INCA's configure task only checked the autofind list.`,
+            );
+            return;
+          }
+        } catch (error) {
+          if (
+            !(error instanceof IncaUnavailableError) ||
+            error instanceof IncaNotIntegratedError
+          ) {
+            throw error;
+          }
+          opticalUnreadable = true;
+        }
+      }
+      if (failed && !opticalUnreadable)
         this.fail(
           `INCA Todo ${failed.type} failed${failed.message ? `: ${failed.message}` : ''}.${todoHint(failed.message)}`,
         );
-      const pending = todos.filter((todo) => todo.status === 'PENDING');
+      const pending = todos.filter(
+        (todo) =>
+          todo.status === 'PENDING' ||
+          retryingAutofind(todo) ||
+          (opticalUnreadable && todo.id === failed?.id),
+      );
       if (!pending.length) {
         await this.recorder.step('INCA Todo completed', {
           tasks: todos.map((todo) => todo.type),
         });
         return;
       }
-      if (Date.now() >= deadline) {
+      const now = Date.now();
+      if (now - lastNotice >= 30_000) {
+        lastNotice = now;
+        const names = pending.map((todo) => todo.type).join(', ');
+        await this.recorder.step(
+          `INCA is still working on ${names}. Waiting until it finishes.`,
+        );
+      }
+      if (now >= deadline) {
         this.fail(
           `INCA Todo timeout: ${pending.map((todo) => todo.type).join(', ')} still pending.`,
         );
@@ -987,7 +1151,8 @@ export class ProvisioningRunner {
    * so poll until a reading arrives; that reading is the end of registration.
    */
   private async waitForOptical(serial: string): Promise<OpticalReading> {
-    const deadline = Date.now() + this.config.todoTimeoutMs;
+    const deadline =
+      Date.now() + (this.config.opticalTimeoutMs ?? this.config.todoTimeoutMs);
     let announced = false;
     for (;;) {
       let reading: OpticalReading | null = null;
@@ -1074,6 +1239,16 @@ export class ProvisioningRunner {
   private fail(message: string): never {
     throw new StageFailure(this.stage, message);
   }
+}
+
+/** Configure task still looking on the OLT the record used before it was corrected. */
+function configureNotOnAutofind(todo: IncaTodo): boolean {
+  return /not found on the (normal or )?autofind list/i.test(todo.message ?? '');
+}
+
+/** Configure task built for the OLT the record had before this run moved it. */
+function oltRecordUpdated(todo: IncaTodo): boolean {
+  return /olt_id of the ONU got updated/i.test(todo.message ?? '');
 }
 
 /** What the technician can do about INCA's OLT-side Todo errors. */

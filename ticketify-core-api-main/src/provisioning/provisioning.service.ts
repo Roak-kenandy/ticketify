@@ -290,19 +290,29 @@ export class ProvisioningService implements OnModuleInit {
       if (device?.registered) {
         // INCA still points at the old OLT. Autofind on a different OLT means
         // the ONT has moved: confirm that live port, not the stale record.
+        const livePort = onOlt?.also_unregistered ?? null;
         const moved =
-          onOlt?.olt_state === 'UNREGISTERED' &&
-          !!onOlt.olt_id &&
-          !!device.olt_id &&
-          onOlt.olt_id !== device.olt_id;
-        const pon = moved
-          ? onOlt.pon
-          : (device.pon ??
-            (onOlt?.olt_id === device.olt_id ? onOlt.pon : null));
-        const oltId = moved ? onOlt.olt_id : device.olt_id;
-        const oltName = moved
-          ? (onOlt.olt_name ?? null)
-          : (device.olt_name ?? null);
+          !!livePort ||
+          (onOlt?.olt_state === 'UNREGISTERED' &&
+            !!onOlt.olt_id &&
+            !!device.olt_id &&
+            onOlt.olt_id !== device.olt_id);
+        const pon = livePort
+          ? livePort.pon
+          : moved
+            ? onOlt!.pon
+            : (device.pon ??
+              (onOlt?.olt_id === device.olt_id ? onOlt.pon : null));
+        const oltId = livePort
+          ? livePort.olt_id
+          : moved
+            ? onOlt!.olt_id
+            : device.olt_id;
+        const oltName = livePort
+          ? (livePort.olt_name ?? null)
+          : moved
+            ? (onOlt!.olt_name ?? null)
+            : (device.olt_name ?? null);
         const where = describeLocation(oltName ?? oltId, pon);
         const incaWhere = describeLocation(
           device.olt_name ?? device.olt_id,
@@ -312,16 +322,12 @@ export class ProvisioningService implements OnModuleInit {
           !moved && onOlt && device.olt_id && onOlt.olt_id !== device.olt_id
             ? ` The OLT currently sees it${describeLocation(onOlt.olt_name ?? onOlt.olt_id, onOlt.pon)}.`
             : '';
-        const autofind = onOlt?.also_unregistered;
-        const autofindNote = autofind
-          ? ` Autofind also sees it${describeLocation(autofind.olt_name ?? autofind.olt_id, autofind.pon)}. The ONT is still registered, so only the address changes. To move it onto that PON, remove the old OLT registration first, then detect again.`
-          : '';
         const waiting =
           !moved && onOlt?.olt_state === 'UNREGISTERED'
             ? ' The OLT lists it as unregistered: it will be configured when it is added to the Terminal Node.'
             : '';
         const movedNote = moved
-          ? ` INCA still has it${incaWhere}${device.terminal_node_id ? ` on Terminal Node ${device.terminal_node_id}` : ''}. Confirm this port; the run moves it here.`
+          ? ` INCA still has it${incaWhere}${device.terminal_node_id ? ` on Terminal Node ${device.terminal_node_id}` : ''}. Confirm this port.`
           : '';
         return {
           serial,
@@ -331,7 +337,7 @@ export class ProvisioningService implements OnModuleInit {
           pon,
           device_type: device.device_type,
           terminal_node_id: device.terminal_node_id,
-          olt_state: onOlt?.olt_state ?? null,
+          olt_state: livePort ? 'UNREGISTERED' : (onOlt?.olt_state ?? null),
           online: onOlt?.online ?? null,
           ...operator,
           message: moved
@@ -342,7 +348,6 @@ export class ProvisioningService implements OnModuleInit {
               runState +
               waiting +
               elsewhere +
-              autofindNote +
               pppoeNote,
         };
       }
@@ -761,7 +766,7 @@ export class ProvisioningService implements OnModuleInit {
       lastReading = {
         action: txn.action,
         rx_dbm: rx,
-        within_range: rx >= range.min_dbm && rx <= range.max_dbm,
+        within_range: rx <= range.max_dbm,
         range,
       };
       break;
@@ -1093,6 +1098,20 @@ export class ProvisioningService implements OnModuleInit {
     };
   }
 
+  /** New-ONT relocation: Terminal Nodes whose name matches the technician's search. */
+  async searchTerminalNodes(
+    crmTicketId: string,
+    actor: Actor,
+    query: string,
+  ) {
+    const name = query?.trim() ?? '';
+    if (name.length < 2) {
+      throw new BadRequestException('Type at least 2 characters of the name.');
+    }
+    await this.assertCanAct(crmTicketId, actor);
+    return this.incaRead(() => this.inca.searchTerminalNodes(name));
+  }
+
   /** Replacement / relocation preview: the INCA Terminal Node the current ONT is attached to. */
   async subscriberBySerial(
     crmTicketId: string,
@@ -1240,6 +1259,7 @@ export class ProvisioningService implements OnModuleInit {
       address: text(dto.address) ?? snapshot.address,
       pppoe_username: text(dto.pppoe_username),
       new_ont: Boolean(dto.new_ont),
+      terminal_node_id: text(dto.terminal_node_id),
       confirmed_olt_id: text(dto.confirmed_olt_id),
       confirmed_pon: text(dto.confirmed_pon),
       terminal_node:
@@ -1269,15 +1289,16 @@ export class ProvisioningService implements OnModuleInit {
         }
         break;
       case 'RELOCATION':
-        if (this.currentOntRequired) need(oldSerial, 'current ONT serial');
         if (input.new_ont) {
           need(input.ont_serial, 'new ONT serial');
-          need(input.device_type, 'device type');
+          need(input.terminal_node_id, 'customer');
           if (oldSerial && oldSerial === serial) {
             throw new BadRequestException(
               'The new ONT must be a different device from the current ONT.',
             );
           }
+        } else if (this.currentOntRequired) {
+          need(oldSerial, 'current ONT serial');
         }
         break;
       case 'SIGNAL_CHECK':
@@ -1420,8 +1441,13 @@ export class ProvisioningService implements OnModuleInit {
   private runnerConfig() {
     return {
       range: this.range(),
-      todoTimeoutMs: Number(this.config.get('INCA_TODO_TIMEOUT_MS') ?? 120_000),
-      todoPollMs: Number(this.config.get('INCA_TODO_POLL_MS') ?? 2_000),
+      todoTimeoutMs: Number(
+        this.config.get('INCA_TODO_TIMEOUT_MS') ?? 15 * 60 * 1000,
+      ),
+      todoPollMs: Number(this.config.get('INCA_TODO_POLL_MS') ?? 5_000),
+      opticalTimeoutMs: Number(
+        this.config.get('INCA_OPTICAL_TIMEOUT_MS') ?? 120_000,
+      ),
       requireOltConfirmation: true,
     };
   }

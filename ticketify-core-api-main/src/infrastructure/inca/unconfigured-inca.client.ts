@@ -24,6 +24,7 @@ export class UnconfiguredIncaClient implements IncaClient {
   findSubscriber = () => this.fail();
   getSubscriber = () => this.fail();
   findSubscriberBySerial = () => this.fail();
+  searchTerminalNodes = () => this.fail();
   findDevice = () => this.fail();
   detectOnOlt = () => this.fail();
   registerOnt = () => this.fail();
@@ -32,6 +33,7 @@ export class UnconfiguredIncaClient implements IncaClient {
   addOnu = () => this.fail();
   setPppoe = () => this.fail();
   assignPackage = () => this.fail();
+  markTerminated = () => this.fail();
   markConnected = () => this.fail();
   updateLocation = () => this.fail();
   moveDevice = () => this.fail();

@@ -20,6 +20,18 @@ export type IncaDevice = {
   device_id?: string | null;
 };
 
+export type IncaTerminalNodeMatch = {
+  terminal_node_id: string;
+  name: string;
+  client_name: string;
+  client_identifier: string;
+  address: string | null;
+  serial: string | null;
+  package: string;
+  status: string | null;
+  olt_name: string | null;
+};
+
 export type IncaSubscriber = {
   terminal_node_id: string;
   client_identifier: string;
@@ -177,6 +189,8 @@ export interface IncaClient {
   getSubscriber(terminalNodeId: string): Promise<IncaSubscriber | null>;
   /** The Terminal Node the ONU serial is attached to (INCA's terminal node search). */
   findSubscriberBySerial(serial: string): Promise<IncaSubscriber | null>;
+  /** Terminal Nodes whose name matches, for picking the customer on a new-ONT relocation. */
+  searchTerminalNodes(query: string): Promise<IncaTerminalNodeMatch[]>;
   findDevice(serial: string): Promise<IncaDevice | null>;
   /**
    * Active Device List (Unregistered and Registered): where the ONT is physically seen on
@@ -205,6 +219,8 @@ export interface IncaClient {
     terminalNodeId: string,
     packageCode: string,
   ): Promise<{ label: string; changed: boolean }>;
+  /** Sets the Terminal Node status to Terminated unless it already is. */
+  markTerminated(terminalNodeId: string): Promise<{ changed: boolean }>;
   /** Sets the Terminal Node status to Connected unless it already is. */
   markConnected(terminalNodeId: string): Promise<{ changed: boolean }>;
   /** Moves the Terminal Node to a new address; PPPoE, package and ONUs are untouched. */

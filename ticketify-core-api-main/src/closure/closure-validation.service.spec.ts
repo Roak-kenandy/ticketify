@@ -224,11 +224,11 @@ describe('ClosureValidationService', () => {
     const result = await weak.service.evaluate('sr-1');
     expect(result).toMatchObject({ enforced: true, ready: false });
     expect(result.checks.find((c) => c.key === 'signal_level')).toMatchObject({
-      label: 'Signal level -17 to -27 dBm',
+      label: 'Signal -17 dBm or weaker',
       severity: 'block',
     });
     await expect(weak.service.assertReadyToClose('sr-1')).rejects.toThrow(
-      /Signal is -15.2 dBm after the signal check; it must be between -17 and -27 dBm/,
+      /Signal is -15.2 dBm after the signal check. Only a reading stronger than -17 dBm blocks closing/,
     );
 
     const good = build({

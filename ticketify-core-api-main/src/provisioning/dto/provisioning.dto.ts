@@ -129,6 +129,11 @@ export class StartProvisioningDto {
   @IsBoolean()
   new_ont?: boolean;
 
+  /** Relocation with a new ONT: the Terminal Node the technician picked. */
+  @IsOptional()
+  @Matches(/^\d{1,12}$/, { message: 'Invalid Terminal Node' })
+  terminal_node_id?: string;
+
   /** OLT / PON the technician confirmed from Detect; registration must match it. */
   @IsOptional()
   @Matches(/^[A-Za-z0-9_-]{1,40}$/, { message: 'Invalid OLT id' })

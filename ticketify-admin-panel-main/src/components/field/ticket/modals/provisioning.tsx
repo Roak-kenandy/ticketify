@@ -73,6 +73,9 @@ type Form = {
   /** Replacement: the ONT being replaced, and the INCA Terminal Node it is attached to. */
   oldSerial: string;
   oldLookup: IncaSubscriberLookup | null;
+  /** New-ONT relocation: the Terminal Node the technician picked by name. */
+  nodeId: string | null;
+  nodeLabel: string;
   /** New connection: the INCA Terminal Node and, when missing, its client / city / street. */
   tnName: string;
   tnNumber: string;
@@ -312,6 +315,7 @@ export default function ProvisioningModal({
           pppoe_password:
             ctx && asksPppoe(ctx, form, action) && form.pppoePassword ? form.pppoePassword : undefined,
           new_ont: action === "RELOCATION" ? form.newOnt : undefined,
+          terminal_node_id: action === "RELOCATION" && form.newOnt ? (form.nodeId ?? undefined) : undefined,
           terminal_node: action === "NEW_CONNECTION" ? terminalNodePayload(form) : undefined,
           location: action === "RELOCATION" ? locationPayload(form) : undefined,
           ...(form.detection && confirmsOlt(action, form, form.detection) && form.oltConfirmed
@@ -442,6 +446,8 @@ function emptyForm(): Form {
     oltConfirmed: false,
     oldSerial: "",
     oldLookup: null,
+    nodeId: null,
+    nodeLabel: "",
     tnName: "",
     tnNumber: "",
     tnIdentity: "",
@@ -507,8 +513,17 @@ function relocatesOnt(action: ProvisioningAction, form: Form, detection: OntDete
   return action === "RELOCATION" && !form.newOnt && detection.olt_state === "UNREGISTERED";
 }
 
+/** Replacement onto the OLT autofind sees, while INCA still has the old OLT. */
+function replacesOntoLivePort(action: ProvisioningAction, detection: OntDetection) {
+  return (
+    action === "ONT_REPLACEMENT" &&
+    detection.status === "REGISTERED" &&
+    detection.olt_state === "UNREGISTERED"
+  );
+}
+
 function confirmsOlt(action: ProvisioningAction, form: Form, detection: OntDetection) {
-  return needsOltConfirm(detection) || relocatesOnt(action, form, detection);
+  return needsOltConfirm(detection) || relocatesOnt(action, form, detection) || replacesOntoLivePort(action, detection);
 }
 
 function needsDetection(action: ProvisioningAction) {
@@ -523,14 +538,22 @@ function detectionSerial(action: ProvisioningAction, form: Form, ctx: Provisioni
 }
 
 /** What the relocation will do with the ONT, from where Detect found it. */
+function replacementNote(action: ProvisioningAction, detection: OntDetection | null) {
+  if (action !== "ONT_REPLACEMENT" || !detection || detection.status !== "REGISTERED") return null;
+  const where = `${detection.olt_name ?? detection.olt_id ?? "the OLT"} PON ${detection.pon ?? "-"}`;
+  return detection.olt_state === "UNREGISTERED"
+    ? `The record is pointed at ${where}, then the current ONU is revoked and this ONT is added.`
+    : `The record stays on ${where}. The current ONU is revoked and this ONT is added.`;
+}
+
 function relocationNote(action: ProvisioningAction, form: Form, detection: OntDetection | null) {
   if (action !== "RELOCATION" || form.newOnt || !detection || detection.status !== "REGISTERED") {
     return null;
   }
   const where = `${detection.olt_name ?? detection.olt_id ?? "the OLT"} PON ${detection.pon ?? "-"}`;
   return detection.olt_state === "UNREGISTERED"
-    ? `The ONT is now on ${where}. It will be revoked, moved to this OLT in INCA and added back to the same customer.`
-    : `The ONT is still on ${where}. Only the address changes; the ONU binding stays as it is.`;
+    ? `Terminated first, then the address, then the ONT record is pointed at ${where}, then Connected. The same ONT stays with the customer.`
+    : `Terminated first, then the address, then Connected. The ONT stays on ${where}.`;
 }
 
 function validate(action: ProvisioningAction, form: Form, ctx: ProvisioningContext): FormErrors {
@@ -542,10 +565,13 @@ function validate(action: ProvisioningAction, form: Form, ctx: ProvisioningConte
   } else if (form.serial && !isValidSerial(form.serial)) {
     errors.serial = "Not a valid serial number";
   }
-  if (serialNeeded && !form.deviceType) {
+  if (serialNeeded && !form.deviceType && !(action === "RELOCATION" && form.newOnt)) {
     errors.deviceType = "Choose the device type";
   }
-  if (action === "ONT_REPLACEMENT" || action === "RELOCATION") {
+  if (action === "RELOCATION" && form.newOnt && !form.nodeId) {
+    errors.nodeId = "Search and choose the customer";
+  }
+  if ((action === "ONT_REPLACEMENT" || action === "RELOCATION") && !(action === "RELOCATION" && form.newOnt)) {
     const current = normalizeSerial(form.oldSerial);
     if (!current) {
       if (currentOntRequired(ctx)) errors.oldSerial = "Enter the serial of the customer's current ONT";
@@ -581,7 +607,7 @@ function validate(action: ProvisioningAction, form: Form, ctx: ProvisioningConte
       errors.pppoePassword = "At least 6 characters";
     }
   }
-  if (needsDetection(action) && !errors.serial) {
+  if (needsDetection(action) && !(action === "RELOCATION" && form.newOnt) && !errors.serial) {
     const serial = normalizeSerial(detectionSerial(action, form, ctx));
     const detection = form.detection;
     if (!detection || canonicalSerial(detection.serial) !== canonicalSerial(serial)) {
@@ -957,8 +983,7 @@ function FormView({
   const sub = looked?.subscriber ?? ctx.subscriber;
   const detectedType = ctx.options.device_types.find((type) => type.code === form.detection?.device_type);
   const showSerial = action !== "RELOCATION" || form.newOnt;
-  const showDevice =
-    action === "NEW_CONNECTION" || action === "ONT_REPLACEMENT" || (action === "RELOCATION" && form.newOnt);
+  const showDevice = action === "NEW_CONNECTION" || action === "ONT_REPLACEMENT";
 
   let step = 0;
   const nextStep = () => ++step;
@@ -996,7 +1021,17 @@ function FormView({
         />
       ) : null}
 
-      {replacing || relocating ? (
+      {relocating && form.newOnt ? (
+        <CustomerSearchSection
+          step={nextStep()}
+          ticketId={ticketId}
+          form={form}
+          errors={errors}
+          onChange={onChange}
+        />
+      ) : null}
+
+      {replacing || (relocating && !form.newOnt) ? (
         <CurrentOntSection
           step={nextStep()}
           ticketId={ticketId}
@@ -1084,7 +1119,7 @@ function FormView({
         </Field>
       ) : null}
 
-      {needsDetection(action) ? (
+      {needsDetection(action) && !(relocating && form.newOnt) ? (
         <DetectionCard
           title={
             relocating && !form.newOnt
@@ -1095,7 +1130,7 @@ function FormView({
           confirmed={form.oltConfirmed}
           detecting={detecting}
           error={errors.detection}
-          note={relocationNote(action, form, form.detection)}
+          note={relocationNote(action, form, form.detection) ?? replacementNote(action, form.detection)}
           confirm={Boolean(form.detection && confirmsOlt(action, form, form.detection))}
           onDetect={onDetect}
           onConfirm={(oltConfirmed) => onChange({ oltConfirmed })}
@@ -1187,6 +1222,118 @@ function FormView({
         </span>
       </div>
     </SheetBody>
+  );
+}
+
+type NodeMatch = {
+  terminal_node_id: string;
+  name: string;
+  client_name: string;
+  client_identifier: string;
+  address: string | null;
+  serial: string | null;
+  package: string;
+  status: string | null;
+  olt_name: string | null;
+};
+
+/** New-ONT relocation: pick the customer from a Terminal Node name search. */
+function CustomerSearchSection({
+  step,
+  ticketId,
+  form,
+  errors,
+  onChange,
+}: {
+  step: number;
+  ticketId: string;
+  form: Form;
+  errors: FormErrors;
+  onChange: (patch: Partial<Form>) => void;
+}) {
+  const { token } = useSession();
+  const [query, setQuery] = React.useState("");
+  const [hits, setHits] = React.useState<NodeMatch[]>([]);
+  const [searching, setSearching] = React.useState(false);
+
+  const search = async () => {
+    const name = query.trim();
+    if (name.length < 2) {
+      showError("Type at least 2 characters of the name");
+      return;
+    }
+    setSearching(true);
+    try {
+      const rows: NodeMatch[] = await apiGet(
+        `/provisioning/tickets/${ticketId}/inca/terminal-nodes?q=${encodeURIComponent(name)}`,
+        token,
+      );
+      setHits(rows);
+      if (!rows.length) showInfo("No Terminal Node matches that name");
+    } catch (err: any) {
+      showError(err?.message || "Could not search INCA");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  return (
+    <FormSection
+      step={step}
+      title="Customer"
+      subtitle="Search the Terminal Node name and choose who receives the new ONT."
+    >
+      <Field label="Terminal Node name" error={form.nodeId ? undefined : errors.nodeId}>
+        <div className="flex gap-2">
+          <input
+            className="input min-w-0 flex-1"
+            value={query}
+            placeholder="Name"
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void search();
+              }
+            }}
+          />
+          <SecondaryButton
+            text={searching ? "Searching…" : "Search"}
+            loading={searching}
+            className="h-11 w-auto shrink-0"
+            onClick={() => void search()}
+          />
+        </div>
+      </Field>
+      <div className="flex flex-col gap-2">
+        {hits.map((hit) => {
+          const chosen = form.nodeId === hit.terminal_node_id;
+          return (
+            <button
+              key={hit.terminal_node_id}
+              type="button"
+              className={cn(
+                "rounded-md border px-3 py-2 text-left",
+                chosen ? "border-ink bg-surface" : "border-borderlight",
+              )}
+              onClick={() =>
+                onChange({
+                  nodeId: hit.terminal_node_id,
+                  nodeLabel: hit.name,
+                })
+              }
+            >
+              <span className="block text-sm font-semibold text-ink">{hit.name}</span>
+              <span className="block text-xs leading-4 text-gray2">
+                {[hit.client_name, hit.client_identifier, hit.address, hit.serial, hit.olt_name, hit.package]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </FormSection>
   );
 }
 
@@ -2042,7 +2189,7 @@ function SignalReadout({
         <span className="text-sm font-semibold text-gray2">dBm Rx</span>
       </div>
       <p className="text-xs text-gray2">
-        Accepted range {range.min_dbm} to {range.max_dbm} dBm
+        Good at {Math.max(range.min_dbm, range.max_dbm)} dBm or weaker. A stronger reading cannot close the ticket.
       </p>
       {reading?.details?.length ? (
         <>
