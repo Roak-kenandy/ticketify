@@ -568,8 +568,25 @@ export function packagesFilter() {
   return { order: 'name ASC', limit: 500 };
 }
 
+/** Packages a technician can assign. Anything else INCA offers stays out of the dropdown. */
+const OFFERED_PACKAGES = [
+  'NET_IPTV_ONLY',
+  'NET_IPTV_PUB_WIFI',
+  'NET ONLY',
+  'HM_PHS2_CPE',
+];
+
 export function mapPackages(payload: unknown): IncaOption[] {
-  return mapNamedOptions(payload);
+  const offered = new Map(
+    OFFERED_PACKAGES.map((name, index) => [name.toLowerCase(), index]),
+  );
+  return mapNamedOptions(payload)
+    .filter((option) => offered.has(option.label.trim().toLowerCase()))
+    .sort(
+      (a, b) =>
+        (offered.get(a.label.trim().toLowerCase()) ?? 0) -
+        (offered.get(b.label.trim().toLowerCase()) ?? 0),
+    );
 }
 
 /** INCA's own Todo tab query: tasks whose params name this Terminal Node. */

@@ -4,6 +4,7 @@ import {
   mapDetection,
   mapDeviceTypes,
   mapOpticalDevice,
+  mapPackages,
   mapStatusPoints,
   mapTodos,
   mapTr069,
@@ -228,6 +229,24 @@ describe('INCA live mappers', () => {
         operation: 'terminal_node_onu_add',
       }),
     ).toBe(false);
+  });
+
+  it('offers only the four packages a technician can assign', () => {
+    expect(
+      mapPackages([
+        { id: 1, name: 'NET ONLY' },
+        { id: 2, name: 'OLD_PACKAGE' },
+        { id: 3, name: 'HM_PHS2_CPE' },
+        { id: 4, name: 'NET_IPTV_PUB_WIFI' },
+        { id: 5, name: 'NET_IPTV_ONLY', deletedAt: '2024-01-01' },
+        { id: 6, name: 'net_iptv_only' },
+      ]),
+    ).toEqual([
+      { code: '6', label: 'net_iptv_only' },
+      { code: '4', label: 'NET_IPTV_PUB_WIFI' },
+      { code: '1', label: 'NET ONLY' },
+      { code: '3', label: 'HM_PHS2_CPE' },
+    ]);
   });
 
   it('keeps only a short, token-free error message', () => {
